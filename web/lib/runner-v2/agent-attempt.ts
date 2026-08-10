@@ -5,6 +5,7 @@ import { updateRunJson, type RunMutationObserver, type RunRecord } from "@/lib/r
 
 export type AgentAttemptPhase =
   | "created"
+  | "queued"
   | "lease_acquired"
   | "pty_allocated"
   | "process_spawned"
@@ -37,6 +38,7 @@ export type AgentAttemptTerminalReason =
   | "concurrency_cap_blocked"
   | "workspace_integration_conflict"
   | "source_workspace_changed"
+  | "agent_capacity_timeout"
   | "auth_prompt_detected"
   | "instruction_submission_unconfirmed"
   | "invalid_transition"
@@ -77,6 +79,8 @@ export interface AgentAttemptRecord {
   leaseId?: string;
   leaseAcquiredAt?: string;
   leaseReleasedAt?: string;
+  capacitySlotAcquiredAt?: string;
+  capacitySlotReleasedAt?: string;
   processEvidence?: AgentAttemptProcessEvidence;
   instructionLedger: AgentAttemptInstructionLedgerEntry[];
   recoveryDecisionCount: number;
@@ -118,7 +122,8 @@ export interface AgentAttemptStuckEvent {
 }
 
 const ALLOWED_TRANSITIONS: Record<AgentAttemptPhase, AgentAttemptPhase[]> = {
-  created: ["lease_acquired", "startup_failed", "human_action_required", "stuck", "released"],
+  created: ["queued", "lease_acquired", "startup_failed", "human_action_required", "stuck", "released"],
+  queued: ["lease_acquired", "startup_failed", "human_action_required", "released"],
   lease_acquired: ["pty_allocated", "startup_failed", "human_action_required", "released"],
   pty_allocated: ["process_spawned", "startup_failed", "human_action_required", "released"],
   process_spawned: ["ready_for_instructions", "startup_failed", "human_action_required", "stuck", "released"],
@@ -150,7 +155,8 @@ export function isTerminalAgentAttemptPhase(phase: AgentAttemptPhase): boolean {
 }
 
 const NEXT_DESIRED_PHASE: Partial<Record<AgentAttemptPhase, AgentAttemptPhase>> = {
-  created: "lease_acquired",
+  created: "queued",
+  queued: "lease_acquired",
   lease_acquired: "pty_allocated",
   pty_allocated: "process_spawned",
   process_spawned: "ready_for_instructions",
@@ -291,6 +297,12 @@ export function transitionAgentAttempt(input: {
       releaseReason: input.to === "released" ? input.reason : attempt.releaseReason,
       leaseAcquiredAt: input.to === "lease_acquired" ? at : attempt.leaseAcquiredAt,
       leaseReleasedAt: input.to === "released" ? at : attempt.leaseReleasedAt,
+      capacitySlotAcquiredAt: input.to === "lease_acquired" && attempt.phase === "queued"
+        ? at
+        : attempt.capacitySlotAcquiredAt,
+      capacitySlotReleasedAt: input.to === "released" && attempt.capacitySlotAcquiredAt
+        ? at
+        : attempt.capacitySlotReleasedAt,
       updatedAt: at,
       transitions: [
         ...attempt.transitions,
@@ -530,6 +542,50 @@ export function releaseAgentAttempt(input: {
     reason: "released",
     now: input.now,
   });
+}
+
+/** Release only the host-capacity reservation after its PTY has been removed.
+ * The attempt's terminal phase remains intact as completion evidence. */
+export function releaseAgentCapacitySlot(input: {
+  runJsonPath: string;
+  attemptId: string;
+  now?: Date;
+}): AgentAttemptRecord {
+  const at = iso(input.now);
+  return updateAttempt(input.runJsonPath, input.attemptId, (attempt) => {
+    if (!attempt.capacitySlotAcquiredAt || attempt.capacitySlotReleasedAt) return attempt;
+    return {
+      ...attempt,
+      capacitySlotReleasedAt: at,
+      updatedAt: at,
+    };
+  });
+}
+
+/** Release every outstanding host-capacity reservation after a run has been
+ * terminalized by an out-of-band owner such as the watchdog. */
+export function releaseRunAgentCapacitySlots(input: {
+  runJsonPath: string;
+  now?: Date;
+  onMutation?: RunMutationObserver;
+}): number {
+  const at = iso(input.now);
+  let released = 0;
+  updateRunJson(input.runJsonPath, (run) => {
+    if (!run) throw new Error(`run.json not found: ${input.runJsonPath}`);
+    const runnerV2 = run.runnerV2 && typeof run.runnerV2 === "object"
+      ? run.runnerV2 as RunnerV2AttemptState & Record<string, unknown>
+      : undefined;
+    if (!runnerV2 || !Array.isArray(runnerV2.attempts)) return run;
+    const attempts = runnerV2.attempts.map((attempt) => {
+      if (!attempt.capacitySlotAcquiredAt || attempt.capacitySlotReleasedAt) return attempt;
+      released += 1;
+      return { ...attempt, capacitySlotReleasedAt: at, updatedAt: at };
+    });
+    if (released === 0) return run;
+    return { ...run, runnerV2: { ...runnerV2, attempts } };
+  }, undefined, input.onMutation);
+  return released;
 }
 
 export function readRunnerV2AttemptState(runJsonPath: string): RunnerV2AttemptState {

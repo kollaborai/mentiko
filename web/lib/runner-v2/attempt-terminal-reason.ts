@@ -18,6 +18,7 @@ const TERMINAL_REASON_LABELS: Record<AgentAttemptTerminalReason, string> = {
   concurrency_cap_blocked: "Concurrency cap blocked launch",
   workspace_integration_conflict: "Workspace integration needs human resolution",
   source_workspace_changed: "Source workspace changed before result publication",
+  agent_capacity_timeout: "Agent capacity queue timed out",
   auth_prompt_detected: "CLI requires human authentication",
   instruction_submission_unconfirmed: "Instruction delivery was not confirmed",
   invalid_transition: "Runner lifecycle transition was invalid",

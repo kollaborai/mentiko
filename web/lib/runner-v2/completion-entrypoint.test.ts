@@ -97,6 +97,7 @@ function seedIsolatedTerminalFixture() {
     attemptId: attempt.id,
   });
   for (const phase of [
+    "queued",
     "lease_acquired",
     "pty_allocated",
     "process_spawned",
@@ -237,12 +238,35 @@ describe("runner-v2 completion entrypoint", () => {
     });
 
     expect(result.decision).toBe("terminal");
-    expect(readRunJson(fixture.runJsonPath).status).toBe("completed");
+    const completed = readRunJson(fixture.runJsonPath) as ReturnType<typeof readRunJson> & {
+      runnerV2?: { attempts?: Array<Record<string, unknown>> };
+    };
+    expect(completed.status).toBe("completed");
+    expect(completed.runnerV2?.attempts?.[0]).toMatchObject({
+      capacitySlotAcquiredAt: expect.any(String),
+      capacitySlotReleasedAt: expect.any(String),
+    });
     expect(readFileSync(join(fixture.repositoryRoot, "left.ts"), "utf8")).toContain("agent-result");
     expect(JSON.parse(readFileSync(
       join(fixture.runDir, "artifacts", "workspace-publication.json"),
       "utf8",
     ))).toMatchObject({ status: "published", runId: "run-123" });
+    expect(existsSync(fixture.node.worktreeRoot)).toBe(false);
+
+    const replay = runRunnerV2CompletionEntrypoint({
+      sessionName: "publisher-run-123",
+      chainPath: fixture.chainPath,
+      env: {
+        MENTIKO_RUN_ID: "run-123",
+        MENTIKO_RUN_DIR: fixture.runDir,
+        EVENTS_DIR: fixture.eventsDir,
+        STATE_DIR: fixture.stateDir,
+        MENTIKO_MONITOR_COMPLETION_LATCH: "durable-marker",
+      },
+      now: new Date("2026-08-09T20:03:00.000Z"),
+    });
+    expect(replay).toMatchObject({ decision: "terminal" });
+    expect(existsSync(fixture.node.worktreeRoot)).toBe(false);
   });
 
   it("blocks terminal success without touching the source when its CAS detects drift", () => {
@@ -280,6 +304,7 @@ describe("runner-v2 completion entrypoint", () => {
     expect(git(fixture.repositoryRoot, "status", "--porcelain=v1", "-z")).toBe(sourceBefore);
     expect(readFileSync(join(fixture.repositoryRoot, "left.ts"), "utf8")).toContain("'base'");
     expect(readFileSync(join(fixture.repositoryRoot, "right.ts"), "utf8")).toContain("user-edit");
+    expect(existsSync(fixture.node.worktreeRoot)).toBe(true);
   });
 
   it("blocks the edge before downstream effects when parallel node edits conflict", () => {
@@ -348,6 +373,7 @@ describe("runner-v2 completion entrypoint", () => {
       attemptId: attempt.id,
     });
     for (const phase of [
+      "queued",
       "lease_acquired",
       "pty_allocated",
       "process_spawned",

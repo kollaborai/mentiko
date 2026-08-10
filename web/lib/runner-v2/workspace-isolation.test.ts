@@ -13,6 +13,8 @@ import {
   initializeGitRunWorkspaceIsolation,
   integrateGitNodeWorkspaceResult,
   publishGitRunWorkspaceResult,
+  readGitNodeIntegrationResult,
+  removeIntegratedGitNodeWorkspace,
 } from "./workspace-isolation";
 import { captureGitWorkspaceSnapshot } from "./workspace-snapshot";
 
@@ -144,6 +146,88 @@ describe("Git node worktree isolation", () => {
     expect(integrateGitNodeWorkspaceResult({ runWorkspace, result: rightResult })).toEqual(rightIntegration);
   });
 
+  it("removes an integrated node worktree while preserving idempotent replay evidence", () => {
+    const fixture = repository();
+    const { runWorkspace } = initialize({ ...fixture, runId: "run-cleanup" });
+    const node = allocateGitNodeWorkspace({
+      runWorkspace,
+      agentId: "cleanup",
+      attemptId: "attempt-cleanup",
+    });
+    writeFileSync(join(node.workspacePath, "left.ts"), "export const left = 'cleaned';\n");
+    const result = finalizeGitNodeWorkspace({ runWorkspace, node });
+    const integration = integrateGitNodeWorkspaceResult({ runWorkspace, result });
+
+    expect(removeIntegratedGitNodeWorkspace({
+      runWorkspace,
+      agentId: node.agentId,
+      attemptId: node.attemptId,
+    })).toBe("removed");
+    expect(existsSync(node.worktreeRoot)).toBe(false);
+    expect(() => git(fixture.root, "show-ref", "--verify", node.attemptRef)).toThrow();
+    expect(readGitNodeIntegrationResult({
+      runWorkspace,
+      agentId: node.agentId,
+      attemptId: node.attemptId,
+    })).toEqual(integration);
+    expect(integrateGitNodeWorkspaceResult({ runWorkspace, result })).toEqual(integration);
+    expect(removeIntegratedGitNodeWorkspace({
+      runWorkspace,
+      agentId: node.agentId,
+      attemptId: node.attemptId,
+    })).toBe("already-removed");
+  });
+
+  it("fails closed when immutable integration replay evidence is corrupted", () => {
+    const fixture = repository();
+    const { runWorkspace } = initialize({ ...fixture, runId: "run-corrupt-integration" });
+    const node = allocateGitNodeWorkspace({
+      runWorkspace,
+      agentId: "corrupt",
+      attemptId: "attempt-corrupt",
+    });
+    writeFileSync(join(node.workspacePath, "left.ts"), "export const left = 'changed';\n");
+    const result = finalizeGitNodeWorkspace({ runWorkspace, node });
+    const integration = integrateGitNodeWorkspaceResult({ runWorkspace, result });
+    writeFileSync(integration.artifactPath, JSON.stringify({
+      ...integration,
+      status: "conflict",
+      conflictPaths: [],
+    }));
+
+    expect(() => readGitNodeIntegrationResult({
+      runWorkspace,
+      agentId: node.agentId,
+      attemptId: node.attemptId,
+    })).toThrow(/node integration identity mismatch/);
+  });
+
+  it("keeps a capacity-delayed parallel node on its routing-time edge commit", () => {
+    const fixture = repository();
+    const { runWorkspace } = initialize({ ...fixture, runId: "run-delayed-parallel" });
+    const edgeCommit = currentGitRunIntegrationCommit(runWorkspace);
+    const first = allocateGitNodeWorkspace({
+      runWorkspace,
+      agentId: "first",
+      attemptId: "attempt-delayed-first",
+      baseCommit: edgeCommit,
+    });
+    writeFileSync(join(first.workspacePath, "left.ts"), "export const left = 'first-result';\n");
+    const firstResult = finalizeGitNodeWorkspace({ runWorkspace, node: first });
+    integrateGitNodeWorkspaceResult({ runWorkspace, result: firstResult });
+    expect(currentGitRunIntegrationCommit(runWorkspace)).not.toBe(edgeCommit);
+
+    const delayed = allocateGitNodeWorkspace({
+      runWorkspace,
+      agentId: "delayed",
+      attemptId: "attempt-delayed-second",
+      baseCommit: edgeCommit,
+    });
+
+    expect(delayed.baseCommit).toBe(edgeCommit);
+    expect(readFileSync(join(delayed.workspacePath, "left.ts"), "utf8")).toContain("'base'");
+  });
+
   it("stops on overlapping edits and leaves the run integration ref unchanged", () => {
     const fixture = repository();
     const { runWorkspace } = initialize(fixture);
@@ -174,6 +258,12 @@ describe("Git node worktree isolation", () => {
       status: "conflict",
       conflictPaths: ["shared.ts"],
     });
+    expect(removeIntegratedGitNodeWorkspace({
+      runWorkspace,
+      agentId: second.agentId,
+      attemptId: second.attemptId,
+    })).toBe("preserved-conflict");
+    expect(existsSync(second.worktreeRoot)).toBe(true);
   });
 
   it("captures only the registered nested workspace even if an agent commits sibling edits", () => {

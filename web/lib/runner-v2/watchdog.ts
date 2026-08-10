@@ -19,6 +19,7 @@ import type { AdapterOperation } from "@/lib/runner-v2/adapters";
 import { enqueueExternalEffectsOnce } from "@/lib/runner-v2/external-effects";
 import { withExclusiveFileClaim } from "@/lib/runner-v2/file-claim";
 import { shouldRecordTaskExecutionMetadata } from "@/lib/runs/run-provenance";
+import { releaseRunAgentCapacitySlots } from "@/lib/runner-v2/agent-attempt";
 
 const RESUME_GRACE_MS = 120_000;
 const MISSING_SESSION_STARTUP_GRACE_MS = 10_000;
@@ -510,6 +511,17 @@ async function finalizeWatchdogTerminalization(input: {
   let marker = watchdogMarker(currentRun);
   if (!marker) return;
   const assessment = markerAssessment(marker);
+
+  try {
+    releaseRunAgentCapacitySlots({
+      runJsonPath: input.scopedRun.runJsonPath,
+      now: input.now,
+    });
+    currentRun = readRunJson(input.scopedRun.runJsonPath);
+    marker = watchdogMarker(currentRun)!;
+  } catch (error) {
+    input.result.errors.push(`capacity release failed for ${currentRun.id}: ${errorMessage(error)}`);
+  }
 
   if (!marker.eventEmittedAt) {
     try {

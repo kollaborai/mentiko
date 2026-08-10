@@ -696,6 +696,54 @@ describe("runner-v2 adapters", () => {
     expect(existsSync(join(eventsDir, "archive", "trigger.event"))).toBe(true);
   });
 
+  it("accepts a durable queued target without waiting for its PTY", () => {
+    const dir = tempDir();
+    const runJsonPath = seedRun(dir);
+    updateRunJson(runJsonPath, (current) => ({
+      ...current!,
+      agents: [{
+        id: "reviewer",
+        name: "Reviewer",
+        status: "pending",
+        session: "reviewer-run-123",
+      }],
+      runnerV2: {
+        attempts: [{
+          id: "run-123:reviewer:1",
+          runId: "run-123",
+          agentId: "reviewer",
+          phase: "queued",
+          desiredPhase: "lease_acquired",
+          observedPhase: "queued",
+          instructionLedger: [],
+          recoveryDecisionCount: 0,
+          createdAt: "2026-08-09T20:00:00.000Z",
+          updatedAt: "2026-08-09T20:00:00.000Z",
+          transitions: [{
+            from: "created",
+            to: "queued",
+            at: "2026-08-09T20:00:00.000Z",
+          }],
+        }],
+      },
+    }));
+    (spawnSync as jest.Mock).mockClear();
+
+    expect(startLaunch({
+      kind: "single",
+      agentIds: ["reviewer"],
+      command: "echo launch-reviewer",
+      env: { MENTIKO_RUN_ID: "run-123" },
+    }, { runJsonPath, stateDir: dir })).toMatchObject({
+      targets: [{
+        agentId: "reviewer",
+        attemptId: "run-123:reviewer:1",
+        session: "reviewer-run-123",
+      }],
+    });
+    expect(spawnSync).not.toHaveBeenCalled();
+  });
+
   it("accepts a newly launched target that reaches terminal release and replays by exact receipt", () => {
     const dir = tempDir();
     const runJsonPath = seedRun(dir);

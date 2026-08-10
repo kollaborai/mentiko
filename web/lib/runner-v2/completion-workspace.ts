@@ -1,10 +1,13 @@
 import type { RunRecord } from "@/lib/runner-v2/run-state";
 import {
+  currentGitRunIntegrationCommit,
   finalizeGitNodeWorkspace,
   initializeGitRunWorkspaceIsolation,
   integrateGitNodeWorkspaceResult,
   publishGitRunWorkspaceResult,
+  readGitNodeIntegrationResult,
   readGitNodeWorkspace,
+  removeIntegratedGitNodeWorkspace,
   type GitNodeIntegrationResult,
   type GitRunWorkspacePublicationResult,
 } from "@/lib/runner-v2/workspace-isolation";
@@ -45,6 +48,12 @@ export function integrateCompletedNodeWorkspace(input: {
     baseline: workspaceExecution.baseline,
     now: input.now,
   });
+  const persisted = readGitNodeIntegrationResult({
+    runWorkspace,
+    agentId: input.agentId,
+    attemptId: input.attemptId,
+  });
+  if (persisted) return persisted;
   const node = readGitNodeWorkspace({
     runWorkspace,
     agentId: input.agentId,
@@ -52,6 +61,35 @@ export function integrateCompletedNodeWorkspace(input: {
   });
   const result = finalizeGitNodeWorkspace({ runWorkspace, node, now: input.now });
   return integrateGitNodeWorkspaceResult({ runWorkspace, result, now: input.now });
+}
+
+export function cleanupIntegratedNodeWorkspace(input: {
+  run: RunRecord;
+  runId: string;
+  runDir: string;
+  agentId: string;
+  attemptId: string;
+  now?: Date;
+}): "removed" | "already-removed" | "preserved-conflict" | undefined {
+  const workspaceExecution = input.run.workspaceExecution;
+  if (
+    !workspaceExecution
+    || workspaceExecution.tracking !== "git"
+    || workspaceExecution.isolation !== "git-worktree"
+  ) {
+    return undefined;
+  }
+  const runWorkspace = initializeGitRunWorkspaceIsolation({
+    runId: input.runId,
+    runDir: input.runDir,
+    baseline: workspaceExecution.baseline,
+    now: input.now,
+  });
+  return removeIntegratedGitNodeWorkspace({
+    runWorkspace,
+    agentId: input.agentId,
+    attemptId: input.attemptId,
+  });
 }
 
 export function integrateAcceptedCompletionWorkspace(input: {
@@ -95,4 +133,27 @@ export function publishCompletedRunWorkspace(input: {
     baseline: workspaceExecution.baseline,
     now: input.now,
   });
+}
+
+export function currentRunWorkspaceCommit(input: {
+  run: RunRecord;
+  runId: string;
+  runDir: string;
+  now?: Date;
+}): string | undefined {
+  const workspaceExecution = input.run.workspaceExecution;
+  if (
+    !workspaceExecution
+    || workspaceExecution.tracking !== "git"
+    || workspaceExecution.isolation !== "git-worktree"
+  ) {
+    return undefined;
+  }
+  const runWorkspace = initializeGitRunWorkspaceIsolation({
+    runId: input.runId,
+    runDir: input.runDir,
+    baseline: workspaceExecution.baseline,
+    now: input.now,
+  });
+  return currentGitRunIntegrationCommit(runWorkspace);
 }

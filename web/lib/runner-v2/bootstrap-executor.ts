@@ -10,6 +10,7 @@ import {
 } from "@/lib/runner-v2/agent-bootstrap-plan";
 import { createRunnerAgentState, transitionRunnerAgentState } from "@/lib/runner-v2/agent-state";
 import { CONCURRENCY_CAP_BLOCKED_REASON_PREFIX } from "@/lib/runner-v2/concurrency-admission";
+import { waitForTypedAgentCapacity } from "@/lib/runner-v2/agent-capacity";
 import { classifyCliReadiness, type CliReadinessResult } from "@/lib/runner-v2/readiness-policy";
 import { isComposerHoldingInput } from "@/lib/runner-v2/composer-submit";
 import {
@@ -254,16 +255,35 @@ export async function executeLocalBootstrap(
       });
       return;
     }
-    transitionAgentAttempt({ runJsonPath, attemptId: attempt.id, to: "lease_acquired" });
     const nodeWorkspace = runWorkspace
       ? allocateGitNodeWorkspace({
         runWorkspace,
         agentId: plan.agentId,
         attemptId: attempt.id,
+        baseCommit: context.env.MENTIKO_WORKSPACE_BASE_COMMIT,
       })
       : undefined;
     if (nodeWorkspace) {
       executionPlan = retargetAgentBootstrapPlan(plan, nodeWorkspace.workspacePath, context.env);
+    }
+    transitionAgentAttempt({ runJsonPath, attemptId: attempt.id, to: "queued" });
+    markRunAgentQueued(runJsonPath, plan);
+    const agentAdmission = await acquireAgentCapacityAdmission({
+      runJsonPath,
+      runId: context.runId,
+      attemptId: attempt.id,
+      env: context.env,
+    });
+    if (!agentAdmission.admitted) {
+      transitionAgentAttempt({
+        runJsonPath,
+        attemptId: attempt.id,
+        to: "human_action_required",
+        reason: "agent_capacity_timeout",
+        detail: agentAdmission.reason,
+      });
+      markRunAgentBlocked(runJsonPath, plan.agentId, agentAdmission.reason);
+      return;
     }
     const workspaceHandoff = captureAgentWorkspaceHandoff({
       runJsonPath,
@@ -365,6 +385,31 @@ export async function executeLocalBootstrap(
     releaseAgentAttempt({ runJsonPath, attemptId: attempt.id });
     throw error;
   }
+}
+
+function markRunAgentQueued(
+  runJsonPath: string,
+  plan: Pick<AgentBootstrapPlan, "agentId" | "agentName" | "sessionName">,
+): void {
+  const queuedAt = new Date().toISOString();
+  updateRunJson(runJsonPath, (current) => {
+    if (!current) throw new Error(`run.json not found: ${runJsonPath}`);
+    const agents = [...(current.agents || [])];
+    const existing = agents.findIndex((agent) => agent.id === plan.agentId);
+    const queued: RunAgentRecord = {
+      ...(existing >= 0 ? agents[existing] : {}),
+      id: plan.agentId,
+      name: plan.agentName,
+      session: plan.sessionName,
+      status: "pending",
+      queuedAt,
+      lastMessage: "queued: waiting for an active agent slot",
+      completed: undefined,
+    };
+    if (existing >= 0) agents[existing] = queued;
+    else agents.push(queued);
+    return { ...current, agents };
+  });
 }
 
 function assertBootstrapLaunchable(
@@ -818,6 +863,41 @@ async function acquireChainAdmission(input: {
     await sleep(pollMs);
     pollMs = Math.min(pollMs * 2, pollMaxMs);
   }
+}
+
+async function acquireAgentCapacityAdmission(input: {
+  runJsonPath: string;
+  runId: string;
+  attemptId: string;
+  env: Record<string, string | undefined>;
+}): Promise<{ admitted: true } | { admitted: false; reason: string }> {
+  const configuredCap = input.env.MENTIKO_CAP_DISABLED === "1"
+    ? 0
+    : Number(input.env.MENTIKO_MAX_ACTIVE_AGENTS ?? input.env.MAX_CONCURRENT_AGENTS ?? 3);
+  if (!Number.isSafeInteger(configuredCap) || configuredCap < 0) {
+    return { admitted: false, reason: "active agent cap must be a non-negative safe integer" };
+  }
+  const maxWaitMs = secondsEnv(input.env.MENTIKO_AGENT_CAP_MAX_WAIT_SECS, 86_400) * 1000;
+  const pollMs = secondsEnv(input.env.MENTIKO_AGENT_CAP_POLL_SECS, 1) * 1000;
+  const pollMaxMs = secondsEnv(input.env.MENTIKO_AGENT_CAP_POLL_MAX_SECS, 5) * 1000;
+  const result = await waitForTypedAgentCapacity({
+    runJsonPath: input.runJsonPath,
+    runId: input.runId,
+    attemptId: input.attemptId,
+    cap: configuredCap,
+    maxWaitMs,
+    pollMs,
+    pollMaxMs,
+  });
+  if (result.status === "admitted") return { admitted: true };
+  if (result.status === "timeout") {
+    const waitedSeconds = Math.floor(result.waitedMs / 1000);
+    return {
+      admitted: false,
+      reason: `agent capacity: waited ${waitedSeconds}s for a slot (${result.active} active, limit ${result.cap})`,
+    };
+  }
+  return { admitted: false, reason: result.reason };
 }
 
 function secondsEnv(value: string | undefined, fallback: number): number {

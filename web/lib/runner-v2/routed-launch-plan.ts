@@ -34,22 +34,19 @@ export function buildRoutedLaunchPlans(decision: RoutingDecision, context: Route
   }
 
   if (decision.fanIn || decision.waitFor || decision.quorum || decision.onError) {
-    return decision.agentIds.map((agentId) => {
-      const invocation = runnerInvocation(context, [agentId]);
-      return {
-        kind: "fan-out",
-        agentIds: [agentId],
-        command: runnerCommand(invocation),
-        cli: invocation,
-        env: {
-          ...context.env,
-          ...typedLaunchEnv(context),
-          AGENT_FAN_GROUP_AGENT_ID: agentId,
-          ...(decision.fanIn ? { AGENT_FAN_GROUP_ID: context.fanGroupId || decision.fanIn } : {}),
-        },
-        logPath: join(context.runDir, `fanout-${agentId}.log`),
-      };
-    });
+    const invocation = runnerInvocation(context, decision.agentIds);
+    return [{
+      kind: "fan-out",
+      agentIds: [...decision.agentIds],
+      command: runnerCommand(invocation),
+      cli: invocation,
+      env: {
+        ...context.env,
+        ...typedLaunchEnv(context),
+        ...(decision.fanIn ? { AGENT_FAN_GROUP_ID: context.fanGroupId || decision.fanIn } : {}),
+      },
+      logPath: join(context.runDir, "fanout.log"),
+    }];
   }
 
   // The adapter waits for this CLI to exit and then verifies durable

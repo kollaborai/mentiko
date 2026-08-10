@@ -469,21 +469,21 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
     usage: "runner-v2",
     surfaces: [
       {
-        id: "typed-handoff-cleanup",
-        label: "Read and clear pre-cutover pending handoff evidence",
+        id: "typed-launch-coordinator-liveness",
+        label: "Register and heartbeat one detached coordinator for a routed fan-out",
         owner: "runner-v2",
-        paths: ["web/lib/runner-v2/handoff-liveness.ts", "web/lib/runner-v2/run-state.ts"],
+        paths: ["web/lib/runner-v2/launch-coordinator-state.ts", "web/lib/runner-v2/handoff-liveness.ts"],
       },
       {
         id: "typed-handoff-reconciliation",
-        label: "Reconcile and retire live legacy pending handoffs",
+        label: "Clear started targets and reject dead or stale coordinator liveness",
         owner: "runner-v2",
-        paths: ["web/lib/runner-v2/handoff-liveness.ts", "web/lib/runs/run-reconciler.ts"],
+        paths: ["web/lib/runner-v2/handoff-liveness.ts", "web/lib/runner-v2/run-state.ts", "web/lib/runner-v2/watchdog.ts"],
       },
     ],
     legacyEquivalent: {
-      summary: "Previous typed completion code wrote these records around detached routed launches. Synchronous typed CLI acceptance now proves delivery through run agent, session, and AgentAttempt state, so no new pending handoff receipt is created.",
-      paths: ["web/lib/runner-v2/adapters.ts"],
+      summary: "Replaces one detached waiting process per fan-out target with one heartbeat-tracked coordinator while durable AgentAttempt queue state remains the launch acceptance authority.",
+      paths: ["web/lib/runner-v2/adapters.ts", "web/lib/runner-v2/routed-launch-plan.ts"],
     },
   },
   "runner-agent-state": {

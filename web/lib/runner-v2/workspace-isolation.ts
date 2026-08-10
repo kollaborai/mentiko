@@ -462,6 +462,8 @@ export function allocateGitNodeWorkspace(input: {
   runWorkspace: GitRunWorkspaceIsolation;
   agentId: string;
   attemptId: string;
+  /** Pin every target on the same graph edge to its routing-time commit. */
+  baseCommit?: string;
   now?: Date;
 }): GitNodeWorkspace {
   const runWorkspace = assertRunIsolation(input.runWorkspace, {
@@ -492,10 +494,27 @@ export function allocateGitNodeWorkspace(input: {
               runWorkspace.sourceRepositoryRoot,
               runWorkspace.integrationRef,
             );
-            ensureRef(runWorkspace.sourceRepositoryRoot, attemptRef, current);
-            return current;
+            const requested = input.baseCommit
+              ? runGit(runWorkspace.sourceRepositoryRoot, [
+                "rev-parse",
+                "--verify",
+                `${input.baseCommit}^{commit}`,
+              ])
+              : current;
+            if (!isAncestor(runWorkspace.sourceRepositoryRoot, requested, current)) {
+              throw new WorkspaceIsolationError(
+                `requested node base is not in the run integration history: ${requested}`,
+              );
+            }
+            ensureRef(runWorkspace.sourceRepositoryRoot, attemptRef, requested);
+            return requested;
           },
           { waitTimeoutMs: 30_000 },
+        );
+      }
+      if (input.baseCommit && baseCommit !== input.baseCommit) {
+        throw new WorkspaceIsolationError(
+          `node workspace base differs from its routing-time commit: ${baseCommit}`,
         );
       }
 
@@ -729,10 +748,22 @@ function integrationArtifactPath(
   runWorkspace: GitRunWorkspaceIsolation,
   result: GitNodeWorkspaceResult,
 ): string {
+  return integrationArtifactPathForAttempt(
+    runWorkspace,
+    result.agentId,
+    result.attemptId,
+  );
+}
+
+function integrationArtifactPathForAttempt(
+  runWorkspace: GitRunWorkspaceIsolation,
+  agentId: string,
+  attemptId: string,
+): string {
   return join(
     runWorkspace.runDir,
     "artifacts",
-    `${safeArtifactSegment(result.agentId)}-workspace-integration-${digest(result.attemptId, 16)}.json`,
+    `${safeArtifactSegment(agentId)}-workspace-integration-${digest(attemptId, 16)}.json`,
   );
 }
 
@@ -741,17 +772,113 @@ function assertIntegrationResult(
   integration: GitNodeIntegrationResult,
   artifactPath: string,
 ): GitNodeIntegrationResult {
+  assertPersistedIntegrationResult(integration, artifactPath, result.runId, result.agentId, result.attemptId);
+  if (
+    integration.baseCommit !== result.baseCommit
+    || integration.resultCommit !== result.resultCommit
+  ) {
+    throw new WorkspaceIsolationError(`node integration identity mismatch: ${artifactPath}`);
+  }
+  return integration;
+}
+
+function assertPersistedIntegrationResult(
+  integration: GitNodeIntegrationResult,
+  artifactPath: string,
+  runId: string,
+  agentId: string,
+  attemptId: string,
+): void {
+  const statuses = new Set<GitNodeIntegrationStatus>([
+    "integrated",
+    "already-integrated",
+    "no-changes",
+    "conflict",
+  ]);
+  const commits = [
+    integration.baseCommit,
+    integration.resultCommit,
+    integration.previousIntegrationCommit,
+    integration.integrationCommit,
+    ...(integration.mergeCommit ? [integration.mergeCommit] : []),
+  ];
+  const validTimestamp = typeof integration.integratedAt === "string"
+    && Number.isFinite(Date.parse(integration.integratedAt));
+  const validConflictPaths = Array.isArray(integration.conflictPaths)
+    && integration.conflictPaths.every((path) => typeof path === "string" && path.length > 0);
+  const conflictPaths = validConflictPaths ? integration.conflictPaths : [];
+  const validStatusInvariant = validConflictPaths && (() => {
+    switch (integration.status) {
+      case "conflict":
+        return conflictPaths.length > 0
+          && integration.integrationCommit === integration.previousIntegrationCommit
+          && !integration.mergeCommit;
+      case "no-changes":
+        return conflictPaths.length === 0
+          && integration.resultCommit === integration.baseCommit
+          && integration.integrationCommit === integration.previousIntegrationCommit
+          && !integration.mergeCommit;
+      case "already-integrated":
+        return conflictPaths.length === 0
+          && integration.integrationCommit === integration.previousIntegrationCommit
+          && !integration.mergeCommit;
+      case "integrated":
+        return conflictPaths.length === 0
+          && (integration.mergeCommit
+            ? integration.mergeCommit === integration.integrationCommit
+            : integration.integrationCommit === integration.resultCommit);
+      default:
+        return false;
+    }
+  })();
   if (
     integration.version !== WORKSPACE_ISOLATION_VERSION
     || integration.kind !== "git-node-integration"
-    || integration.runId !== result.runId
-    || integration.agentId !== result.agentId
-    || integration.attemptId !== result.attemptId
-    || integration.baseCommit !== result.baseCommit
-    || integration.resultCommit !== result.resultCommit
+    || integration.runId !== runId
+    || integration.agentId !== agentId
+    || integration.attemptId !== attemptId
     || integration.artifactPath !== artifactPath
+    || !statuses.has(integration.status)
+    || commits.some((commit) => typeof commit !== "string" || commit.length === 0)
+    || !validTimestamp
+    || !validConflictPaths
+    || !validStatusInvariant
   ) {
     throw new WorkspaceIsolationError(`node integration identity mismatch: ${artifactPath}`);
+  }
+}
+
+export function readGitNodeIntegrationResult(input: {
+  runWorkspace: GitRunWorkspaceIsolation;
+  agentId: string;
+  attemptId: string;
+}): GitNodeIntegrationResult | undefined {
+  const runWorkspace = assertRunIsolation(input.runWorkspace, {
+    runId: input.runWorkspace.runId,
+    statePath: input.runWorkspace.statePath,
+  });
+  const artifactPath = integrationArtifactPathForAttempt(
+    runWorkspace,
+    input.agentId,
+    input.attemptId,
+  );
+  if (!existsSync(artifactPath)) return undefined;
+  const integration = readJson<GitNodeIntegrationResult>(artifactPath);
+  assertPersistedIntegrationResult(
+    integration,
+    artifactPath,
+    runWorkspace.runId,
+    input.agentId,
+    input.attemptId,
+  );
+  for (const commit of [
+    integration.baseCommit,
+    integration.resultCommit,
+    integration.previousIntegrationCommit,
+    integration.integrationCommit,
+    ...(integration.mergeCommit ? [integration.mergeCommit] : []),
+  ]) {
+    runGit(runWorkspace.sourceRepositoryRoot, ["rev-parse", "--verify", `${commit}^{commit}`]);
   }
   return integration;
 }
@@ -927,6 +1054,53 @@ export function currentGitRunIntegrationCommit(
     statePath: runWorkspace.statePath,
   });
   return requiredRef(current.sourceRepositoryRoot, current.integrationRef);
+}
+
+export function removeIntegratedGitNodeWorkspace(input: {
+  runWorkspace: GitRunWorkspaceIsolation;
+  agentId: string;
+  attemptId: string;
+}): "removed" | "already-removed" | "preserved-conflict" {
+  const runWorkspace = assertRunIsolation(input.runWorkspace, {
+    runId: input.runWorkspace.runId,
+    statePath: input.runWorkspace.statePath,
+  });
+  const integration = readGitNodeIntegrationResult(input);
+  if (!integration) {
+    throw new WorkspaceIsolationError(
+      `cannot remove node workspace before integration: ${input.attemptId}`,
+    );
+  }
+  if (integration.status === "conflict") return "preserved-conflict";
+  const recordPath = nodeRecordPath(runWorkspace, input.attemptId);
+  if (!existsSync(recordPath)) {
+    throw new WorkspaceIsolationError(`node workspace record is missing: ${recordPath}`);
+  }
+  const node = readJson<GitNodeWorkspace>(recordPath);
+  const nodeKey = digest(input.attemptId, 32);
+  const expectedWorktreeRoot = join(runWorkspace.worktreesRoot, nodeKey);
+  const expectedAttemptRef = `${runRefPrefix(runWorkspace.runId)}/attempts/${nodeKey}`;
+  if (
+    node.runId !== runWorkspace.runId
+    || node.agentId !== input.agentId
+    || node.attemptId !== input.attemptId
+    || node.recordPath !== recordPath
+    || node.worktreeRoot !== expectedWorktreeRoot
+    || node.attemptRef !== expectedAttemptRef
+  ) {
+    throw new WorkspaceIsolationError(`node workspace cleanup identity mismatch: ${recordPath}`);
+  }
+  const existed = existsSync(node.worktreeRoot);
+  if (existed) {
+    runGit(runWorkspace.sourceRepositoryRoot, [
+      "worktree",
+      "remove",
+      "--force",
+      node.worktreeRoot,
+    ]);
+  }
+  runGit(runWorkspace.sourceRepositoryRoot, ["update-ref", "-d", node.attemptRef]);
+  return existed ? "removed" : "already-removed";
 }
 
 function publicationArtifactPath(runWorkspace: GitRunWorkspaceIsolation): string {

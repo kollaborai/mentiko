@@ -5,7 +5,7 @@ import { join } from "path";
 import { isDeepStrictEqual } from "util";
 import { runQualityGateEventArtifact } from "@/lib/event-artifacts/event-artifact-runner";
 import { applyTypedExecutorPlan, GenerationImportError, killAgentSessions, readTypedRetryAttempt, type AdapterResult } from "@/lib/runner-v2/adapters";
-import { adoptAgentAttemptForCompletion, markAgentAttemptCompletedFromGeneration, readRunnerV2AttemptState, transitionAgentAttempt, type AgentAttemptRecord } from "@/lib/runner-v2/agent-attempt";
+import { adoptAgentAttemptForCompletion, markAgentAttemptCompletedFromGeneration, readRunnerV2AttemptState, releaseAgentCapacitySlot, transitionAgentAttempt, type AgentAttemptRecord } from "@/lib/runner-v2/agent-attempt";
 import { agentOwnsEvent } from "@/lib/runner-v2/completion";
 import { runCompletionPipeline, type CompletionPipelineResult } from "@/lib/runner-v2/completion-pipeline";
 import type { AgentLivenessInput, CompletionRecoveryEvidence } from "@/lib/runner-v2/completion-runner";
@@ -26,6 +26,8 @@ import { triggerDecisionImportReplay } from "@/lib/decisions/decision-auto-advan
 import type { OnCompletePolicy, TerminalCompletionInput } from "@/lib/runner-v2/terminal-plan";
 import config from "@/lib/config";
 import {
+  cleanupIntegratedNodeWorkspace,
+  currentRunWorkspaceCommit,
   integrateAcceptedCompletionWorkspace,
   integrateCompletedNodeWorkspace,
   publishCompletedRunWorkspace,
@@ -98,9 +100,11 @@ export function runRunnerV2CompletionEntrypoint(
   })
     || generationDuplicate;
   if (duplicate) {
+    let latestAttempt: AgentAttemptRecord | undefined;
+    let integration: GitNodeIntegrationResult | undefined;
     if (!input.dryRun) {
-      const latestAttempt = latestAgentAttempt(runJsonPath, agent.id);
-      const integration = latestAttempt
+      latestAttempt = latestAgentAttempt(runJsonPath, agent.id);
+      integration = latestAttempt
         ? integrateCompletedNodeWorkspace({
           run,
           runId,
@@ -144,8 +148,21 @@ export function runRunnerV2CompletionEntrypoint(
     }
     if (!input.dryRun && generationDuplicate) {
       killAgentSessions(input.sessionName, { stateDir, runId, env });
+      if (latestAttempt) {
+        releaseAgentCapacitySlot({ runJsonPath, attemptId: latestAttempt.id, now: input.now });
+      }
       updateRunAgent(runJsonPath, agent.id, "complete", input.now);
       updateRunStatus(runJsonPath, "completed", undefined, input.now);
+    }
+    if (!input.dryRun && latestAttempt && integration && integration.status !== "conflict") {
+      cleanupNodeWorkspaceAfterCompletion({
+        run,
+        runId,
+        runDir,
+        agentId: agent.id,
+        attemptId: latestAttempt.id,
+        now: input.now,
+      });
     }
     return {
       status: "handled",
@@ -224,6 +241,7 @@ export function runRunnerV2CompletionEntrypoint(
       // shell phase-4 parity: the fallback handler never runs after a typed
       // verdict, so the bridge tears down the agent + monitor sessions itself
       killAgentSessions(input.sessionName, { stateDir, runId, env });
+      releaseAgentCapacitySlot({ runJsonPath, attemptId: completionAttempt.id, now: input.now });
     }
     return {
       status: "handled",
@@ -342,6 +360,10 @@ export function runRunnerV2CompletionEntrypoint(
       attemptId: completionAttempt.id,
       pipeline,
     });
+    const routedWorkspaceBaseCommit = workspaceIntegration?.integrationCommit
+      || (!input.dryRun
+        ? currentRunWorkspaceCommit({ run, runId, runDir, now: input.now })
+        : undefined);
     const plan = buildTypedExecutorPlan({
       pipeline,
       allEvents: events,
@@ -373,6 +395,7 @@ export function runRunnerV2CompletionEntrypoint(
           MENTIKO_RUNNER_V2: env.MENTIKO_RUNNER_V2,
           MENTIKO_RUNNER_V2_COMPLETION: env.MENTIKO_RUNNER_V2_COMPLETION,
           MENTIKO_COMPLETION_OCCURRENCE_ID: occurrenceId,
+          MENTIKO_WORKSPACE_BASE_COMMIT: routedWorkspaceBaseCommit,
         },
       },
     });
@@ -433,6 +456,17 @@ export function runRunnerV2CompletionEntrypoint(
       // Runs for every handled verdict — v1 kills sessions unconditionally in
       // phase 4 before its routing decisions; relaunches use fresh sessions.
       killAgentSessions(input.sessionName, { stateDir, runId, env });
+      releaseAgentCapacitySlot({ runJsonPath, attemptId: completionAttempt.id, now: input.now });
+      if (workspaceIntegration) {
+        cleanupNodeWorkspaceAfterCompletion({
+          run,
+          runId,
+          runDir,
+          agentId: agent.id,
+          attemptId: completionAttempt.id,
+          now: input.now,
+        });
+      }
     }
 
     return {
@@ -454,7 +488,7 @@ export function runRunnerV2CompletionEntrypoint(
       // tear down the PTYs so the watchdog cannot mistake a zombie session for
       // active work. A later completion replay can still retry the idempotent
       // job import and move the run from failed to completed.
-      adoptAgentAttemptForCompletion({
+      const recoveredAttempt = adoptAgentAttemptForCompletion({
         runJsonPath,
         runId,
         agentId: agent.id,
@@ -471,6 +505,7 @@ export function runRunnerV2CompletionEntrypoint(
       });
       updateRunStatus(runJsonPath, "failed", error.message, input.now);
       killAgentSessions(input.sessionName, { stateDir, runId, env });
+      releaseAgentCapacitySlot({ runJsonPath, attemptId: recoveredAttempt.id, now: input.now });
     }
     throw error;
   }
@@ -518,6 +553,11 @@ function blockWorkspaceIntegrationConflict(input: {
     stateDir: input.stateDir,
     runId: input.runId,
     env: input.env,
+  });
+  releaseAgentCapacitySlot({
+    runJsonPath: input.runJsonPath,
+    attemptId: input.attemptId,
+    now: input.now,
   });
 
   return {
@@ -574,6 +614,11 @@ function blockSourceWorkspaceChanged(input: {
     runId: input.runId,
     env: input.env,
   });
+  releaseAgentCapacitySlot({
+    runJsonPath: input.runJsonPath,
+    attemptId: input.attemptId,
+    now: input.now,
+  });
 
   return {
     status: "handled",
@@ -593,6 +638,24 @@ function blockSourceWorkspaceChanged(input: {
     runJsonPath: input.runJsonPath,
     eventsDir: input.eventsDir,
   };
+}
+
+function cleanupNodeWorkspaceAfterCompletion(input: {
+  run: RunRecord;
+  runId: string;
+  runDir: string;
+  agentId: string;
+  attemptId: string;
+  now?: Date;
+}): void {
+  try {
+    cleanupIntegratedNodeWorkspace(input);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.error(
+      `[runner-v2] could not remove integrated node worktree ${input.attemptId}: ${detail}`,
+    );
+  }
 }
 
 /** True exactly when this completion's plan carries the run to terminal "completed". */

@@ -164,7 +164,8 @@ describe("typed runner watchdog", () => {
         pendingHandoffs: [{
           pid: 4321,
           targetAgentIds: ["reviewer"],
-          startedAt: new Date(now.getTime() - 30_000).toISOString(),
+          startedAt: new Date(now.getTime() - 30 * 60_000).toISOString(),
+          heartbeatAt: new Date(now.getTime() - 30_000).toISOString(),
         }],
       },
       agents: [{ id: "reviewer", name: "Reviewer", status: "pending", session: "" }],
@@ -179,6 +180,22 @@ describe("typed runner watchdog", () => {
     const root = tempRoot();
     const run = runRecord(now, {
       taskId: "TASK-43",
+      runnerV2: {
+        attempts: [{
+          id: "attempt-writer",
+          runId: `run-${now.getTime() - 600_000}-fixture`,
+          agentId: "writer",
+          phase: "instructions_submitted",
+          observedPhase: "instructions_submitted",
+          desiredPhase: "completed",
+          capacitySlotAcquiredAt: new Date(now.getTime() - 300_000).toISOString(),
+          instructionLedger: [],
+          recoveryDecisionCount: 0,
+          createdAt: new Date(now.getTime() - 300_000).toISOString(),
+          updatedAt: new Date(now.getTime() - 300_000).toISOString(),
+          transitions: [],
+        }],
+      },
       agents: [
         { id: "writer", name: "Writer", status: "running", session: "writer-dead" },
         { id: "reviewer", name: "Reviewer", status: "pending", session: "" },
@@ -226,6 +243,10 @@ describe("typed runner watchdog", () => {
           externalEffectsQueuedAt: now.toISOString(),
           hooksDispatchedAt: now.toISOString(),
         }),
+        attempts: [expect.objectContaining({
+          id: "attempt-writer",
+          capacitySlotReleasedAt: now.toISOString(),
+        })],
       },
     });
     expect(transport.removed).toContain("writer-dead");

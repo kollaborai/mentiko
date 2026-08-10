@@ -13,7 +13,7 @@ import { consumeRunnerEvents } from "@/lib/runner-v2/event-lifecycle";
 import type { EventSideEffectPlan } from "@/lib/runner-v2/event-side-effects";
 import { completeFanGroupMemberLocked, createFanGroupIfAbsent } from "@/lib/runner-v2/fan-group-store";
 import type { RoutedLaunchPlan } from "@/lib/runner-v2/routed-launch-plan";
-import { readRunJson, updateRunJson, updateRunStatus, type RunAgentRecord, type RunMutationObserver, type RunRecord } from "@/lib/runner-v2/run-state";
+import { readRunJson, updateRunJson, updateRunStatus, type RunMutationObserver, type RunRecord } from "@/lib/runner-v2/run-state";
 import { runnerV2PtyEnv, type RunnerV2Environment } from "@/lib/runner-v2/pty-scope";
 import { enqueueExternalEffectsOnce } from "@/lib/runner-v2/external-effects";
 import { readRunnerV2AttemptState, type AgentAttemptRecord } from "@/lib/runner-v2/agent-attempt";
@@ -267,7 +267,21 @@ interface DurableLaunchAcceptanceRecord {
 }
 
 const DEFAULT_LAUNCH_ACCEPT_TIMEOUT_MS = 420_000;
-const ACCEPTED_RUNNING_PHASES = new Set(["instructions_submitted", "stuck"]);
+const ACCEPTED_ADMISSION_PHASES = new Set([
+  "queued",
+  "lease_acquired",
+  "pty_allocated",
+  "process_spawned",
+  "ready_for_instructions",
+  "instructions_submitted",
+]);
+const ACCEPTED_RUNNING_PHASES = new Set([
+  "pty_allocated",
+  "process_spawned",
+  "ready_for_instructions",
+  "instructions_submitted",
+  "stuck",
+]);
 const ACCEPTED_BLOCKED_PHASES = new Set(["human_action_required", "startup_failed"]);
 const TERMINAL_ATTEMPT_PHASES = new Set(["completed", "completion_failed", "startup_failed", "human_action_required", "stuck", "released"]);
 const ACCEPTED_TERMINAL_AGENT_STATUSES = new Set(["complete", "failed", "cancelled", "error"]);
@@ -281,11 +295,24 @@ export function startLaunch(launch: RoutedLaunchPlan, context: AdapterContext): 
     persistLaunchAcceptance(context.runJsonPath, acceptanceKey, launch.env, alreadyAccepted);
     return alreadyAccepted;
   }
-  const inProgress = inProgressLaunchTarget(context.runJsonPath, targets, launch.env);
+  const alreadyAcceptedTargets = new Set(targets.filter((agentId) => durableLaunchReceipt(
+    context.runJsonPath,
+    [agentId],
+    launch.env,
+    { acceptanceKey },
+  )));
+  const targetsToStart = targets.filter((agentId) => !alreadyAcceptedTargets.has(agentId));
+  const inProgress = inProgressLaunchTarget(context.runJsonPath, targetsToStart, launch.env);
   if (inProgress) {
     throw new RoutedLaunchAcceptanceError("acceptance_pending", `${inProgress} has a bootstrap attempt still in progress`);
   }
-  const baseline = launchAttemptBaseline(context.runJsonPath, targets, launch.env);
+  if (targets.length > 0 && targetsToStart.length === 0) {
+    throw new RoutedLaunchAcceptanceError(
+      "missing_durable_state",
+      `partial receipt could not be reconciled for targets=${targets.join(",")}`,
+    );
+  }
+  const baseline = launchAttemptBaseline(context.runJsonPath, targetsToStart, launch.env);
 
   const logPath = launch.logPath || join(dirname(context.runJsonPath), "launches.log");
   let logFd: number | undefined;
@@ -299,7 +326,10 @@ export function startLaunch(launch: RoutedLaunchPlan, context: AdapterContext): 
     ? process.execPath
     : "/bin/bash";
   const args = launch.cli
-    ? [existsSync(launch.cli.compiledPath) ? launch.cli.compiledPath : launch.cli.developmentPath, ...launch.cli.args]
+    ? [
+      existsSync(launch.cli.compiledPath) ? launch.cli.compiledPath : launch.cli.developmentPath,
+      ...routedCliArgsForTargets(launch, targets, targetsToStart),
+    ]
     : ["-lc", launch.command];
   const child = spawnSync(executable, args, {
     timeout,
@@ -312,6 +342,22 @@ export function startLaunch(launch: RoutedLaunchPlan, context: AdapterContext): 
     },
   });
   if (logFd !== undefined) closeSync(logFd);
+  const partialTargets = targets.flatMap((agentId) => durableLaunchReceipt(
+    context.runJsonPath,
+    [agentId],
+    launch.env,
+    {
+      acceptanceKey,
+      baseline,
+      allowNewTerminal: true,
+    },
+  )?.targets || []);
+  if (partialTargets.length > 0) {
+    persistLaunchAcceptance(context.runJsonPath, acceptanceKey, launch.env, {
+      pid: child.pid,
+      targets: partialTargets,
+    });
+  }
   const accepted = durableLaunchReceipt(context.runJsonPath, targets, launch.env, {
     acceptanceKey,
     baseline,
@@ -335,6 +381,22 @@ export function startLaunch(launch: RoutedLaunchPlan, context: AdapterContext): 
     throw new RoutedLaunchAcceptanceError("missing_durable_state", `targets=${targets.join(",")}`);
   }
   return { pid: child.pid };
+}
+
+function routedCliArgsForTargets(
+  launch: RoutedLaunchPlan,
+  configuredTargets: string[],
+  targetsToStart: string[],
+): string[] {
+  if (!launch.cli || configuredTargets.length === 0) return launch.cli?.args || [];
+  const targetOffset = launch.cli.args.length - configuredTargets.length;
+  if (
+    targetOffset < 0
+    || stableSerialize(launch.cli.args.slice(targetOffset)) !== stableSerialize(configuredTargets)
+  ) {
+    throw new Error("routed launch CLI target suffix does not match its declared agent ids");
+  }
+  return [...launch.cli.args.slice(0, targetOffset), ...targetsToStart];
 }
 
 function durableLaunchReceipt(
@@ -368,6 +430,9 @@ function durableLaunchReceipt(
     const session = typeof agent.session === "string" ? agent.session : "";
     const processSession = attempt.processEvidence?.ptySessionId || "";
     const exactSession = Boolean(session) && processSession === session;
+    const admissionAccepted = agent.status === "pending"
+      && Boolean(session)
+      && ACCEPTED_ADMISSION_PHASES.has(attempt.phase);
     const runningAccepted = agent.status === "running"
       && exactSession
       && ACCEPTED_RUNNING_PHASES.has(attempt.phase);
@@ -380,12 +445,12 @@ function durableLaunchReceipt(
     const recordedAccepted = Boolean(recordedTarget)
       && recordedTarget?.attemptId === attempt.id
       && recordedTarget.session === session
-      && (runningAccepted || blockedAccepted || terminalAccepted);
+      && (admissionAccepted || runningAccepted || blockedAccepted || terminalAccepted);
     const baselineChanged = options.baseline?.get(agentId) !== attemptFingerprint(attempt);
     const newlyTerminalAccepted = options.allowNewTerminal === true
       && baselineChanged
       && terminalAccepted;
-    if (!recordedAccepted && !runningAccepted && !blockedAccepted && !newlyTerminalAccepted) return undefined;
+    if (!recordedAccepted && !admissionAccepted && !runningAccepted && !blockedAccepted && !newlyTerminalAccepted) return undefined;
     pid ??= attempt.processEvidence?.processPid;
     targets.push({ agentId, attemptId: attempt.id, session });
   }
@@ -474,13 +539,33 @@ function persistLaunchAcceptance(
     const runId = env.MENTIKO_RUN_ID || env.RUN_ID || current.id;
     const expected = { occurrenceId, runId, targets };
     if (existing[key]) {
-      const actual = existing[key] as Partial<DurableLaunchAcceptanceRecord>;
-      if (actual.occurrenceId === expected.occurrenceId
-        && actual.runId === expected.runId
-        && stableSerialize(actual.targets) === stableSerialize(expected.targets)) {
-        return current;
+      const actual = readRoutedLaunchAcceptance(current, key);
+      if (!actual
+        || actual.occurrenceId !== expected.occurrenceId
+        || actual.runId !== expected.runId) {
+        throw new Error(`conflicting routed launch acceptance receipt: ${key}`);
       }
-      throw new Error(`conflicting routed launch acceptance receipt: ${key}`);
+      const merged = new Map(actual.targets.map((target) => [target.agentId, target]));
+      for (const target of targets) {
+        const prior = merged.get(target.agentId);
+        if (prior && stableSerialize(prior) !== stableSerialize(target)) {
+          throw new Error(`conflicting routed launch acceptance receipt: ${key}`);
+        }
+        merged.set(target.agentId, target);
+      }
+      const mergedTargets = [...merged.values()].sort((left, right) =>
+        left.agentId.localeCompare(right.agentId));
+      if (stableSerialize(actual.targets) === stableSerialize(mergedTargets)) return current;
+      return {
+        ...current,
+        runnerV2: {
+          ...runnerV2,
+          launchAcceptances: {
+            ...existing,
+            [key]: { ...actual, targets: mergedTargets },
+          },
+        },
+      };
     }
     return {
       ...current,
@@ -491,7 +576,7 @@ function persistLaunchAcceptance(
           [key]: {
             occurrenceId,
             runId,
-            targets,
+            targets: [...targets].sort((left, right) => left.agentId.localeCompare(right.agentId)),
             acceptedAt: new Date().toISOString(),
           } satisfies DurableLaunchAcceptanceRecord,
         },
