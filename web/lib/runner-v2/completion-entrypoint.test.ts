@@ -248,7 +248,13 @@ describe("runner-v2 completion entrypoint", () => {
     });
     expect(readFileSync(join(fixture.repositoryRoot, "left.ts"), "utf8")).toContain("agent-result");
     expect(JSON.parse(readFileSync(
-      join(fixture.runDir, "artifacts", "workspace-publication.json"),
+      join(
+        fixture.runDir,
+        ".internal",
+        "workspace-isolation",
+        "receipts",
+        "publication.json",
+      ),
       "utf8",
     ))).toMatchObject({ status: "published", runId: "run-123" });
     expect(existsSync(fixture.node.worktreeRoot)).toBe(false);

@@ -75,6 +75,7 @@ function assertSameFanGroupDefinition(existing: FanGroupState, expected: FanGrou
     && existing.waitFor === expected.waitFor
     && existing.quorum === expected.quorum
     && existing.onError === expected.onError
+    && existing.workspacePath === expected.workspacePath
     // Replay routing may omit a child that already reached durable active or
     // terminal state. The original occurrence owns the full immutable member
     // set; a replay proposal may only be an ordered subset of that set.
@@ -86,6 +87,10 @@ export function completeFanGroupMemberLocked(
   stateDir: string,
   input: Omit<FanGroupCompletionInput, "group"> & { groupId: string },
   acceptLaunch?: (plan: FanGroupCompletionPlan) => void,
+  resolveLaunchWorkspace?: (plan: FanGroupCompletionPlan) => {
+    workspacePath?: string;
+    workspaceBaseCommit?: string;
+  },
 ): FanGroupCompletionPlan | null {
   assertNoLegacyFanGroupState(stateDir, input.groupId);
   const path = fanGroupPath(stateDir, input.groupId);
@@ -93,7 +98,7 @@ export function completeFanGroupMemberLocked(
     const group = readFanGroup(stateDir, input.groupId);
     if (!group) return null;
 
-    const plan = completeFanGroupMember({
+    let plan = completeFanGroupMember({
       group,
       agentId: input.agentId,
       status: input.status,
@@ -101,6 +106,27 @@ export function completeFanGroupMemberLocked(
     // A fan-in claim is only committed after its launch is durably accepted.
     // If acceptance fails, leave both the claim and completing member replayable
     // under the still-active completion event.
+    if (plan.launch && resolveLaunchWorkspace) {
+      const workspace = resolveLaunchWorkspace(plan);
+      plan = {
+        ...plan,
+        group: {
+          ...plan.group,
+          ...(workspace.workspacePath ? { workspacePath: workspace.workspacePath } : {}),
+          ...(workspace.workspaceBaseCommit
+            ? { workspaceBaseCommit: workspace.workspaceBaseCommit }
+            : {}),
+        },
+        launch: {
+          ...plan.launch,
+          env: {
+            ...plan.launch.env,
+            MENTIKO_WORKSPACE_PATH: workspace.workspacePath,
+            MENTIKO_WORKSPACE_BASE_COMMIT: workspace.workspaceBaseCommit,
+          },
+        },
+      };
+    }
     if (plan.launch) acceptLaunch?.(plan);
     writeFanGroup(stateDir, plan.group);
     return plan;
@@ -155,6 +181,8 @@ function assertFanGroupState(value: unknown, expectedId: string): FanGroupState 
     || (value.onError !== undefined && !isNonEmptyString(value.onError))
     || (value.chainPath !== undefined && !isNonEmptyString(value.chainPath))
     || (value.runId !== undefined && !isNonEmptyString(value.runId))
+    || (value.workspacePath !== undefined && !isNonEmptyString(value.workspacePath))
+    || (value.workspaceBaseCommit !== undefined && !isNonEmptyString(value.workspaceBaseCommit))
     || !isMembers(value.members, value.fanOutAgents, value.completed, value.failed)) {
     throw new Error(`invalid fan-group JSON: ${expectedId}`);
   }

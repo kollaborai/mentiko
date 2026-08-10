@@ -184,6 +184,7 @@
         "relativeWorkspacePath": { "type": "string" },
         "sourceHead": { "type": "string" },
         "sourceBranch": { "type": "string" },
+        "sourceIndexSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
         "baseCommit": { "type": "string" },
         "snapshotCommit": { "type": "string" },
         "snapshotTree": { "type": "string" },

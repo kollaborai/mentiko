@@ -22,6 +22,8 @@ export interface GitWorkspaceSnapshot {
   relativeWorkspacePath: string;
   sourceHead?: string;
   sourceBranch?: string;
+  /** SHA-256 of scoped `git ls-files --stage -z` bytes. */
+  sourceIndexSha256?: string;
   baseCommit?: string;
   snapshotCommit: string;
   snapshotTree: string;
@@ -180,6 +182,9 @@ export function captureGitWorkspaceSnapshot(
   const relativeWorkspacePath = relative(repositoryRoot, sourceWorkspacePath) || ".";
   const sourceHead = runGitOptional(repositoryRoot, ["rev-parse", "--verify", "HEAD"]);
   const sourceBranch = runGitOptional(repositoryRoot, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
+  const sourceIndexSha256 = createHash("sha256")
+    .update(runGitBytes(repositoryRoot, ["ls-files", "--stage", "-z", "--", relativeWorkspacePath]))
+    .digest("hex");
   const baseCommit = input.baseCommit
     ? runGit(repositoryRoot, ["rev-parse", "--verify", `${input.baseCommit}^{commit}`])
     : sourceHead;
@@ -237,6 +242,7 @@ export function captureGitWorkspaceSnapshot(
       relativeWorkspacePath,
       ...(sourceHead ? { sourceHead } : {}),
       ...(sourceBranch ? { sourceBranch } : {}),
+      sourceIndexSha256,
       ...(baseCommit ? { baseCommit } : {}),
       snapshotCommit,
       snapshotTree,

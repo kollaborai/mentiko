@@ -416,9 +416,10 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
     storage: [
       "{runtimeRoot}/runs/{runId}/.internal/workspace-isolation/run-workspace.json",
       "{runtimeRoot}/runs/{runId}/.internal/workspace-isolation/nodes/{attemptSha256}.json",
-      "{runtimeRoot}/runs/{runId}/artifacts/{agentId}-workspace-result-{attemptSha256}.json",
-      "{runtimeRoot}/runs/{runId}/artifacts/{agentId}-workspace-integration-{attemptSha256}.json",
-      "{runtimeRoot}/runs/{runId}/artifacts/workspace-publication.json",
+      "{runtimeRoot}/runs/{runId}/.internal/workspace-isolation/receipts/results/{attemptSha256}.json",
+      "{runtimeRoot}/runs/{runId}/.internal/workspace-isolation/receipts/integrations/{agentAndAttemptSha256}.json",
+      "{runtimeRoot}/runs/{runId}/.internal/workspace-isolation/receipts/publication.json",
+      "{runtimeRoot}/runs/{runId}/.internal/workspace-isolation/receipts/publication-conflicts/{sourceStateSha256}.json",
       "{workspaceGitCommonDir}/refs/mentiko/runs/{runRef}/...",
     ],
     assurance: "typed",
@@ -440,8 +441,9 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
       "The immutable dirty baseline is anchored under a run-owned Git ref. Every graph edge pins its routing-time integration commit, and every target node on that edge starts from that same commit even when capacity delays its worktree bootstrap.",
       "Node result capture seeds a private index from the node launch commit and stages only the registered workspace subtree, preventing sibling edits or agent-created commits outside that scope from entering the result.",
       "Integration is serialized by an owner-bearing claim. Diverged non-overlapping nodes merge through git merge-tree and a synthetic two-parent commit; overlapping edits produce an immutable conflict artifact without moving the integration ref.",
-      "After successful integration, the node worktree and attempt ref are removed while the immutable result and integration artifacts preserve replay evidence. Conflict worktrees stay intact for inspection.",
-      "Terminal publication compares the original branch, HEAD, index, and dirty file snapshot before applying the private integration result. Any source drift leaves the source untouched and writes a source-changed artifact.",
+      "Controller result, integration, and publication receipts live under the private run isolation root, outside the agent artifact directory. Every replay revalidates the node commit/tree and integration ancestry before trusting a receipt.",
+      "After successful integration, the node worktree and attempt ref are removed while the immutable private receipts preserve replay evidence. Conflict worktrees stay intact for inspection.",
+      "Terminal publication compares the original branch, HEAD, scoped index fingerprint, and dirty file snapshot both before planning and immediately before apply. Source drift leaves the source untouched and writes immutable conflict evidence; restoring the exact baseline permits an explicit retry without deleting that evidence.",
     ],
   }),
   shape({
@@ -1074,6 +1076,9 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
     writers: ["web/lib/runner-v2/fan-group-store.ts"],
     readers: ["web/lib/runner-v2/fan-group-store.ts", "web/lib/runner-v2/completion-runner.ts", "web/lib/runner-v2/completion-entrypoint.ts"],
     samples: { root: "project", patterns: [["state", "fan-groups", "*.json"]], format: "json" },
+    notes: [
+      "The group preserves the source workspace identity across fan-out. The fan-in claim reads and persists the private integration ref while holding the fan-group lock, then passes that exact workspace path and routing-time commit to the durable launch job.",
+    ],
   }),
   shape({
     id: "run-artifacts",

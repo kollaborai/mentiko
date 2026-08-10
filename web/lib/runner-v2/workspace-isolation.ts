@@ -120,6 +120,8 @@ export interface GitRunWorkspacePublicationResult {
   publishedAt: string;
   sourceSnapshot: GitWorkspaceSnapshot;
   sourceChanges: GitWorkspaceChangeSet;
+  /** Verified source state after a successful apply or crash-recovery match. */
+  publishedSnapshot?: GitWorkspaceSnapshot;
 }
 
 export class WorkspaceIsolationError extends Error {
@@ -408,11 +410,17 @@ function nodeRecordPath(runWorkspace: GitRunWorkspaceIsolation, attemptId: strin
   return join(runWorkspace.isolationRoot, "nodes", `${digest(attemptId, 32)}.json`);
 }
 
-function assertNodeWorkspace(
+function assertNodeWorkspaceRecord(
   runWorkspace: GitRunWorkspaceIsolation,
   node: GitNodeWorkspace,
   expected: { agentId: string; attemptId: string; recordPath: string },
 ): GitNodeWorkspace {
+  const nodeKey = digest(expected.attemptId, 32);
+  const expectedWorktreeRoot = join(runWorkspace.worktreesRoot, nodeKey);
+  const expectedWorkspacePath = runWorkspace.relativeWorkspacePath === "."
+    ? expectedWorktreeRoot
+    : join(expectedWorktreeRoot, runWorkspace.relativeWorkspacePath);
+  const expectedAttemptRef = `${runRefPrefix(runWorkspace.runId)}/attempts/${nodeKey}`;
   if (
     node.version !== WORKSPACE_ISOLATION_VERSION
     || node.kind !== "git-node-worktree"
@@ -421,9 +429,31 @@ function assertNodeWorkspace(
     || node.attemptId !== expected.attemptId
     || node.recordPath !== expected.recordPath
     || node.relativeWorkspacePath !== runWorkspace.relativeWorkspacePath
+    || node.worktreeRoot !== expectedWorktreeRoot
+    || node.workspacePath !== expectedWorkspacePath
+    || node.attemptRef !== expectedAttemptRef
   ) {
     throw new WorkspaceIsolationError(`node workspace identity mismatch: ${expected.recordPath}`);
   }
+  const baseCommit = runGit(
+    runWorkspace.sourceRepositoryRoot,
+    ["rev-parse", "--verify", `${node.baseCommit}^{commit}`],
+  );
+  if (
+    baseCommit !== node.baseCommit
+    || !isAncestor(runWorkspace.sourceRepositoryRoot, runWorkspace.baselineCommit, node.baseCommit)
+  ) {
+    throw new WorkspaceIsolationError(`node workspace base is outside the run history: ${node.baseCommit}`);
+  }
+  return node;
+}
+
+function assertNodeWorkspace(
+  runWorkspace: GitRunWorkspaceIsolation,
+  value: GitNodeWorkspace,
+  expected: { agentId: string; attemptId: string; recordPath: string },
+): GitNodeWorkspace {
+  const node = assertNodeWorkspaceRecord(runWorkspace, value, expected);
   if (!existsSync(node.worktreeRoot)) {
     throw new WorkspaceIsolationError(`node worktree is missing: ${node.worktreeRoot}`);
   }
@@ -446,6 +476,7 @@ function assertNodeWorkspace(
       );
     }
     const result = assertNodeResult(
+      runWorkspace,
       node,
       readJson<GitNodeWorkspaceResult>(resultArtifact),
       resultArtifact,
@@ -477,11 +508,17 @@ export function allocateGitNodeWorkspace(input: {
     join(runWorkspace.isolationRoot, "claims", "nodes", `${nodeKey}.claim`),
     () => {
       if (existsSync(recordPath)) {
-        return assertNodeWorkspace(runWorkspace, readJson<GitNodeWorkspace>(recordPath), {
+        const existing = assertNodeWorkspace(runWorkspace, readJson<GitNodeWorkspace>(recordPath), {
           agentId: input.agentId,
           attemptId: input.attemptId,
           recordPath,
         });
+        if (input.baseCommit && existing.baseCommit !== input.baseCommit) {
+          throw new WorkspaceIsolationError(
+            `node workspace base differs from its routing-time commit: ${existing.baseCommit}`,
+          );
+        }
+        return existing;
       }
 
       const attemptRef = `${runRefPrefix(runWorkspace.runId)}/attempts/${nodeKey}`;
@@ -591,9 +628,10 @@ function nodeResultArtifactPath(
   node: GitNodeWorkspace,
 ): string {
   return join(
-    runWorkspace.runDir,
-    "artifacts",
-    `${safeArtifactSegment(node.agentId)}-workspace-result-${digest(node.attemptId, 16)}.json`,
+    runWorkspace.isolationRoot,
+    "receipts",
+    "results",
+    `${digest(node.attemptId, 32)}.json`,
   );
 }
 
@@ -607,23 +645,29 @@ function baseSnapshotForNode(
     kind: "git",
     capturedAt,
     sourceWorkspacePath: node.workspacePath,
-    repositoryRoot: node.worktreeRoot,
+    // Compare immutable commit objects through the source repository so replay
+    // remains valid after the disposable node worktree has been removed.
+    repositoryRoot: runWorkspace.sourceRepositoryRoot,
     gitCommonDir: runWorkspace.gitCommonDir,
     relativeWorkspacePath: node.relativeWorkspacePath,
     sourceHead: node.baseCommit,
     baseCommit: node.baseCommit,
     snapshotCommit: node.baseCommit,
-    snapshotTree: runGit(node.worktreeRoot, ["rev-parse", `${node.baseCommit}^{tree}`]),
+    snapshotTree: runGit(runWorkspace.sourceRepositoryRoot, ["rev-parse", `${node.baseCommit}^{tree}`]),
     dirtyFromHead: false,
   };
 }
 
 function assertNodeResult(
+  runWorkspace: GitRunWorkspaceIsolation,
   node: GitNodeWorkspace,
   result: GitNodeWorkspaceResult,
   artifactPath: string,
 ): GitNodeWorkspaceResult {
+  const snapshot = result?.snapshot;
   if (
+    !result
+    ||
     result.version !== WORKSPACE_ISOLATION_VERSION
     || result.kind !== "git-node-result"
     || result.runId !== node.runId
@@ -631,16 +675,75 @@ function assertNodeResult(
     || result.attemptId !== node.attemptId
     || result.baseCommit !== node.baseCommit
     || result.artifactPath !== artifactPath
+    || typeof result.capturedAt !== "string"
+    || !Number.isFinite(Date.parse(result.capturedAt))
+    || !snapshot
+    || snapshot.version !== 1
+    || snapshot.kind !== "git"
+    || snapshot.capturedAt !== result.capturedAt
+    || snapshot.sourceWorkspacePath !== node.workspacePath
+    || snapshot.repositoryRoot !== node.worktreeRoot
+    || snapshot.gitCommonDir !== runWorkspace.gitCommonDir
+    || snapshot.relativeWorkspacePath !== node.relativeWorkspacePath
+    || snapshot.baseCommit !== node.baseCommit
+    || snapshot.snapshotCommit !== result.resultCommit
   ) {
     throw new WorkspaceIsolationError(`node result identity mismatch: ${artifactPath}`);
   }
+  const verifiedCommit = runGit(
+    runWorkspace.sourceRepositoryRoot,
+    ["rev-parse", "--verify", `${result.resultCommit}^{commit}`],
+  );
+  const verifiedTree = runGit(
+    runWorkspace.sourceRepositoryRoot,
+    ["rev-parse", `${result.resultCommit}^{tree}`],
+  );
+  const parents = runGit(
+    runWorkspace.sourceRepositoryRoot,
+    ["show", "-s", "--format=%P", result.resultCommit],
+  ).split(/\s+/).filter(Boolean);
+  const validCommitShape = result.resultCommit === node.baseCommit
+    || (parents.length === 1 && parents[0] === node.baseCommit);
+  const expectedChangeSet = compareGitWorkspaceSnapshots(
+    baseSnapshotForNode(runWorkspace, node, node.createdAt),
+    snapshot,
+  );
+  if (
+    verifiedCommit !== result.resultCommit
+    || verifiedTree !== snapshot.snapshotTree
+    || !validCommitShape
+    || JSON.stringify(result.changeSet) !== JSON.stringify(expectedChangeSet)
+  ) {
+    throw new WorkspaceIsolationError(`node result Git evidence mismatch: ${artifactPath}`);
+  }
   return result;
+}
+
+function reconcileNodeAttemptRef(
+  runWorkspace: GitRunWorkspaceIsolation,
+  node: GitNodeWorkspace,
+  result: GitNodeWorkspaceResult,
+): void {
+  const current = requiredRef(runWorkspace.sourceRepositoryRoot, node.attemptRef);
+  if (current === result.resultCommit) return;
+  if (current !== node.baseCommit) {
+    throw new WorkspaceIsolationError(`node attempt ref changed unexpectedly: ${node.attemptRef}`);
+  }
+  updateRef(
+    runWorkspace.sourceRepositoryRoot,
+    node.attemptRef,
+    result.resultCommit,
+    node.baseCommit,
+  );
 }
 
 export function finalizeGitNodeWorkspace(input: {
   runWorkspace: GitRunWorkspaceIsolation;
   node: GitNodeWorkspace;
   now?: Date;
+  /** Deterministic crash hooks used by the fault-injection suite. */
+  afterResultReceiptPersisted?: (result: GitNodeWorkspaceResult) => void;
+  afterAttemptRefAdvanced?: (result: GitNodeWorkspaceResult) => void;
 }): GitNodeWorkspaceResult {
   const runWorkspace = assertRunIsolation(input.runWorkspace, {
     runId: input.runWorkspace.runId,
@@ -661,7 +764,14 @@ export function finalizeGitNodeWorkspace(input: {
 
   return withExclusiveFileClaim(resultClaim, () => {
     if (existsSync(artifactPath)) {
-      return assertNodeResult(node, readJson<GitNodeWorkspaceResult>(artifactPath), artifactPath);
+      const persisted = assertNodeResult(
+        runWorkspace,
+        node,
+        readJson<GitNodeWorkspaceResult>(artifactPath),
+        artifactPath,
+      );
+      reconcileNodeAttemptRef(runWorkspace, node, persisted);
+      return persisted;
     }
     const capturedAt = (input.now || new Date()).toISOString();
     mkdirSync(node.workspacePath, { recursive: true, mode: 0o700 });
@@ -692,22 +802,19 @@ export function finalizeGitNodeWorkspace(input: {
       snapshot,
       changeSet,
     };
-    const attemptRefCommit = requiredRef(runWorkspace.sourceRepositoryRoot, node.attemptRef);
-    if (attemptRefCommit === node.baseCommit && candidate.resultCommit !== node.baseCommit) {
-      updateRef(
-        runWorkspace.sourceRepositoryRoot,
-        node.attemptRef,
-        candidate.resultCommit,
-        node.baseCommit,
-      );
-    } else if (
-      attemptRefCommit !== node.baseCommit
-      && attemptRefCommit !== candidate.resultCommit
-    ) {
-      throw new WorkspaceIsolationError(`node attempt ref changed unexpectedly: ${node.attemptRef}`);
-    }
-    const persisted = writeJsonOnce(artifactPath, candidate);
-    return assertNodeResult(node, persisted, artifactPath);
+    // Persist the immutable result before advancing the attempt ref. A crash
+    // can now leave either (receipt, base ref) or (receipt, result ref), and a
+    // replay deterministically reconciles both states.
+    const persisted = assertNodeResult(
+      runWorkspace,
+      node,
+      writeJsonOnce(artifactPath, candidate),
+      artifactPath,
+    );
+    input.afterResultReceiptPersisted?.(persisted);
+    reconcileNodeAttemptRef(runWorkspace, node, persisted);
+    input.afterAttemptRefAdvanced?.(persisted);
+    return persisted;
   }, { waitTimeoutMs: 30_000 });
 }
 
@@ -761,9 +868,10 @@ function integrationArtifactPathForAttempt(
   attemptId: string,
 ): string {
   return join(
-    runWorkspace.runDir,
-    "artifacts",
-    `${safeArtifactSegment(agentId)}-workspace-integration-${digest(attemptId, 16)}.json`,
+    runWorkspace.isolationRoot,
+    "receipts",
+    "integrations",
+    `${digest(`${agentId}\0${attemptId}`, 32)}.json`,
   );
 }
 
@@ -848,6 +956,181 @@ function assertPersistedIntegrationResult(
   }
 }
 
+function readNodeResultForIntegration(input: {
+  runWorkspace: GitRunWorkspaceIsolation;
+  agentId: string;
+  attemptId: string;
+}): { node: GitNodeWorkspace; result: GitNodeWorkspaceResult } {
+  const recordPath = nodeRecordPath(input.runWorkspace, input.attemptId);
+  if (!existsSync(recordPath)) {
+    throw new WorkspaceIsolationError(`node workspace record is missing: ${recordPath}`);
+  }
+  const node = assertNodeWorkspaceRecord(
+    input.runWorkspace,
+    readJson<GitNodeWorkspace>(recordPath),
+    {
+      agentId: input.agentId,
+      attemptId: input.attemptId,
+      recordPath,
+    },
+  );
+  const resultPath = nodeResultArtifactPath(input.runWorkspace, node);
+  if (!existsSync(resultPath)) {
+    throw new WorkspaceIsolationError(`node result receipt is missing: ${resultPath}`);
+  }
+  const result = assertNodeResult(
+    input.runWorkspace,
+    node,
+    readJson<GitNodeWorkspaceResult>(resultPath),
+    resultPath,
+  );
+
+  // Before cleanup, prove that the actual worktree still matches the private
+  // result receipt. This blocks a fabricated no-change receipt from skipping
+  // dirty node output on the completion fast path.
+  if (existsSync(node.worktreeRoot)) {
+    const observed = captureGitWorkspaceSnapshot({
+      workspacePath: node.workspacePath,
+      scratchDir: createWorkspaceSnapshotScratchDir(input.runWorkspace.runDir),
+      label: `${node.runId}-${node.agentId}-${node.attemptId}-result`,
+      capturedAt: result.capturedAt,
+      baseCommit: node.baseCommit,
+    });
+    if (
+      observed.gitCommonDir !== input.runWorkspace.gitCommonDir
+      || observed.snapshotCommit !== result.resultCommit
+      || observed.snapshotTree !== result.snapshot.snapshotTree
+      || (
+        result.snapshot.sourceIndexSha256 !== undefined
+        && observed.sourceIndexSha256 !== result.snapshot.sourceIndexSha256
+      )
+    ) {
+      throw new WorkspaceIsolationError(`node worktree differs from its result receipt: ${resultPath}`);
+    }
+  }
+  return { node, result };
+}
+
+function assertIntegrationGitEvidence(input: {
+  runWorkspace: GitRunWorkspaceIsolation;
+  result: GitNodeWorkspaceResult;
+  integration: GitNodeIntegrationResult;
+  artifactPath: string;
+  currentIntegrationCommit: string;
+}): GitNodeIntegrationResult {
+  const { runWorkspace, result, integration, artifactPath, currentIntegrationCommit } = input;
+  assertIntegrationResult(result, integration, artifactPath);
+  for (const commit of [
+    integration.baseCommit,
+    integration.resultCommit,
+    integration.previousIntegrationCommit,
+    integration.integrationCommit,
+    ...(integration.mergeCommit ? [integration.mergeCommit] : []),
+  ]) {
+    runGit(runWorkspace.sourceRepositoryRoot, ["rev-parse", "--verify", `${commit}^{commit}`]);
+  }
+
+  switch (integration.status) {
+    case "no-changes":
+      if (integration.resultCommit !== integration.baseCommit) {
+        throw new WorkspaceIsolationError(`node no-change receipt has a changed result: ${artifactPath}`);
+      }
+      break;
+    case "already-integrated":
+      if (!isAncestor(
+        runWorkspace.sourceRepositoryRoot,
+        integration.resultCommit,
+        integration.previousIntegrationCommit,
+      )) {
+        throw new WorkspaceIsolationError(`node result was not already integrated: ${artifactPath}`);
+      }
+      break;
+    case "conflict": {
+      const replay = mergeTree(
+        runWorkspace.sourceRepositoryRoot,
+        integration.previousIntegrationCommit,
+        integration.resultCommit,
+      );
+      if (
+        replay.status !== "conflict"
+        || JSON.stringify(replay.paths) !== JSON.stringify(integration.conflictPaths)
+      ) {
+        throw new WorkspaceIsolationError(`node conflict receipt is not reproducible: ${artifactPath}`);
+      }
+      break;
+    }
+    case "integrated":
+      if (integration.mergeCommit) {
+        const parents = runGit(
+          runWorkspace.sourceRepositoryRoot,
+          ["show", "-s", "--format=%P", integration.mergeCommit],
+        ).split(/\s+/).filter(Boolean);
+        const replay = mergeTree(
+          runWorkspace.sourceRepositoryRoot,
+          integration.previousIntegrationCommit,
+          integration.resultCommit,
+        );
+        const mergeTreeValue = runGit(
+          runWorkspace.sourceRepositoryRoot,
+          ["rev-parse", `${integration.mergeCommit}^{tree}`],
+        );
+        if (
+          parents.length !== 2
+          || parents[0] !== integration.previousIntegrationCommit
+          || parents[1] !== integration.resultCommit
+          || replay.status !== "merged"
+          || replay.tree !== mergeTreeValue
+        ) {
+          throw new WorkspaceIsolationError(`node merge receipt does not match Git history: ${artifactPath}`);
+        }
+      } else if (
+        integration.previousIntegrationCommit !== integration.baseCommit
+        || integration.integrationCommit !== integration.resultCommit
+      ) {
+        throw new WorkspaceIsolationError(`node direct integration receipt is invalid: ${artifactPath}`);
+      }
+      break;
+  }
+
+  const pendingRefAdvance = integration.status === "integrated"
+    && currentIntegrationCommit === integration.previousIntegrationCommit;
+  if (
+    !pendingRefAdvance
+    && !isAncestor(
+      runWorkspace.sourceRepositoryRoot,
+      integration.integrationCommit,
+      currentIntegrationCommit,
+    )
+  ) {
+    throw new WorkspaceIsolationError(`node integration is outside the current run history: ${artifactPath}`);
+  }
+  return integration;
+}
+
+function reconcileIntegrationRef(
+  runWorkspace: GitRunWorkspaceIsolation,
+  integration: GitNodeIntegrationResult,
+): void {
+  const current = requiredRef(runWorkspace.sourceRepositoryRoot, runWorkspace.integrationRef);
+  if (
+    integration.status === "integrated"
+    && current === integration.previousIntegrationCommit
+  ) {
+    updateRef(
+      runWorkspace.sourceRepositoryRoot,
+      runWorkspace.integrationRef,
+      integration.integrationCommit,
+      integration.previousIntegrationCommit,
+    );
+    return;
+  }
+  if (!isAncestor(runWorkspace.sourceRepositoryRoot, integration.integrationCommit, current)) {
+    throw new WorkspaceIsolationError(
+      `run integration ref does not contain node ${integration.attemptId}`,
+    );
+  }
+}
+
 export function readGitNodeIntegrationResult(input: {
   runWorkspace: GitRunWorkspaceIsolation;
   agentId: string;
@@ -863,30 +1146,31 @@ export function readGitNodeIntegrationResult(input: {
     input.attemptId,
   );
   if (!existsSync(artifactPath)) return undefined;
-  const integration = readJson<GitNodeIntegrationResult>(artifactPath);
-  assertPersistedIntegrationResult(
-    integration,
-    artifactPath,
-    runWorkspace.runId,
-    input.agentId,
-    input.attemptId,
+  return withExclusiveFileClaim(
+    join(runWorkspace.isolationRoot, "claims", "integration.claim"),
+    () => {
+      const { result } = readNodeResultForIntegration(input);
+      const current = requiredRef(runWorkspace.sourceRepositoryRoot, runWorkspace.integrationRef);
+      const integration = assertIntegrationGitEvidence({
+        runWorkspace,
+        result,
+        integration: readJson<GitNodeIntegrationResult>(artifactPath),
+        artifactPath,
+        currentIntegrationCommit: current,
+      });
+      reconcileIntegrationRef(runWorkspace, integration);
+      return integration;
+    },
+    { waitTimeoutMs: 30_000 },
   );
-  for (const commit of [
-    integration.baseCommit,
-    integration.resultCommit,
-    integration.previousIntegrationCommit,
-    integration.integrationCommit,
-    ...(integration.mergeCommit ? [integration.mergeCommit] : []),
-  ]) {
-    runGit(runWorkspace.sourceRepositoryRoot, ["rev-parse", "--verify", `${commit}^{commit}`]);
-  }
-  return integration;
 }
 
 export function integrateGitNodeWorkspaceResult(input: {
   runWorkspace: GitRunWorkspaceIsolation;
   result: GitNodeWorkspaceResult;
   now?: Date;
+  /** Deterministic crash hook used by the fault-injection suite. */
+  afterIntegrationReceiptPersisted?: (result: GitNodeIntegrationResult) => void;
 }): GitNodeIntegrationResult {
   const runWorkspace = assertRunIsolation(input.runWorkspace, {
     runId: input.runWorkspace.runId,
@@ -900,34 +1184,49 @@ export function integrateGitNodeWorkspaceResult(input: {
     `${digest(input.result.attemptId, 32)}.claim`,
   );
 
-  return withExclusiveFileClaim(nodeClaim, () => {
-    if (existsSync(artifactPath)) {
-      return assertIntegrationResult(
-        input.result,
-        readJson<GitNodeIntegrationResult>(artifactPath),
-        artifactPath,
-      );
-    }
-    return withExclusiveFileClaim(
+  return withExclusiveFileClaim(
+    nodeClaim,
+    () => withExclusiveFileClaim(
       join(runWorkspace.isolationRoot, "claims", "integration.claim"),
       () => {
+        const { result } = readNodeResultForIntegration({
+          runWorkspace,
+          agentId: input.result.agentId,
+          attemptId: input.result.attemptId,
+        });
+        if (JSON.stringify(input.result) !== JSON.stringify(result)) {
+          throw new WorkspaceIsolationError(
+            `integration input differs from the private node result: ${input.result.attemptId}`,
+          );
+        }
         const previousIntegrationCommit = requiredRef(
           runWorkspace.sourceRepositoryRoot,
           runWorkspace.integrationRef,
         );
+        if (existsSync(artifactPath)) {
+          const persisted = assertIntegrationGitEvidence({
+            runWorkspace,
+            result,
+            integration: readJson<GitNodeIntegrationResult>(artifactPath),
+            artifactPath,
+            currentIntegrationCommit: previousIntegrationCommit,
+          });
+          reconcileIntegrationRef(runWorkspace, persisted);
+          return persisted;
+        }
         const integratedAt = (input.now || new Date()).toISOString();
         let candidate: GitNodeIntegrationResult;
 
-        if (input.result.resultCommit === input.result.baseCommit) {
+        if (result.resultCommit === result.baseCommit) {
           candidate = {
             version: WORKSPACE_ISOLATION_VERSION,
             kind: "git-node-integration",
-            runId: input.result.runId,
-            agentId: input.result.agentId,
-            attemptId: input.result.attemptId,
+            runId: result.runId,
+            agentId: result.agentId,
+            attemptId: result.attemptId,
             status: "no-changes",
-            baseCommit: input.result.baseCommit,
-            resultCommit: input.result.resultCommit,
+            baseCommit: result.baseCommit,
+            resultCommit: result.resultCommit,
             previousIntegrationCommit,
             integrationCommit: previousIntegrationCommit,
             conflictPaths: [],
@@ -936,42 +1235,36 @@ export function integrateGitNodeWorkspaceResult(input: {
           };
         } else if (isAncestor(
           runWorkspace.sourceRepositoryRoot,
-          input.result.resultCommit,
+          result.resultCommit,
           previousIntegrationCommit,
         )) {
           candidate = {
             version: WORKSPACE_ISOLATION_VERSION,
             kind: "git-node-integration",
-            runId: input.result.runId,
-            agentId: input.result.agentId,
-            attemptId: input.result.attemptId,
+            runId: result.runId,
+            agentId: result.agentId,
+            attemptId: result.attemptId,
             status: "already-integrated",
-            baseCommit: input.result.baseCommit,
-            resultCommit: input.result.resultCommit,
+            baseCommit: result.baseCommit,
+            resultCommit: result.resultCommit,
             previousIntegrationCommit,
             integrationCommit: previousIntegrationCommit,
             conflictPaths: [],
             artifactPath,
             integratedAt,
           };
-        } else if (previousIntegrationCommit === input.result.baseCommit) {
-          updateRef(
-            runWorkspace.sourceRepositoryRoot,
-            runWorkspace.integrationRef,
-            input.result.resultCommit,
-            previousIntegrationCommit,
-          );
+        } else if (previousIntegrationCommit === result.baseCommit) {
           candidate = {
             version: WORKSPACE_ISOLATION_VERSION,
             kind: "git-node-integration",
-            runId: input.result.runId,
-            agentId: input.result.agentId,
-            attemptId: input.result.attemptId,
+            runId: result.runId,
+            agentId: result.agentId,
+            attemptId: result.attemptId,
             status: "integrated",
-            baseCommit: input.result.baseCommit,
-            resultCommit: input.result.resultCommit,
+            baseCommit: result.baseCommit,
+            resultCommit: result.resultCommit,
             previousIntegrationCommit,
-            integrationCommit: input.result.resultCommit,
+            integrationCommit: result.resultCommit,
             conflictPaths: [],
             artifactPath,
             integratedAt,
@@ -980,18 +1273,18 @@ export function integrateGitNodeWorkspaceResult(input: {
           const merged = mergeTree(
             runWorkspace.sourceRepositoryRoot,
             previousIntegrationCommit,
-            input.result.resultCommit,
+            result.resultCommit,
           );
           if (merged.status === "conflict") {
             candidate = {
               version: WORKSPACE_ISOLATION_VERSION,
               kind: "git-node-integration",
-              runId: input.result.runId,
-              agentId: input.result.agentId,
-              attemptId: input.result.attemptId,
+              runId: result.runId,
+              agentId: result.agentId,
+              attemptId: result.attemptId,
               status: "conflict",
-              baseCommit: input.result.baseCommit,
-              resultCommit: input.result.resultCommit,
+              baseCommit: result.baseCommit,
+              resultCommit: result.resultCommit,
               previousIntegrationCommit,
               integrationCommit: previousIntegrationCommit,
               conflictPaths: merged.paths,
@@ -1007,27 +1300,21 @@ export function integrateGitNodeWorkspaceResult(input: {
                 "-p",
                 previousIntegrationCommit,
                 "-p",
-                input.result.resultCommit,
+                result.resultCommit,
                 "-m",
-                `Mentiko node integration: ${safeArtifactSegment(input.result.agentId)}`,
+                `Mentiko node integration: ${safeArtifactSegment(result.agentId)}`,
               ],
-              syntheticIdentity(input.result.attemptId, integratedAt),
-            );
-            updateRef(
-              runWorkspace.sourceRepositoryRoot,
-              runWorkspace.integrationRef,
-              mergeCommit,
-              previousIntegrationCommit,
+              syntheticIdentity(result.attemptId, integratedAt),
             );
             candidate = {
               version: WORKSPACE_ISOLATION_VERSION,
               kind: "git-node-integration",
-              runId: input.result.runId,
-              agentId: input.result.agentId,
-              attemptId: input.result.attemptId,
+              runId: result.runId,
+              agentId: result.agentId,
+              attemptId: result.attemptId,
               status: "integrated",
-              baseCommit: input.result.baseCommit,
-              resultCommit: input.result.resultCommit,
+              baseCommit: result.baseCommit,
+              resultCommit: result.resultCommit,
               previousIntegrationCommit,
               integrationCommit: mergeCommit,
               mergeCommit,
@@ -1038,12 +1325,24 @@ export function integrateGitNodeWorkspaceResult(input: {
           }
         }
 
-        const persisted = writeJsonOnce(artifactPath, candidate);
-        return assertIntegrationResult(input.result, persisted, artifactPath);
+        // Like node results, the immutable integration receipt is durable
+        // before the ref CAS. Replay can therefore finish a ref advance after
+        // a process crash without re-running or silently reclassifying work.
+        const persisted = assertIntegrationGitEvidence({
+          runWorkspace,
+          result,
+          integration: writeJsonOnce(artifactPath, candidate),
+          artifactPath,
+          currentIntegrationCommit: previousIntegrationCommit,
+        });
+        input.afterIntegrationReceiptPersisted?.(persisted);
+        reconcileIntegrationRef(runWorkspace, persisted);
+        return persisted;
       },
       { waitTimeoutMs: 30_000 },
-    );
-  }, { waitTimeoutMs: 30_000 });
+    ),
+    { waitTimeoutMs: 30_000 },
+  );
 }
 
 export function currentGitRunIntegrationCommit(
@@ -1054,6 +1353,22 @@ export function currentGitRunIntegrationCommit(
     statePath: runWorkspace.statePath,
   });
   return requiredRef(current.sourceRepositoryRoot, current.integrationRef);
+}
+
+/** Read the current private integration commit at the exact instant a delayed
+ * edge (for example fan-in) is accepted. */
+export function currentGitRunIntegrationCommitFromRunDir(input: {
+  runDir: string;
+  runId: string;
+}): string | undefined {
+  const runDir = requireAbsoluteDirectory(input.runDir, "runDir");
+  const statePath = join(runDir, ".internal", "workspace-isolation", "run-workspace.json");
+  if (!existsSync(statePath)) return undefined;
+  const runWorkspace = assertRunIsolation(
+    readJson<GitRunWorkspaceIsolation>(statePath),
+    { runId: input.runId, statePath },
+  );
+  return requiredRef(runWorkspace.sourceRepositoryRoot, runWorkspace.integrationRef);
 }
 
 export function removeIntegratedGitNodeWorkspace(input: {
@@ -1157,24 +1472,112 @@ export function removePristineGitNodeWorkspace(input: {
 }
 
 function publicationArtifactPath(runWorkspace: GitRunWorkspaceIsolation): string {
-  return join(runWorkspace.runDir, "artifacts", "workspace-publication.json");
+  return join(runWorkspace.isolationRoot, "receipts", "publication.json");
+}
+
+function publicationConflictArtifactPath(
+  runWorkspace: GitRunWorkspaceIsolation,
+  sourceSnapshot: GitWorkspaceSnapshot,
+): string {
+  const sourceIdentity = JSON.stringify({
+    sourceHead: sourceSnapshot.sourceHead,
+    sourceBranch: sourceSnapshot.sourceBranch,
+    sourceIndexSha256: sourceSnapshot.sourceIndexSha256,
+    snapshotTree: sourceSnapshot.snapshotTree,
+  });
+  return join(
+    runWorkspace.isolationRoot,
+    "receipts",
+    "publication-conflicts",
+    `${digest(sourceIdentity, 32)}.json`,
+  );
 }
 
 function assertPublicationResult(
   runWorkspace: GitRunWorkspaceIsolation,
+  baseline: GitWorkspaceSnapshot,
   integrationCommit: string,
   publication: GitRunWorkspacePublicationResult,
   artifactPath: string,
 ): GitRunWorkspacePublicationResult {
+  const validSourceSnapshot = (snapshot: GitWorkspaceSnapshot | undefined): boolean => Boolean(
+    snapshot
+    && snapshot.version === 1
+    && snapshot.kind === "git"
+    && snapshot.sourceWorkspacePath === runWorkspace.sourceWorkspacePath
+    && snapshot.repositoryRoot === runWorkspace.sourceRepositoryRoot
+    && snapshot.gitCommonDir === runWorkspace.gitCommonDir
+    && snapshot.relativeWorkspacePath === runWorkspace.relativeWorkspacePath
+    && typeof snapshot.sourceIndexSha256 === "string"
+    && /^[a-f0-9]{64}$/.test(snapshot.sourceIndexSha256),
+  );
   if (
+    !publication
+    ||
     publication.version !== WORKSPACE_ISOLATION_VERSION
     || publication.kind !== "git-run-workspace-publication"
     || publication.runId !== runWorkspace.runId
     || publication.baselineCommit !== runWorkspace.baselineCommit
     || publication.integrationCommit !== integrationCommit
     || publication.artifactPath !== artifactPath
+    || typeof publication.publishedAt !== "string"
+    || !Number.isFinite(Date.parse(publication.publishedAt))
+    || !validSourceSnapshot(publication.sourceSnapshot)
   ) {
     throw new WorkspaceIsolationError(`run workspace publication identity mismatch: ${artifactPath}`);
+  }
+  const integrationTree = runGit(
+    runWorkspace.sourceRepositoryRoot,
+    ["rev-parse", `${integrationCommit}^{tree}`],
+  );
+  const expectedChanges = compareGitWorkspaceSnapshots(
+    { ...baseline, repositoryRoot: runWorkspace.sourceRepositoryRoot },
+    { ...publication.sourceSnapshot, repositoryRoot: runWorkspace.sourceRepositoryRoot },
+  );
+  if (JSON.stringify(expectedChanges) !== JSON.stringify(publication.sourceChanges)) {
+    throw new WorkspaceIsolationError(`run workspace publication changes mismatch: ${artifactPath}`);
+  }
+  const validStatus = (() => {
+    switch (publication.status) {
+      case "no-changes":
+        return artifactPath === publicationArtifactPath(runWorkspace)
+          && integrationTree === runWorkspace.baselineTree
+          && !publication.publishedSnapshot;
+      case "source-changed":
+        return artifactPath === publicationConflictArtifactPath(
+          runWorkspace,
+          publication.sourceSnapshot,
+        )
+          && !sourceStillAtBaseline(baseline, publication.sourceSnapshot)
+          && !publication.publishedSnapshot;
+      case "already-published":
+        return artifactPath === publicationArtifactPath(runWorkspace)
+          && validSourceSnapshot(publication.publishedSnapshot)
+          && sourceMatchesIntegrationAfterApply(
+            baseline,
+            publication.sourceSnapshot,
+            integrationTree,
+          )
+          && sourceMatchesIntegrationAfterApply(
+            baseline,
+            publication.publishedSnapshot!,
+            integrationTree,
+          );
+      case "published":
+        return artifactPath === publicationArtifactPath(runWorkspace)
+          && validSourceSnapshot(publication.publishedSnapshot)
+          && sourceStillAtBaseline(baseline, publication.sourceSnapshot)
+          && sourceMatchesIntegrationAfterApply(
+            baseline,
+            publication.publishedSnapshot!,
+            integrationTree,
+          );
+      default:
+        return false;
+    }
+  })();
+  if (!validStatus) {
+    throw new WorkspaceIsolationError(`run workspace publication status mismatch: ${artifactPath}`);
   }
   return publication;
 }
@@ -1187,6 +1590,10 @@ function sourceStillAtBaseline(
     && observed.relativeWorkspacePath === baseline.relativeWorkspacePath
     && observed.sourceHead === baseline.sourceHead
     && observed.sourceBranch === baseline.sourceBranch
+    && (
+      baseline.sourceIndexSha256 === undefined
+      || observed.sourceIndexSha256 === baseline.sourceIndexSha256
+    )
     && observed.snapshotTree === baseline.snapshotTree;
 }
 
@@ -1197,6 +1604,10 @@ function sourceMatchesIntegrationAfterApply(
 ): boolean {
   return observed.sourceHead === baseline.sourceHead
     && observed.sourceBranch === baseline.sourceBranch
+    && (
+      baseline.sourceIndexSha256 === undefined
+      || observed.sourceIndexSha256 === baseline.sourceIndexSha256
+    )
     && observed.snapshotTree === integrationTree;
 }
 
@@ -1204,6 +1615,8 @@ export function publishGitRunWorkspaceResult(input: {
   runWorkspace: GitRunWorkspaceIsolation;
   baseline: GitWorkspaceSnapshot;
   now?: Date;
+  /** Deterministic race hook used by the fault-injection suite. */
+  beforeApplyCas?: () => void;
 }): GitRunWorkspacePublicationResult {
   const runWorkspace = assertRunIsolation(input.runWorkspace, {
     runId: input.runWorkspace.runId,
@@ -1237,6 +1650,7 @@ export function publishGitRunWorkspaceResult(input: {
     if (existsSync(artifactPath)) {
       return assertPublicationResult(
         runWorkspace,
+        input.baseline,
         integrationCommit,
         readJson<GitRunWorkspacePublicationResult>(artifactPath),
         artifactPath,
@@ -1244,14 +1658,15 @@ export function publishGitRunWorkspaceResult(input: {
     }
 
     const publishedAt = (input.now || new Date()).toISOString();
-    const sourceSnapshot = captureGitWorkspaceSnapshot({
+    let sourceSnapshot = captureGitWorkspaceSnapshot({
       workspacePath: runWorkspace.sourceWorkspacePath,
       scratchDir: createWorkspaceSnapshotScratchDir(runWorkspace.runDir),
       label: `${runWorkspace.runId}-source-publication-cas`,
       capturedAt: publishedAt,
     });
-    const sourceChanges = compareGitWorkspaceSnapshots(input.baseline, sourceSnapshot);
+    let sourceChanges = compareGitWorkspaceSnapshots(input.baseline, sourceSnapshot);
     let status: GitRunWorkspacePublicationStatus;
+    let publishedSnapshot: GitWorkspaceSnapshot | undefined;
 
     if (integrationTree === runWorkspace.baselineTree) {
       status = "no-changes";
@@ -1260,6 +1675,7 @@ export function publishGitRunWorkspaceResult(input: {
       // not written. HEAD and branch staying at the baseline distinguish this
       // from a user commit that merely happens to have the same tree.
       status = "already-published";
+      publishedSnapshot = sourceSnapshot;
     } else if (!sourceStillAtBaseline(input.baseline, sourceSnapshot)) {
       status = "source-changed";
     } else {
@@ -1272,33 +1688,50 @@ export function publishGitRunWorkspaceResult(input: {
         "--",
         runWorkspace.relativeWorkspacePath,
       ]).stdout;
-      runGitWithInput(runWorkspace.sourceRepositoryRoot, [
-        "apply",
-        "--check",
-        "--binary",
-        "--whitespace=nowarn",
-        "-",
-      ], patch);
-      runGitWithInput(runWorkspace.sourceRepositoryRoot, [
-        "apply",
-        "--binary",
-        "--whitespace=nowarn",
-        "-",
-      ], patch);
-      const verified = captureGitWorkspaceSnapshot({
+      input.beforeApplyCas?.();
+      const casSnapshot = captureGitWorkspaceSnapshot({
         workspacePath: runWorkspace.sourceWorkspacePath,
         scratchDir: createWorkspaceSnapshotScratchDir(runWorkspace.runDir),
-        label: `${runWorkspace.runId}-source-publication-verify`,
+        label: `${runWorkspace.runId}-source-publication-preapply-cas`,
         capturedAt: publishedAt,
       });
-      if (!sourceMatchesIntegrationAfterApply(input.baseline, verified, integrationTree)) {
-        throw new WorkspaceIsolationError(
-          `source workspace changed while publishing run ${runWorkspace.runId}`,
-        );
+      if (!sourceStillAtBaseline(input.baseline, casSnapshot)) {
+        sourceSnapshot = casSnapshot;
+        sourceChanges = compareGitWorkspaceSnapshots(input.baseline, sourceSnapshot);
+        status = "source-changed";
+      } else {
+        runGitWithInput(runWorkspace.sourceRepositoryRoot, [
+          "apply",
+          "--check",
+          "--binary",
+          "--whitespace=nowarn",
+          "-",
+        ], patch);
+        runGitWithInput(runWorkspace.sourceRepositoryRoot, [
+          "apply",
+          "--binary",
+          "--whitespace=nowarn",
+          "-",
+        ], patch);
+        const verified = captureGitWorkspaceSnapshot({
+          workspacePath: runWorkspace.sourceWorkspacePath,
+          scratchDir: createWorkspaceSnapshotScratchDir(runWorkspace.runDir),
+          label: `${runWorkspace.runId}-source-publication-verify`,
+          capturedAt: publishedAt,
+        });
+        if (!sourceMatchesIntegrationAfterApply(input.baseline, verified, integrationTree)) {
+          throw new WorkspaceIsolationError(
+            `source workspace changed while publishing run ${runWorkspace.runId}`,
+          );
+        }
+        status = "published";
+        publishedSnapshot = verified;
       }
-      status = "published";
     }
 
+    const receiptPath = status === "source-changed"
+      ? publicationConflictArtifactPath(runWorkspace, sourceSnapshot)
+      : artifactPath;
     const candidate: GitRunWorkspacePublicationResult = {
       version: WORKSPACE_ISOLATION_VERSION,
       kind: "git-run-workspace-publication",
@@ -1306,12 +1739,19 @@ export function publishGitRunWorkspaceResult(input: {
       status,
       baselineCommit: runWorkspace.baselineCommit,
       integrationCommit,
-      artifactPath,
+      artifactPath: receiptPath,
       publishedAt,
       sourceSnapshot,
       sourceChanges,
+      ...(publishedSnapshot ? { publishedSnapshot } : {}),
     };
-    const persisted = writeJsonOnce(artifactPath, candidate);
-    return assertPublicationResult(runWorkspace, integrationCommit, persisted, artifactPath);
+    const persisted = writeJsonOnce(receiptPath, candidate);
+    return assertPublicationResult(
+      runWorkspace,
+      input.baseline,
+      integrationCommit,
+      persisted,
+      receiptPath,
+    );
   }, { waitTimeoutMs: 30_000 });
 }

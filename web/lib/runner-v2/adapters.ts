@@ -24,6 +24,7 @@ import {
   routedLaunchJobId,
   routedLaunchJobIsAccepted,
 } from "@/lib/runner-v2/launch-job";
+import { currentGitRunIntegrationCommitFromRunDir } from "@/lib/runner-v2/workspace-isolation";
 
 type AdapterOperationPayload =
   | { type: "task-status"; status: string; taskId?: string; runId?: string }
@@ -172,6 +173,7 @@ export function applyEffect(effect: TypedExecutorEffect, context: AdapterContext
       }, {
         chainPath,
         runDir: dirname(context.runJsonPath),
+        workspacePath: plan.group.workspacePath,
         fanGroupId: plan.group.id,
         env: {
           ...plan.launch.env,
@@ -187,6 +189,14 @@ export function applyEffect(effect: TypedExecutorEffect, context: AdapterContext
       });
       const receipt = startLaunch(launch, context);
       acceptedLaunch = { command: launch.command, pid: receipt?.pid };
+    }, (plan) => {
+      const run = readRunJson(context.runJsonPath);
+      const runDir = dirname(context.runJsonPath);
+      const runId = plan.group.runId || run.id;
+      return {
+        workspacePath: plan.group.workspacePath || run.workspacePath,
+        workspaceBaseCommit: currentGitRunIntegrationCommitFromRunDir({ runDir, runId }),
+      };
     });
     if (acceptedLaunch) launchesStarted.push(acceptedLaunch);
   } else if (effect.type === "generation-import") {

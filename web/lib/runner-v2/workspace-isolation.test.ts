@@ -146,6 +146,100 @@ describe("Git node worktree isolation", () => {
     expect(integrateGitNodeWorkspaceResult({ runWorkspace, result: rightResult })).toEqual(rightIntegration);
   });
 
+  it("replays node finalization after crashes on either side of the attempt-ref CAS", () => {
+    const fixture = repository();
+    const { runWorkspace } = initialize({ ...fixture, runId: "run-result-crash-replay" });
+    const beforeRef = allocateGitNodeWorkspace({
+      runWorkspace,
+      agentId: "crash-before-ref",
+      attemptId: "attempt-crash-before-ref",
+    });
+    writeFileSync(join(beforeRef.workspacePath, "left.ts"), "export const left = 'before-ref';\n");
+
+    expect(() => finalizeGitNodeWorkspace({
+      runWorkspace,
+      node: beforeRef,
+      now: new Date("2026-08-09T20:00:10.000Z"),
+      afterResultReceiptPersisted: () => {
+        throw new Error("crash-after-result-receipt");
+      },
+    })).toThrow("crash-after-result-receipt");
+    expect(git(fixture.root, "show-ref", "--hash", beforeRef.attemptRef)).toBe(beforeRef.baseCommit);
+    const recoveredBeforeRef = finalizeGitNodeWorkspace({ runWorkspace, node: beforeRef });
+    expect(git(fixture.root, "show-ref", "--hash", beforeRef.attemptRef)).toBe(
+      recoveredBeforeRef.resultCommit,
+    );
+
+    const afterRef = allocateGitNodeWorkspace({
+      runWorkspace,
+      agentId: "crash-after-ref",
+      attemptId: "attempt-crash-after-ref",
+    });
+    writeFileSync(join(afterRef.workspacePath, "right.ts"), "export const right = 'after-ref';\n");
+    expect(() => finalizeGitNodeWorkspace({
+      runWorkspace,
+      node: afterRef,
+      now: new Date("2026-08-09T20:00:11.000Z"),
+      afterAttemptRefAdvanced: () => {
+        throw new Error("crash-after-attempt-ref");
+      },
+    })).toThrow("crash-after-attempt-ref");
+    const advanced = git(fixture.root, "show-ref", "--hash", afterRef.attemptRef);
+    const recoveredAfterRef = finalizeGitNodeWorkspace({ runWorkspace, node: afterRef });
+    expect(recoveredAfterRef.resultCommit).toBe(advanced);
+    expect(recoveredAfterRef.artifactPath).toContain(
+      join(".internal", "workspace-isolation", "receipts", "results"),
+    );
+  });
+
+  it("replays integration after a crash between its private receipt and ref CAS", () => {
+    const fixture = repository();
+    const { runWorkspace } = initialize({ ...fixture, runId: "run-integration-crash-replay" });
+    const node = allocateGitNodeWorkspace({
+      runWorkspace,
+      agentId: "integration-crash",
+      attemptId: "attempt-integration-crash",
+    });
+    writeFileSync(join(node.workspacePath, "left.ts"), "export const left = 'integrated';\n");
+    const result = finalizeGitNodeWorkspace({ runWorkspace, node });
+    const before = currentGitRunIntegrationCommit(runWorkspace);
+
+    expect(() => integrateGitNodeWorkspaceResult({
+      runWorkspace,
+      result,
+      afterIntegrationReceiptPersisted: () => {
+        throw new Error("crash-after-integration-receipt");
+      },
+    })).toThrow("crash-after-integration-receipt");
+    expect(currentGitRunIntegrationCommit(runWorkspace)).toBe(before);
+
+    const recovered = integrateGitNodeWorkspaceResult({ runWorkspace, result });
+    expect(recovered.status).toBe("integrated");
+    expect(currentGitRunIntegrationCommit(runWorkspace)).toBe(recovered.integrationCommit);
+    expect(recovered.artifactPath).toContain(
+      join(".internal", "workspace-isolation", "receipts", "integrations"),
+    );
+  });
+
+  it("does not trust a no-change receipt when the node worktree has dirty output", () => {
+    const fixture = repository();
+    const { runWorkspace } = initialize({ ...fixture, runId: "run-no-change-receipt" });
+    const node = allocateGitNodeWorkspace({
+      runWorkspace,
+      agentId: "late-writer",
+      attemptId: "attempt-late-writer",
+    });
+    const result = finalizeGitNodeWorkspace({ runWorkspace, node });
+    expect(integrateGitNodeWorkspaceResult({ runWorkspace, result }).status).toBe("no-changes");
+
+    writeFileSync(join(node.workspacePath, "left.ts"), "export const left = 'late-output';\n");
+    expect(() => readGitNodeIntegrationResult({
+      runWorkspace,
+      agentId: node.agentId,
+      attemptId: node.attemptId,
+    })).toThrow(/node worktree differs from its result receipt/);
+  });
+
   it("removes an integrated node worktree while preserving idempotent replay evidence", () => {
     const fixture = repository();
     const { runWorkspace } = initialize({ ...fixture, runId: "run-cleanup" });
@@ -362,5 +456,77 @@ describe("Git node worktree isolation", () => {
     expect(git(fixture.root, "status", "--porcelain=v1", "-z")).toBe(sourceBefore);
     expect(readFileSync(join(fixture.root, "left.ts"), "utf8")).toContain("'base'");
     expect(readFileSync(join(fixture.root, "right.ts"), "utf8")).toContain("user-edit");
+  });
+
+  it("rechecks the source immediately before apply and leaves race-time edits untouched", () => {
+    const fixture = repository();
+    const { baseline, runWorkspace } = initialize({ ...fixture, runId: "run-source-race" });
+    const node = allocateGitNodeWorkspace({
+      runWorkspace,
+      agentId: "publisher",
+      attemptId: "attempt-source-race",
+    });
+    writeFileSync(join(node.workspacePath, "left.ts"), "export const left = 'agent-result';\n");
+    const result = finalizeGitNodeWorkspace({ runWorkspace, node });
+    integrateGitNodeWorkspaceResult({ runWorkspace, result });
+
+    const publication = publishGitRunWorkspaceResult({
+      runWorkspace,
+      baseline,
+      beforeApplyCas: () => {
+        writeFileSync(join(fixture.root, "right.ts"), "export const right = 'race-edit';\n");
+      },
+    });
+
+    expect(publication.status).toBe("source-changed");
+    expect(readFileSync(join(fixture.root, "left.ts"), "utf8")).toContain("'base'");
+    expect(readFileSync(join(fixture.root, "right.ts"), "utf8")).toContain("race-edit");
+  });
+
+  it("treats index-only drift as a publication conflict", () => {
+    const fixture = repository();
+    const { baseline, runWorkspace } = initialize({ ...fixture, runId: "run-index-drift" });
+    const node = allocateGitNodeWorkspace({
+      runWorkspace,
+      agentId: "publisher",
+      attemptId: "attempt-index-drift",
+    });
+    writeFileSync(join(node.workspacePath, "left.ts"), "export const left = 'agent-result';\n");
+    const result = finalizeGitNodeWorkspace({ runWorkspace, node });
+    integrateGitNodeWorkspaceResult({ runWorkspace, result });
+
+    writeFileSync(join(fixture.root, "right.ts"), "export const right = 'staged-only';\n");
+    git(fixture.root, "add", "right.ts");
+    writeFileSync(join(fixture.root, "right.ts"), "export const right = 'base';\n");
+    const publication = publishGitRunWorkspaceResult({ runWorkspace, baseline });
+
+    expect(publication.status).toBe("source-changed");
+    expect(publication.sourceChanges.files).toEqual([]);
+    expect(readFileSync(join(fixture.root, "left.ts"), "utf8")).toContain("'base'");
+    expect(git(fixture.root, "diff", "--cached", "--", "right.ts")).toContain("staged-only");
+  });
+
+  it("can publish after a source-drift conflict is explicitly restored", () => {
+    const fixture = repository();
+    const { baseline, runWorkspace } = initialize({ ...fixture, runId: "run-source-retry" });
+    const node = allocateGitNodeWorkspace({
+      runWorkspace,
+      agentId: "publisher",
+      attemptId: "attempt-source-retry",
+    });
+    writeFileSync(join(node.workspacePath, "left.ts"), "export const left = 'agent-result';\n");
+    const result = finalizeGitNodeWorkspace({ runWorkspace, node });
+    integrateGitNodeWorkspaceResult({ runWorkspace, result });
+    writeFileSync(join(fixture.root, "right.ts"), "export const right = 'temporary-user-edit';\n");
+
+    const conflict = publishGitRunWorkspaceResult({ runWorkspace, baseline });
+    expect(conflict.status).toBe("source-changed");
+    expect(conflict.artifactPath).toContain("publication-conflicts");
+
+    writeFileSync(join(fixture.root, "right.ts"), "export const right = 'base';\n");
+    const recovered = publishGitRunWorkspaceResult({ runWorkspace, baseline });
+    expect(recovered.status).toBe("published");
+    expect(recovered.artifactPath).toContain(join("receipts", "publication.json"));
+    expect(readFileSync(join(fixture.root, "left.ts"), "utf8")).toContain("agent-result");
   });
 });

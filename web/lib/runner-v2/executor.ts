@@ -151,6 +151,7 @@ export function buildTypedExecutorPlan(input: TypedExecutorInput): TypedExecutor
           onError: decision.route.onError,
           chainPath: routeContext.chainPath,
           runId: routeContext.env?.MENTIKO_RUN_ID,
+          workspacePath: routeContext.workspacePath,
         }),
       });
       launches.push(...buildRoutedLaunchPlans(decision.route, {

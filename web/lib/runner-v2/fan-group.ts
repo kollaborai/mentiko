@@ -16,6 +16,9 @@ export interface FanGroupState {
   total: number;
   chainPath?: string;
   runId?: string;
+  workspacePath?: string;
+  /** Integration commit pinned when the fan-in claim is accepted. */
+  workspaceBaseCommit?: string;
   members?: Record<string, FanMemberStatus>;
 }
 
@@ -29,6 +32,8 @@ export interface FanGroupCreateInput {
   onError?: string;
   chainPath?: string;
   runId?: string;
+  workspacePath?: string;
+  workspaceBaseCommit?: string;
 }
 
 export interface FanGroupCompletionInput {
@@ -71,6 +76,8 @@ export function createFanGroupState(input: FanGroupCreateInput): FanGroupState {
     total: input.fanOutAgents.length,
     chainPath: input.chainPath,
     runId: input.runId,
+    workspacePath: input.workspacePath,
+    workspaceBaseCommit: input.workspaceBaseCommit,
     members: {},
   };
 }
@@ -118,6 +125,8 @@ export function completeFanGroupMember(input: FanGroupCompletionInput): FanGroup
       env: {
         MENTIKO_RUN_ID: input.group.runId,
         AGENT_FAN_GROUP_ID: input.group.id,
+        MENTIKO_WORKSPACE_PATH: input.group.workspacePath,
+        MENTIKO_WORKSPACE_BASE_COMMIT: input.group.workspaceBaseCommit,
       },
       reason: "fan-in-claim",
     },

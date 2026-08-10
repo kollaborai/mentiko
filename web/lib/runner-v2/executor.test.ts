@@ -527,6 +527,7 @@ describe("runner-v2 typed executor plan", () => {
             fanInAgent: "merge",
             waitFor: "all",
             onError: "recover",
+            workspacePath: "/workspace",
           },
         },
       ],
