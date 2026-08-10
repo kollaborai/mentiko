@@ -6,8 +6,13 @@ import { join } from "node:path";
 import {
   createAgentAttempt,
   readRunnerV2AttemptState,
+  releaseAgentCapacitySlot,
   transitionAgentAttempt,
 } from "@/lib/runner-v2/agent-attempt";
+import {
+  enqueueAgentAttempt,
+  waitForTypedAgentCapacity,
+} from "@/lib/runner-v2/agent-capacity";
 import {
   bindRoutedLaunchJobAttempt,
   claimRoutedLaunchJob,
@@ -66,7 +71,7 @@ function singleTargetFixture(runId: string) {
 }
 
 describe("routed launch job crash recovery", () => {
-  it("reclaims an expired 30-target coordinator and resumes each queued attempt exactly once", async () => {
+  it("reclaims an expired 30-target coordinator, drains FIFO capacity, and resumes each target exactly once", async () => {
     const runDir = mkdtempSync(join(tmpdir(), "routed-launch-restart-"));
     const runJsonPath = join(runDir, "run.json");
     const chainPath = join(runDir, "chain.json");
@@ -103,7 +108,12 @@ describe("routed launch job crash recovery", () => {
         launchOccurrenceId: job.occurrenceId,
         now: new Date("2026-08-09T20:00:00.100Z"),
       });
-      transitionAgentAttempt({ runJsonPath, attemptId: attempt.id, to: "queued" });
+      enqueueAgentAttempt({
+        runJsonPath,
+        attemptId: attempt.id,
+        scopeRoot: runDir,
+        now: new Date(`2026-08-09T20:00:00.${String(100 + agentIds.indexOf(agentId)).padStart(3, "0")}Z`),
+      });
       bindRoutedLaunchJobAttempt({
         runJsonPath,
         jobId: job.id,
@@ -114,6 +124,8 @@ describe("routed launch job crash recovery", () => {
     }
 
     const launched: string[] = [];
+    const admissionOrder: string[] = [];
+    let maxActive = 0;
     const result = await runRoutedLaunchJob({
       runJsonPath,
       jobId: job.id,
@@ -122,26 +134,52 @@ describe("routed launch job crash recovery", () => {
         pid: process.pid,
         leaseMs: 60_000,
         bootstrap: async (context) => {
-          launched.push(context.agentId || "");
           const attempt = [...readRunnerV2AttemptState(runJsonPath).attempts]
             .reverse()
             .find((candidate) => candidate.agentId === context.agentId && candidate.launchJobId === job.id)!;
-          transitionAgentAttempt({ runJsonPath, attemptId: attempt.id, to: "lease_acquired" });
+          const admission = await waitForTypedAgentCapacity({
+            runJsonPath,
+            runId: "run-thirty",
+            attemptId: attempt.id,
+            cap: 3,
+            scopeRoot: runDir,
+            launchJobId: job.id,
+            launchOwnerId: "restarted-worker",
+            maxWaitMs: 10_000,
+            pollMs: 1,
+            pollMaxMs: 2,
+          });
+          expect(admission).toMatchObject({ status: "admitted", cap: 3 });
+          const agentId = context.agentId || "";
+          admissionOrder.push(agentId);
+          launched.push(agentId);
+          const active = readRunnerV2AttemptState(runJsonPath).attempts.filter((candidate) =>
+            candidate.capacitySlotAcquiredAt && !candidate.capacitySlotReleasedAt).length;
+          maxActive = Math.max(maxActive, active);
           transitionAgentAttempt({ runJsonPath, attemptId: attempt.id, to: "pty_allocated" });
           transitionAgentAttempt({ runJsonPath, attemptId: attempt.id, to: "process_spawned" });
           transitionAgentAttempt({ runJsonPath, attemptId: attempt.id, to: "ready_for_instructions" });
           transitionAgentAttempt({ runJsonPath, attemptId: attempt.id, to: "instructions_submitted" });
+          releaseAgentCapacitySlot({ runJsonPath, attemptId: attempt.id });
           return { support: "supported", mode: "typed-plan", sessionName: attempt.leaseId };
         },
       },
     });
 
     expect(result).toEqual({ status: "completed", jobId: job.id });
-    expect(launched.sort()).toEqual(agentIds);
+    expect([...launched].sort()).toEqual(agentIds);
     expect(new Set(launched).size).toBe(30);
-    expect(readRunnerV2AttemptState(runJsonPath).attempts).toHaveLength(30);
-    expect(readRunnerV2AttemptState(runJsonPath).attempts.every((attempt) =>
-      attempt.phase === "instructions_submitted" && attempt.launchJobId === job.id)).toBe(true);
+    expect(admissionOrder).toEqual(agentIds);
+    expect(maxActive).toBe(3);
+    const attempts = readRunnerV2AttemptState(runJsonPath).attempts;
+    expect(attempts).toHaveLength(30);
+    expect(attempts.every((attempt) =>
+      attempt.phase === "instructions_submitted"
+      && attempt.launchJobId === job.id
+      && Boolean(attempt.capacitySlotAcquiredAt)
+      && Boolean(attempt.capacitySlotReleasedAt))).toBe(true);
+    expect(attempts.filter((attempt) =>
+      attempt.capacitySlotAcquiredAt && !attempt.capacitySlotReleasedAt)).toHaveLength(0);
     expect(readRoutedLaunchJob(runJsonPath, job.id)).toMatchObject({
       status: "completed",
       attemptCount: 2,
