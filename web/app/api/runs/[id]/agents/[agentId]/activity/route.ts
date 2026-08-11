@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "fs";
 import { join } from "path";
 import { resolveLogDir } from "@/lib/runs/session-log-resolver";
+import { resolveAgentWorkspacePaths } from "@/lib/runs/agent-workspace-resolver";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { sanitizeOutput } from "@/lib/sanitize-output";
 import { checkRunAccess } from "@/lib/auth/run-acl";
@@ -42,8 +43,8 @@ function parseProviderList(raw: string | null): string[] {
   return providers.length ? providers : ["codex", "claude-code"];
 }
 
-function resolveLogDirs(cwd: string, cli: string | null): string[] {
-  const rawInputs = uniqueArray([cwd || process.cwd(), process.cwd()]);
+function resolveLogDirs(cwds: string[], cli: string | null): string[] {
+  const rawInputs = uniqueArray([...cwds, process.cwd()]);
   const providers = uniqueArray(parseProviderList(cli));
   const dirs: string[] = [];
 
@@ -266,7 +267,7 @@ export const GET = withErrorHandling(async (
     const runJson = safeJson<{
       started?: string;
       workspacePath?: string;
-      agents?: Array<{ id: string; session?: string }>;
+      agents?: Array<{ id: string; session?: string; started?: string }>;
     } | null>(join(runsDir, runId, "run.json"), null);
 
     const searchParams = new URL(req.url).searchParams;
@@ -275,11 +276,16 @@ export const GET = withErrorHandling(async (
     if (runJson) {
       const agent = runJson.agents?.find((a) => a.id === agentId);
       const session = agent?.session;
-      const cwd = runJson.workspacePath || process.cwd();
-      const logDirs = resolveLogDirs(cwd, cli);
+      const workspacePaths = resolveAgentWorkspacePaths(
+        artifactsDir,
+        agentId,
+        runJson.workspacePath,
+      );
+      const logDirs = resolveLogDirs(workspacePaths, cli);
 
       if (session && logDirs.length > 0) {
-        const startMs = runJson.started ? new Date(runJson.started).getTime() : 0;
+        const startedAt = agent?.started || runJson.started;
+        const startMs = startedAt ? new Date(startedAt).getTime() : 0;
         try {
           const jsonlFiles = logDirs
             .flatMap((dir) =>

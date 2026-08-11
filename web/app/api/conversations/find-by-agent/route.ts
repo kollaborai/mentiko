@@ -1,12 +1,16 @@
 import { NextRequest } from "next/server";
-import { existsSync, readdirSync, statSync, createReadStream } from "fs";
+import { existsSync, readdirSync, statSync, createReadStream, readFileSync } from "fs";
 import { basename, join } from "path";
 import { createInterface } from "readline";
 import { resolveLogDir } from "@/lib/runs/session-log-resolver";
+import { resolveAgentWorkspacePaths } from "@/lib/runs/agent-workspace-resolver";
 import { checkAuth } from "@/lib/auth/api-auth";
 import { BadRequest, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { matchesAgentConversationBootstrap, matchesAgentNameBootstrap } from "@/lib/runs/session-conversation-identity";
+import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
+import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
+import { checkRunAccess } from "@/lib/auth/run-acl";
 
 export const dynamic = "force-dynamic";
 
@@ -33,8 +37,8 @@ function parseProviderList(raw: string | null): string[] {
   return providers.length ? providers : ["codex", "claude-code"];
 }
 
-function resolveLogPaths(cwd: string, providers: string[]): string[] {
-  const rawInputs = uniqueArray([cwd || process.cwd(), process.cwd()]);
+function resolveLogPaths(cwds: string[], providers: string[]): string[] {
+  const rawInputs = uniqueArray([...cwds, process.cwd()]);
   const dirs: string[] = [];
   const providerList = uniqueArray(providers);
 
@@ -74,6 +78,18 @@ function listConversationFiles(
   }
 
   return files;
+}
+
+function readRunJson(path: string): {
+  started?: string;
+  workspacePath?: string;
+  agents?: Array<{ id: string; started?: string }>;
+} | null {
+  try {
+    return JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    return null;
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -240,11 +256,36 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
   }
 
   const providers = parseProviderList(cli);
-  const jsonlDirs = resolveLogPaths(cwd, providers);
+  let workspacePaths = [cwd];
+  let effectiveSince = since;
+
+  if (runId) {
+    try {
+      const namespaceId = await getNamespaceIdFromRequest(request);
+      const orgId = await getOrgIdFromRequest(request);
+      const runsDir = resolveLinkRunsDir(namespaceId, orgId);
+      const acl = await checkRunAccess(request, runId, runsDir);
+      if (acl.ok) {
+        const runDir = join(runsDir, runId);
+        const runJson = readRunJson(join(runDir, "run.json"));
+        const agent = runJson?.agents?.find((candidate) => candidate.id === agentId);
+        workspacePaths = resolveAgentWorkspacePaths(
+          join(runDir, "artifacts"),
+          agentId,
+          runJson?.workspacePath || cwd,
+        );
+        if (agent?.started) effectiveSince = agent.started;
+      }
+    } catch {
+      // Preserve the request-provided cwd fallback when run context is absent.
+    }
+  }
+
+  const jsonlDirs = resolveLogPaths(workspacePaths, providers);
 
   let files: { path: string; ctime: number }[];
   try {
-    const sinceRaw = since ? new Date(since).getTime() : 0;
+    const sinceRaw = effectiveSince ? new Date(effectiveSince).getTime() : 0;
     const sinceMs = Number.isFinite(sinceRaw) ? sinceRaw : 0;
     // use birthtime (creation time) for filtering - agent conversations
     // are created when the run starts. also allow 60s before since
