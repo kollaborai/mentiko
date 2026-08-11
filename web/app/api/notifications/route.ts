@@ -9,9 +9,14 @@ import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import {
   addNotification,
   mutateNotifications,
+  notificationIdFor,
   type NotificationMetadata,
   type PersistedNotification,
 } from "@/lib/notifications/notification-persistence";
+import {
+  terminalRunNotificationKey,
+  TERMINAL_RUN_NOTIFICATION_TYPES,
+} from "@/lib/notifications/terminal-notification-key";
 
 export const dynamic = "force-dynamic";
 
@@ -119,7 +124,11 @@ function generateNotificationsFromRuns(namespaceId: string): Notification[] {
 
         if (status === "complete") {
           notifications.push({
-            id: `notif_${runId}_complete`,
+            // Same identity the live producer uses, so a seeded card and the
+            // runner's card are one record rather than two views of one event.
+            id: notificationIdFor({
+              idempotencyKey: terminalRunNotificationKey({ runId, terminalStatus: "chain_complete" }),
+            }),
             type: "chain_complete",
             title: `Chain completed: ${run.chain || "Unknown"}`,
             message: run.goal?.split("\n")[0]?.slice(0, 100) || "Run completed successfully",
@@ -134,7 +143,9 @@ function generateNotificationsFromRuns(namespaceId: string): Notification[] {
           });
         } else if (status === "error" || status === "failed") {
           notifications.push({
-            id: `notif_${runId}_error`,
+            id: notificationIdFor({
+              idempotencyKey: terminalRunNotificationKey({ runId, terminalStatus: "chain_failed" }),
+            }),
             type: "chain_failed",
             title: `Chain failed: ${run.chain || "Unknown"}`,
             message: run.goal?.split("\n")[0]?.slice(0, 100) || "Run encountered an error",
@@ -310,17 +321,24 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
       : String(enrichedMetadata.error);
   }
 
-  const newNotification: Notification = {
-    id: `notif_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+  // A terminal run event has ONE identity, so repeated posts (multiple tabs,
+  // re-polls, effect re-runs) upsert instead of minting a new record each time.
+  // Everything else keeps a fresh id — those are genuinely distinct events.
+  const runId = typeof enrichedMetadata.runId === "string" ? enrichedMetadata.runId : undefined;
+  const agentId = typeof enrichedMetadata.agentId === "string" ? enrichedMetadata.agentId : undefined;
+  const idempotencyKey = runId && TERMINAL_RUN_NOTIFICATION_TYPES.has(notifType)
+    ? terminalRunNotificationKey({ runId, terminalStatus: notifType, agentId })
+    : undefined;
+
+  const notification = addNotification(namespaceId, {
+    ...(idempotencyKey ? { idempotencyKey } : {}),
     type: notifType,
     title: safeTitle,
     message: safeMessage,
     timestamp: new Date().toISOString(),
     read: false,
     metadata: Object.keys(enrichedMetadata).length > 0 ? enrichedMetadata : undefined,
-  };
-
-  const notification = addNotification(namespaceId, newNotification);
+  });
 
   return apiSuccess({ notification });
 });

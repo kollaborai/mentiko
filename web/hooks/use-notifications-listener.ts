@@ -6,6 +6,7 @@ import { showToast } from "@/components/app-shell/notifications-panel";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { unwrapApiData } from "@/lib/api/api-client";
 import { useSharedRuns } from "@/lib/runs/runs-store";
+import { TERMINAL_RUN_NOTIFICATION_TYPES } from "@/lib/notifications/terminal-notification-key";
 
 interface WebhookDelivery {
   event_id: string;
@@ -107,33 +108,12 @@ export function useNotificationsListener() {
       knownRunStatuses.current[run.id] = run.status;
       if (!prev) continue;
 
-      const actionUrl = `/runs?runId=${run.id}`;
-
+      // Toast only. The run's terminal notification RECORD is written
+      // server-side by the runner's external-effects drain, keyed on the run,
+      // so it exists exactly once no matter how many tabs are watching.
       if (prev === "running" && run.status === "completed") {
-        add({
-          type: "chain_complete",
-          title: "Chain completed",
-          message: run.chain || run.id,
-          metadata: {
-            runId: run.id,
-            chainId: run.chain,
-            actionUrl,
-            actionLabel: "View Run",
-          },
-        });
         showToast({ type: "success", title: "Chain completed", message: run.chain || run.id, duration: 4000 });
       } else if (prev === "running" && (run.status === "failed" || run.status === "cancelled")) {
-        add({
-          type: "chain_failed",
-          title: `Chain ${run.status}`,
-          message: run.chain || run.id,
-          metadata: {
-            runId: run.id,
-            chainId: run.chain,
-            actionUrl,
-            actionLabel: "View Run",
-          },
-        });
         showToast({ type: "error", title: `Chain ${run.status}`, message: run.chain || run.id, duration: 6000 });
       }
     }
@@ -153,7 +133,11 @@ export function useNotificationsListener() {
         }
       }
 
-      add({ type, title, message, metadata: enrichedMetadata });
+      // Run-terminal events are written server-side (run-scoped key), so the
+      // client only surfaces them. Everything else still persists from here.
+      if (!TERMINAL_RUN_NOTIFICATION_TYPES.has(type)) {
+        add({ type, title, message, metadata: enrichedMetadata });
+      }
 
       if (shouldShowToast !== false) {
         const toastType =

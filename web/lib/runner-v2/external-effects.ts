@@ -2,6 +2,10 @@ import { basename, dirname, join } from "path";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync } from "fs";
 import { createHash } from "crypto";
 import { createNotification } from "@/lib/notifications/notification-server";
+import {
+  terminalRunNotificationKey,
+  TERMINAL_RUN_NOTIFICATION_TYPES,
+} from "@/lib/notifications/terminal-notification-key";
 import { fireWebhooks, type WebhookEvent } from "@/lib/webhooks/webhook-utils";
 import { postOutboundWebhook } from "@/lib/webhooks/outbound-webhook-delivery";
 import { dispatchPlugins } from "@/lib/system/plugin-dispatch";
@@ -441,9 +445,21 @@ async function dispatchOperation(
   context: OperationDispatchContext,
 ): Promise<{ status: "dispatched" | "skipped"; reason?: string }> {
   if (operation.type === "notification") {
+    const notification = notificationFromOperation(operation);
+    // Key the RECORD on the run, not on the operation payload: the payload
+    // digest changes with wording/reason, so a replay under a different
+    // phrasing would land as a second card for the same terminal event.
+    // operation.idempotencyKey still governs effect-level replay elsewhere.
+    const runScopedKey = operation.runId && TERMINAL_RUN_NOTIFICATION_TYPES.has(notification.type)
+      ? terminalRunNotificationKey({
+        runId: operation.runId,
+        terminalStatus: notification.type,
+        agentId: operation.agentId,
+      })
+      : undefined;
     createNotification(context.namespaceId, {
-      ...notificationFromOperation(operation),
-      idempotencyKey: operation.idempotencyKey,
+      ...notification,
+      idempotencyKey: runScopedKey ?? operation.idempotencyKey,
     });
     return { status: "dispatched" };
   }
