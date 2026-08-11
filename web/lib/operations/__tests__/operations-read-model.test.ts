@@ -119,12 +119,17 @@ interface SourcesOptions {
   corrupt?: string[];
 }
 
-function makeSources(options: SourcesOptions = {}): { sources: OperationsSources; calls: Record<string, number> } {
+function makeSources(options: SourcesOptions = {}): {
+  sources: OperationsSources;
+  calls: Record<string, number>;
+  digestWorkspaceIds: Array<string | undefined>;
+} {
   fixture.tasks = options.tasks ?? [];
   fixture.edges = options.edges ?? [];
   const calls: Record<string, number> = {
     listTasks: 0, listDeps: 0, buildSnapshot: 0, buildDigest: 0, scanRuns: 0, runArtifacts: 0,
   };
+  const digestWorkspaceIds: Array<string | undefined> = [];
   const activeRuns = (options.activeRuns ?? []).map((run) => ({
     runPath: `/runs/${run.runId}/run.json`,
     taskId: run.taskId,
@@ -149,7 +154,11 @@ function makeSources(options: SourcesOptions = {}): { sources: OperationsSources
       calls.buildSnapshot += 1;
       return { namespaceId: "default", activeRuns, activeRunByTask };
     }) as unknown as OperationsSources["buildSnapshot"],
-    buildDigest: (async () => { calls.buildDigest += 1; return options.digest ?? digest(); }) as OperationsSources["buildDigest"],
+    buildDigest: (async (_namespaceId, _orgId, workspaceId) => {
+      calls.buildDigest += 1;
+      digestWorkspaceIds.push(workspaceId);
+      return options.digest ?? digest();
+    }) as OperationsSources["buildDigest"],
     workerStatus: () => options.worker ?? worker(),
     maxConcurrent: () => options.maxConcurrent ?? 3,
     decisions: () => [],
@@ -161,7 +170,7 @@ function makeSources(options: SourcesOptions = {}): { sources: OperationsSources
     runArtifacts: (() => { calls.runArtifacts += 1; return { disk: [{ name: "report.md", path: "artifacts/report.md" }] }; }) as unknown as OperationsSources["runArtifacts"],
     now: () => NOW,
   };
-  return { sources, calls };
+  return { sources, calls, digestWorkspaceIds };
 }
 
 describe("buildOperationsView", () => {
@@ -365,15 +374,19 @@ describe("buildOperationsView", () => {
   it("workspace isolation: states, timeline, and accomplishments are scoped, but cross-workspace blockers still block", async () => {
     const blocker = task({ id: "TASK-001", workspace_id: "/ws/other", metadata: { auto_run: true } });
     const blocked = task({ id: "TASK-002", workspace_id: "/ws/main", metadata: { auto_run: true } });
-    const { sources } = makeSources({
+    const { sources, digestWorkspaceIds } = makeSources({
       tasks: [blocker, blocked],
       edges: [{ task_id: "TASK-002", depends_on_id: "TASK-001", type: "blocks" }],
+      corrupt: ["run-without-readable-workspace"],
     });
     const view = await buildOperationsView("default", "default", "/ws/main", sources);
+    expect(digestWorkspaceIds).toEqual(["/ws/main"]);
     expect(view.taskStates.map((state) => state.taskId)).toEqual(["TASK-002"]);
     expect(view.taskStates[0].reason).toBe("blocked_dependency");
     expect(view.taskStates[0].blockingTaskIds).toEqual(["TASK-001"]);
     expect(view.timeline.every((item) => item.taskId !== "TASK-001")).toBe(true);
+    expect(view.counts.tasksOpen).toBe(1);
+    expect(view.attention.some((item) => item.reason === "corrupt_run_record")).toBe(false);
   });
 
   it("corrupt run records are diagnostic, never fatal", async () => {

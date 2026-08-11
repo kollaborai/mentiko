@@ -155,6 +155,62 @@ describe("buildMonitorStatusDigest", () => {
     ]);
   });
 
+  it("scopes run diagnostics to the selected workspace and excludes unowned legacy runs", async () => {
+    const { buildMonitorStatusDigest, runsDir } = await setup();
+    const updatedAt = new Date().toISOString();
+    writeRun(runsDir, "run-current", {
+      id: "run-current",
+      chain: "current-chain",
+      status: "failed",
+      updatedAt,
+      workspacePath: "/ws/current",
+    });
+    writeRun(runsDir, "run-old", {
+      id: "run-old",
+      chain: "old-chain",
+      status: "failed",
+      updatedAt,
+      workspacePath: "/ws/removed",
+    });
+    writeRun(runsDir, "run-legacy", {
+      id: "run-legacy",
+      chain: "legacy-chain",
+      status: "failed",
+      updatedAt,
+    });
+
+    const scoped = await buildMonitorStatusDigest("digest-test", "default", "/ws/current");
+    expect(scoped.runs.total).toBe(1);
+    expect(scoped.runs.recentFailures).toEqual([
+      expect.objectContaining({ id: "run-current" }),
+    ]);
+    expect(scoped.attention).toEqual([
+      expect.objectContaining({ message: expect.stringContaining("run-current") }),
+    ]);
+    expect(JSON.stringify(scoped)).not.toContain("run-old");
+    expect(JSON.stringify(scoped)).not.toContain("run-legacy");
+
+    const global = await buildMonitorStatusDigest("digest-test", "default");
+    expect(global.runs.total).toBe(3);
+    expect(global.runs.recentFailures.map((run) => run.id)).toEqual(
+      expect.arrayContaining(["run-current", "run-old", "run-legacy"]),
+    );
+  });
+
+  it("reads run diagnostics from the requested namespace", async () => {
+    const { buildMonitorStatusDigest, runsDir } = await setup();
+    writeRun(runsDir, "run-other-namespace", {
+      id: "run-other-namespace",
+      chain: "old-chain",
+      status: "failed",
+      updatedAt: new Date().toISOString(),
+    });
+
+    const digest = await buildMonitorStatusDigest("different-namespace", "default");
+    expect(digest.runs.total).toBe(0);
+    expect(digest.runs.recentFailures).toHaveLength(0);
+  });
+
   it("clamps embedded error-page blobs in run details to one readable line", async () => {
     const { buildMonitorStatusDigest, runsDir } = await setup();
     const htmlBlob = `generation import failed: 500 <!DOCTYPE html><html>${"x".repeat(5000)}</html>`;
