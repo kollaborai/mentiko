@@ -4,6 +4,7 @@ import { orgPath } from "@/lib/config";
 import { ensureGenerationCoreChains, type GenerationChainKind, type GenerationCoreChainId } from "@/lib/generation/generation-core-chains";
 import { startChainRun } from "@/lib/runs/chain-run-service";
 import { createJob, updateJob, type Job, type JobType } from "@/lib/runs/job-store";
+import { KIND_TO_JOB_TYPE } from "@/lib/generation/generation-job-identity";
 import type { Chain } from "@/lib/types";
 
 const KIND_TO_CHAIN_ID: Record<GenerationChainKind, GenerationCoreChainId> = {
@@ -97,24 +98,6 @@ export async function startGenerationChainRun({
     throw error;
   }
 }
-
-/**
- * Map a generation kind to its job type (drives completion-side processing in
- * /api/jobs/[id]/complete — e.g. "task" triggers task-tree import).
- */
-const KIND_TO_JOB_TYPE: Partial<Record<GenerationChainKind, JobType>> = {
-  task: "task",
-  chain_generation: "generate",
-  chain_recommendation: "recommend",
-  agent: "agent",
-  agent_edit: "agent_edit",
-  artifact: "artifact",
-  webhook: "webhook_outbound",
-  event_trigger: "event_trigger",
-  link: "link",
-  run_summary: "task_run_summary",
-  template_test: "template_test",
-};
 
 export interface GenerationJobHandle {
   jobId: string;

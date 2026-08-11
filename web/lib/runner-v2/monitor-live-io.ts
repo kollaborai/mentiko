@@ -73,7 +73,8 @@ export interface LiveMonitorContext {
 export type CompletionEvidence =
   | { kind: "declared-event"; path: string }
   | { kind: "durable-marker"; transcriptPath: string }
-  | { kind: "core-generation-artifact"; artifactPath: string; jobId: string; generationKind: string };
+  | { kind: "core-generation-artifact"; artifactPath: string; jobId: string; generationKind: string }
+  | { kind: "core-decision-artifact"; artifactPath: string; decisionId: string; decisionPhase: string };
 
 export function createLiveMonitorIO(context: LiveMonitorContext): MonitorDriverIO {
   let completionEvidence: CompletionEvidence | null = null;
@@ -415,7 +416,49 @@ async function probeCompletionEvidence(
   const transcriptPath = await durableMarkerTranscript(sessionName, context.env, context);
   if (transcriptPath) return { kind: "durable-marker", transcriptPath };
 
-  return authoritativeGenerationArtifact(context);
+  return authoritativeGenerationArtifact(context) || authoritativeDecisionArtifact(context);
+}
+
+/**
+ * Decision counterpart to authoritativeGenerationArtifact (C3).
+ *
+ * Without this the monitor had no evidence path for a decision run whose agent
+ * died before printing AGENT_COMPLETE: probeCompletionEvidence returned null,
+ * the completion entrypoint never ran, and a perfectly valid decision-result.json
+ * was terminalized as a failure. Same identity discipline as the generation
+ * side — decision id + phase on the run, the run-scoped import token, and an
+ * artifact written after this attempt started.
+ */
+function authoritativeDecisionArtifact(
+  context: LiveMonitorContext,
+): Extract<CompletionEvidence, { kind: "core-decision-artifact" }> | null {
+  const run = safeReadRunJson(context.runJsonPath);
+  if (!run) return null;
+  const metadata = run.metadata && typeof run.metadata === "object" && !Array.isArray(run.metadata)
+    ? run.metadata as Record<string, unknown>
+    : null;
+  const decisionId = typeof metadata?.decisionId === "string" ? metadata.decisionId : "";
+  const decisionPhase = typeof metadata?.decisionPhase === "string" ? metadata.decisionPhase : "";
+  if (!decisionId || !decisionPhase) return null;
+  if (!existsSync(join(context.runDir, ".internal", "decision-import-token"))) return null;
+
+  const artifactPath = join(context.runDir, "artifacts", "decision-result.json");
+  if (!existsSync(artifactPath)) return null;
+
+  const attempts = readRunnerV2AttemptState(context.runJsonPath).attempts;
+  const attempt = [...attempts].reverse().find((candidate) => candidate.agentId === context.agentId);
+  if (!attempt) return null;
+  const started = Date.parse(attempt.createdAt);
+  try {
+    if (!Number.isFinite(started) || statSync(artifactPath).mtimeMs < started) return null;
+    const payload = JSON.parse(readFileSync(artifactPath, "utf8")) as unknown;
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+    return Object.keys(payload as Record<string, unknown>).length > 0
+      ? { kind: "core-decision-artifact", artifactPath, decisionId, decisionPhase }
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 function currentCompletionEventPath(context: LiveMonitorContext): string {
