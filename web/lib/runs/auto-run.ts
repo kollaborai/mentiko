@@ -79,10 +79,20 @@ function resolveScopedTaskRun(
   taskId: string,
   metadata: Record<string, unknown>,
 ): ScopedTaskRunLookup | undefined {
-  if (!(TASK_RUN_SCOPE_METADATA_KEY in metadata)) return undefined;
+  // A cleared scope is ABSENT, not invalid. Writers clear it in three shapes
+  // depending on the path taken: the key removed (taskUpdate JSON-stringifies,
+  // dropping undefined), the key set to undefined (taskMergeMeta), or the key
+  // set to null (the tasks PATCH route merges, so it cannot delete a key).
+  // Treating null as invalid bricked the task permanently with no recovery —
+  // the release path could never produce an admittable record through that
+  // route. A present, NON-EMPTY but malformed scope still fails closed below.
+  const rawScope = metadata[TASK_RUN_SCOPE_METADATA_KEY];
+  if (!(TASK_RUN_SCOPE_METADATA_KEY in metadata) || rawScope === null || rawScope === undefined) {
+    return undefined;
+  }
 
   try {
-    const scope = parseTaskRunScope(metadata[TASK_RUN_SCOPE_METADATA_KEY]);
+    const scope = parseTaskRunScope(rawScope);
     if (scope.taskId !== taskId || metadata.last_run_id !== scope.runId) {
       return { valid: false, activeRun: null };
     }

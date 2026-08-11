@@ -45,6 +45,7 @@ import {
 } from "@/lib/tasks/task-run-locator";
 import { hasLivePendingHandoff } from "@/lib/runner-v2/handoff-liveness";
 import { isConcurrencyCapBlockedReason } from "@/lib/runner-v2/concurrency-admission";
+import { isDecisionGateReleased } from "@/lib/tasks/decision-gate-release";
 
 export const dynamic = "force-dynamic";
 
@@ -211,8 +212,17 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     if (DONE_TASK_STATUSES.has(issue.status)) return false;
     if (activeSweepTaskIds.has(issue.id)) return false;
     const meta = parseMetadata(issue.metadata);
+    if (!meta) return false;
+    // W3: this task's decision already resolved and released THIS audited
+    // run's gate. Re-applying the verdict would re-park a task that has moved
+    // on — the loop that held TASK-003 open-but-unadmittable indefinitely.
+    if (
+      meta.last_audit_verdict === "decision" &&
+      isDecisionGateReleased(meta, meta.completion_audit_run_id)
+    ) {
+      return false;
+    }
     return (
-      !!meta &&
       (meta.last_audit_verdict === "close" || meta.last_audit_verdict === "decision") &&
       meta.completion_audit_apply_status === "applied" &&
       typeof meta.completion_audit_run_id === "string"
