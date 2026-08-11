@@ -266,7 +266,12 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   const chainDir = orgPath(namespaceId, orgId, "chains", name);
   const chainPath = join(chainDir, "chain.json");
 
-  let version: string = (chain.version as string) || "";
+  // For a generated chain the ACCEPTED (repaired) version is authoritative:
+  // reading it off the raw submission would stamp the pre-repair value back
+  // onto the persisted manifest and undo C1's semver normalization.
+  let version: string = (acceptedGenerated?.manifestChain.version as string)
+    || (chain.version as string)
+    || "";
   const isNewChain = !existsSync(chainPath);
 
   mkdirSync(chainDir, { recursive: true });
@@ -338,6 +343,19 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     agent_count: String(agentsArray.length),
     migrated_agents: migratedAgentIds.join(","),
   }, ip);
+
+  // W1: a NEW chain changes the catalog, which is the one thing that can
+  // un-park a task sitting in attention_required. Reconsider them here rather
+  // than polling for a condition that only changes on this event.
+  if (isNewChain) {
+    // Imported lazily: this pulls in the task store (better-sqlite3), and
+    // saving a chain must not require that module to even load.
+    void import("@/lib/tasks/generation-attention-recovery")
+      .then((mod) => mod.reconsiderAttentionRequiredTasks(namespaceId, orgId))
+      .catch(() => {
+        /* best effort: the task stays parked and manual recovery still works */
+      });
+  }
 
   return apiSuccess({
     success: true,

@@ -149,8 +149,14 @@ TASK_LINKED_CHAIN_RUNTIME (required): A chain assigned to a task runs after auto
  * generated-chain-rejections.ts). Bump whenever a blocking rule in this file
  * changes so a previously rejected artifact gets one fresh validation under
  * the new rules instead of being stopped by a stale fingerprint.
+ *
+ * 2026-08-10: acceptance now repairs before it rejects (stall-killer C1), and
+ * the ledger is keyed by the repaired candidate's hash. Every entry written
+ * under the old raw-payload ordering describes a verdict the current pipeline
+ * would not reach, so this bump deliberately invalidates all of them —
+ * including the TASK-007 semver and dangling-branch fingerprints.
  */
-export const GENERATED_CHAIN_VALIDATOR_REVISION = "2026-07-31.v0349";
+export const GENERATED_CHAIN_VALIDATOR_REVISION = "2026-08-10.v0350";
 
 // 2026-07-30/31 devv incident (chain-contract-plan-of-record.md): this file
 // used to scan agent prose (prompt/deliverable/verification/...) with keyword

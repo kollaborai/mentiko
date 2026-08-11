@@ -6,10 +6,19 @@
  * CLI generation, run start — accepts a generated chain through this one
  * pipeline:
  *
- *   decode -> materialize (pure) -> structural chain validation ->
+ *   decode -> REPAIR (deterministic, non-semantic) -> deterministic-rejection
+ *   ledger -> materialize (pure) -> structural chain validation ->
  *   versioned generated-contract validation (semantic rules subject to the
- *   admin circuit breaker) -> deterministic-rejection ledger -> COMMIT
+ *   admin circuit breaker) -> COMMIT
  *   (registry writes, and the manifest when persisted under a chain id)
+ *
+ * Repair comes FIRST, before the ledger is consulted and before anything is
+ * validated. The old ordering hashed and rejected the raw payload, so a
+ * candidate that only needed a two-part version padded was fingerprinted as a
+ * permanent deterministic failure and every later door agreed with that stale
+ * verdict (TASK-007 parked ~24h this way). The ledger is therefore keyed by
+ * the EFFECTIVE (repaired) hash — what was actually validated — while the
+ * authored hash and the repair list ride along as evidence.
  *
  * No route or CLI may implement a semantic validator outside this service.
  * Side effects happen only after every validation has passed; a rejected
@@ -40,6 +49,10 @@ import {
   type GeneratedChainRejectionEnvelope,
   type GeneratedChainRejectionPhase,
 } from "@/lib/chains/generated-chain-rejections";
+import {
+  sanitizeGeneratedChain,
+  type GeneratedChainRepair,
+} from "@/lib/chains/generated-chain-sanitizer";
 import { resolveSemanticPolicyMode } from "@/lib/system/system-settings";
 
 export interface GeneratedChainWarning {
@@ -50,12 +63,18 @@ export interface GeneratedChainWarning {
 }
 
 export interface AcceptedGeneratedChain {
-  /** the authored (user/model-facing) definition as submitted */
+  /** the authored (user/model-facing) definition as submitted, pre-repair */
   authoredChain: Record<string, unknown>;
   /** fully materialized execution candidate ($ref-rewritten) */
   manifestChain: Record<string, unknown>;
   /** canonical digest of the manifest chain — binds acceptance to execution */
   digest: string;
+  /** hash of the candidate exactly as submitted */
+  authoredHash: string;
+  /** hash of the repaired candidate — what the ledger and validators saw */
+  effectiveHash: string;
+  /** deterministic repairs applied before validation (empty when none) */
+  repairs: GeneratedChainRepair[];
   contractVersion: number;
   acceptanceRevision: string;
   warnings: GeneratedChainWarning[];
@@ -129,21 +148,33 @@ export function acceptGeneratedChain(input: {
   skipStructuralChainCheck?: boolean;
 }): AcceptedGeneratedChain {
   const { chain, namespaceId, orgId, phase } = input;
-  const authoredHash = canonicalGeneratedChainHash(chain);
 
-  // Deterministic-duplicate answer before any work (A4): same candidate under
-  // the same validator revision fails identically at every door.
-  const prior = findGeneratedChainRejection(namespaceId, orgId, authoredHash);
+  // REPAIR FIRST (C1). Deterministic, non-semantic fixes only; see
+  // generated-chain-sanitizer.ts. Everything downstream — hashing, the ledger,
+  // materialization, validation — operates on the repaired candidate.
+  const { chain: effectiveChain, repairs } = sanitizeGeneratedChain(chain);
+  const authoredHash = canonicalGeneratedChainHash(chain);
+  const effectiveHash = canonicalGeneratedChainHash(effectiveChain);
+
+  // Deterministic-duplicate answer before any work (A4): same repaired
+  // candidate under the same validator revision fails identically at every door.
+  const prior = findGeneratedChainRejection(namespaceId, orgId, effectiveHash);
   if (prior) {
     const envelope: GeneratedChainRejectionEnvelope = { ...prior, phase, at: new Date().toISOString() };
     throw new GeneratedChainRejectedError([prior.message], envelope, true);
   }
 
   // Pure materialization: nothing persists until acceptance completes.
-  const materialized = materializeGeneratedChain(chain, namespaceId, orgId);
+  const materialized = materializeGeneratedChain(effectiveChain, namespaceId, orgId);
 
   const reject = (errors: string[]): never => {
-    const envelope = buildGeneratedChainRejectionEnvelope({ phase, chain, errors });
+    const envelope = buildGeneratedChainRejectionEnvelope({
+      phase,
+      chain: effectiveChain,
+      errors,
+      authoredHash,
+      repairs,
+    });
     recordGeneratedChainRejection(namespaceId, orgId, envelope);
     throw new GeneratedChainRejectedError(errors, envelope);
   };
@@ -180,6 +211,9 @@ export function acceptGeneratedChain(input: {
     authoredChain: chain,
     manifestChain: materialized.chain,
     digest: canonicalGeneratedChainHash(materialized.chain),
+    authoredHash,
+    effectiveHash,
+    repairs,
     contractVersion: contractVersionOf(chain),
     acceptanceRevision: GENERATED_CHAIN_VALIDATOR_REVISION,
     warnings,
@@ -200,6 +234,12 @@ export interface AcceptedManifestRecord {
   authored_chain: Record<string, unknown>;
   manifest_chain: Record<string, unknown>;
   digest: string;
+  /** hash of the candidate as submitted, before repair */
+  authored_hash: string;
+  /** hash of the repaired candidate that was actually validated */
+  effective_hash: string;
+  /** deterministic repairs applied at acceptance */
+  repairs: GeneratedChainRepair[];
   contract_version: number;
   acceptance_revision: string;
   warnings: GeneratedChainWarning[];
@@ -223,6 +263,9 @@ export function persistAcceptedManifest(
     authored_chain: accepted.authoredChain,
     manifest_chain: accepted.manifestChain,
     digest: accepted.digest,
+    authored_hash: accepted.authoredHash,
+    effective_hash: accepted.effectiveHash,
+    repairs: accepted.repairs,
     contract_version: accepted.contractVersion,
     acceptance_revision: accepted.acceptanceRevision,
     warnings: accepted.warnings,

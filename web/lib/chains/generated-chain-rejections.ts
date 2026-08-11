@@ -18,6 +18,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { dirname, join } from "path";
 import { orgPath } from "@/lib/config";
 import { GENERATED_CHAIN_VALIDATOR_REVISION } from "@/lib/chains/generated-chain-delivery-contract";
+import type { GeneratedChainRepair } from "@/lib/chains/generated-chain-sanitizer";
 
 export type GeneratedChainRejectionPhase = "import" | "recovery" | "save" | "run_start";
 
@@ -27,7 +28,16 @@ export interface GeneratedChainRejectionEnvelope {
   phase: GeneratedChainRejectionPhase;
   code: string;
   deterministic: boolean;
+  /**
+   * Hash of the EFFECTIVE (repaired) candidate — the exact bytes validation
+   * rejected, and the ledger key. See generated-chain-acceptance.ts on why
+   * repair precedes fingerprinting.
+   */
   artifact_hash: string;
+  /** hash of the candidate as submitted, before repair (evidence only) */
+  authored_hash?: string;
+  /** repairs applied before validation — proof the failure survived repair */
+  repairs?: GeneratedChainRepair[];
   validator_revision: string;
   contract_version: number;
   paths: string[];
@@ -86,15 +96,20 @@ function pathsFromErrors(errors: string[]): string[] {
 
 export function buildGeneratedChainRejectionEnvelope(input: {
   phase: GeneratedChainRejectionPhase;
+  /** the EFFECTIVE (post-repair) candidate that failed validation */
   chain: unknown;
   errors: string[];
   code?: string;
+  authoredHash?: string;
+  repairs?: GeneratedChainRepair[];
 }): GeneratedChainRejectionEnvelope {
   return {
     phase: input.phase,
     code: input.code ?? GENERATED_CHAIN_CONTRACT_REJECTION_CODE,
     deterministic: true,
     artifact_hash: canonicalGeneratedChainHash(input.chain),
+    ...(input.authoredHash ? { authored_hash: input.authoredHash } : {}),
+    ...(input.repairs && input.repairs.length > 0 ? { repairs: input.repairs } : {}),
     validator_revision: GENERATED_CHAIN_VALIDATOR_REVISION,
     contract_version: contractVersionOf(input.chain),
     paths: pathsFromErrors(input.errors),
