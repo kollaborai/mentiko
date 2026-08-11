@@ -151,6 +151,26 @@ describe("withRequiredChainGenerationRules", () => {
     expect(result).toContain("DELIVERY_CONTRACT_EDIT_AUTHORITY");
   });
 
+  // Regression: TASK-007 (2026-08-09). The schema advertised version "1.0"
+  // and nothing taught the branch-key vocabulary, so generation burned its
+  // deterministic budget on the validator's two graph rejections. The rule
+  // must state both in the validator's own words.
+  it("teaches the graph vocabulary in the exact words the validator rejects with", () => {
+    const result = withRequiredChainGenerationRules("Design a chain for the request.");
+    expect(result).toContain("GRAPH_EVENT_VOCABULARY");
+    expect(result).toContain('exactly "1.0.0"');
+    expect(result).toContain("must be in semver format");
+    expect(result).toContain("must match an event emitted or consumed by an agent");
+    expect(result).toContain("pruned at import");
+  });
+
+  it("does not duplicate the graph-vocabulary marker when already present", () => {
+    const already = "Some template.\n\nGRAPH_EVENT_VOCABULARY already present here.";
+    const result = withRequiredChainGenerationRules(already);
+    expect(result.split("GRAPH_EVENT_VOCABULARY").length - 1).toBe(1);
+    expect(result).toContain("RUNTIME_CONTEXT_TRUTH");
+  });
+
   it("documents both authorities shapes the validator accepts", () => {
     const result = withRequiredChainGenerationRules("Design a chain for the request.");
     expect(result).toContain("Authorities may be a string array or authorities.can");

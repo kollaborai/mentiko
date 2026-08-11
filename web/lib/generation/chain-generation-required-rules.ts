@@ -35,6 +35,16 @@ RUNTIME_CONTEXT_TRUTH (required): TASK_CONTEXT_JSON is an IMMUTABLE launch snaps
 export const CHAIN_GENERATION_DELIVERY_AUTHORITY_RULE = `
 DELIVERY_CONTRACT_EDIT_AUTHORITY (required): classify the requested end state before choosing metadata.generated_chain_contract.mode. Use "delivery" only when the chain must create or modify workspace files/code; delivery generated chains require an agent with edit_files authority. Use "operations" when the end state is a mutation of external or Mentiko-managed state through a command, API, or MCP tool; operations generated chains require an agent with run_commands authority. Use "research" only when the acceptance criteria are analysis/evidence outputs and no state mutation is required. Running tests does not make a code-writing task "operations"; if workspace files must change, the mode is "delivery". Authorities may be a string array or authorities.can. Never add a fake edit_files agent to an operational chain merely to satisfy validation.`;
 
+// Matches the exact graph rejections thrown by the chain validator. TASK-007
+// (2026-08-09) burned its whole deterministic budget on these two: version
+// "1.0" ("must be in semver format") and a branches key naming an event no
+// agent declared ("must match an event emitted or consumed by an agent").
+// Import-time repair now normalizes the version and PRUNES dangling branches,
+// so a wrong branch key silently costs the chain its routing — teach the
+// vocabulary here so the intended topology survives generation.
+export const CHAIN_GENERATION_GRAPH_VOCABULARY_RULE = `
+GRAPH_EVENT_VOCABULARY (required): version must be exactly "1.0.0" (three-part semver; "1.0" is rejected: must be in semver format). Every key in branches must be an event name that one of THIS chain's own agents declares in emits or triggers — the validator rejects any other key with "must match an event emitted or consumed by an agent". Never invent, rename, or pluralize event names in branches; copy them verbatim from the emits/triggers you wrote on the agents. Every branch target (the value, fan_out entries, and fan_in) must be an agent id defined in this chain. A branch whose event no agent emits can never fire and is pruned at import, silently deleting that routing.`;
+
 export function withRequiredChainRecommendationRules(templateContent: string): string {
   if (templateContent.includes(TASK_LINKED_CHAIN_RUNTIME_RULE.trim())) return templateContent;
   return `${templateContent.trim()}\n\n${TASK_LINKED_CHAIN_RUNTIME_RULE.trim()}`;
@@ -53,6 +63,9 @@ export function withRequiredChainGenerationRules(templateContent: string): strin
   }
   if (!content.includes("RUNTIME_CONTEXT_TRUTH")) {
     content = `${content.trim()}\n\n${CHAIN_GENERATION_RUNTIME_CONTEXT_RULE.trim()}`;
+  }
+  if (!content.includes("GRAPH_EVENT_VOCABULARY")) {
+    content = `${content.trim()}\n\n${CHAIN_GENERATION_GRAPH_VOCABULARY_RULE.trim()}`;
   }
   if (!content.includes(TASK_LINKED_CHAIN_RUNTIME_RULE.trim())) {
     content = `${content.trim()}\n\n${TASK_LINKED_CHAIN_RUNTIME_RULE.trim()}`;
