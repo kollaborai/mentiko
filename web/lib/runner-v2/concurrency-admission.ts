@@ -62,7 +62,8 @@ function admitChainGated(
     }
     let active: number;
     try { active = countRunningRuns(runsDir, runId); } catch {
-      updateRunStatus(runJsonPath, "blocked", "concurrency admission blocked: invalid run record in configured runs root");
+      updateRunStatus(runJsonPath, "blocked", "concurrency admission blocked: invalid run record in configured runs root", undefined, undefined, undefined,
+        { actor: "admission", reason: "concurrency admission blocked: invalid run record in configured runs root" });
       return "invalid";
     }
     if (active < input.cap && isFairTurn()) {
@@ -98,7 +99,8 @@ export function blockAgentForInvalidAdmission(input: {
   // Keep every runtime reader on the same authoritative blocked reason. The
   // agent record carries the agent-specific detail; status_message is what the
   // run/job surfaces consume when they only have the run record.
-  updateRunStatus(runJsonPath, "blocked", INVALID_AGENT_ADMISSION_REASON);
+  updateRunStatus(runJsonPath, "blocked", INVALID_AGENT_ADMISSION_REASON, undefined, undefined, undefined,
+    { actor: "admission", reason: INVALID_AGENT_ADMISSION_REASON });
   markRunAgentBlocked(runJsonPath, input.agentId, INVALID_AGENT_ADMISSION_REASON);
 }
 
@@ -204,7 +206,9 @@ export function waitForChainAdmission(input: { runsDir: string; runId: string; c
       const elapsed = Math.floor((now() - started) / 1_000);
       if (elapsed >= input.maxWaitSecs) {
         const run = resolveExistingRunRecordPaths(runsDir, runId);
-        updateRunStatus(run.runJsonPath, "blocked", `${CONCURRENCY_CAP_BLOCKED_REASON_PREFIX}${elapsed}s for a chain slot (limit ${input.cap}); blocked`);
+        const capBlockedReason = `${CONCURRENCY_CAP_BLOCKED_REASON_PREFIX}${elapsed}s for a chain slot (limit ${input.cap}); blocked`;
+        updateRunStatus(run.runJsonPath, "blocked", capBlockedReason, undefined, undefined, undefined,
+          { actor: "admission", reason: capBlockedReason });
         return "invalid";
       }
       sleep(poll); poll = Math.min(poll * 2, input.pollMaxSecs * 1_000);

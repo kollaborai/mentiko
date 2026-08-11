@@ -162,10 +162,17 @@ export async function runRunRecordCli(
   }
 
   if (parsed.command === "set-status") {
-    rejectUnexpected(parsed, new Set(["--runs-dir", "--run-id", "--status", "--message"]));
+    rejectUnexpected(parsed, new Set(["--runs-dir", "--run-id", "--status", "--message", "--reason"]));
     const status = required(parsed.values, "--status");
     if (!isRunStatus(status)) throw new Error(`Invalid run status: ${status}`);
-    write(JSON.stringify(updateRunStatus(runJsonPath, status, optional(parsed.values, "--message"))));
+    const message = optional(parsed.values, "--message");
+    // C2: the shell boundary can name its own evidence; when it only gives a
+    // message, that message IS the reason.
+    const reason = optional(parsed.values, "--reason") || message;
+    write(JSON.stringify(updateRunStatus(
+      runJsonPath, status, message, undefined, undefined, undefined,
+      reason ? { actor: "system", reason } : undefined,
+    )));
     return;
   }
 
@@ -183,10 +190,14 @@ export async function runRunRecordCli(
   }
 
   if (parsed.command === "set-agent-status") {
-    rejectUnexpected(parsed, new Set(["--runs-dir", "--run-id", "--agent-id", "--status"]));
+    rejectUnexpected(parsed, new Set(["--runs-dir", "--run-id", "--agent-id", "--status", "--reason"]));
     const status = required(parsed.values, "--status");
     if (!isAgentStatus(status)) throw new Error(`Invalid agent status: ${status}`);
-    write(JSON.stringify(updateRunAgent(runJsonPath, required(parsed.values, "--agent-id"), status)));
+    const reason = optional(parsed.values, "--reason");
+    write(JSON.stringify(updateRunAgent(
+      runJsonPath, required(parsed.values, "--agent-id"), status, undefined, undefined, undefined,
+      reason ? { actor: "system", reason } : undefined,
+    )));
     return;
   }
 

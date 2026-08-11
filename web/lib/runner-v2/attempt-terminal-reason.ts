@@ -7,6 +7,7 @@ const TERMINAL_REASON_LABELS: Record<AgentAttemptTerminalReason, string> = {
   completed_from_cross_run_event: "Recovered from verified cross-run completion event",
   completed_from_handoff_artifact: "Recovered from fresh handoff artifact",
   completed_from_generation_artifact: "Generation artifact accepted",
+  completed_from_decision_artifact: "Decision artifact accepted",
   completed_empty_emits_last_agent: "Last agent had no declared completion event",
   no_completion_event: "Declared completion event was missing",
   retries_exhausted: "Declared completion event remained missing after retries",

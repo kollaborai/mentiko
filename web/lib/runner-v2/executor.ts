@@ -23,7 +23,7 @@ export type TypedExecutorEffect =
   | { type: "run-terminal"; status: "completed" | "stopped" | "failed"; reason: string };
 
 export interface TypedExecutorPlan {
-  action: "already-completed" | "stale-attempt" | "await-liveness" | "fail" | "retry" | "exhausted" | "generation-terminal" | "route" | "terminal" | "loop-complete" | "max-rounds-stop" | "fan-group-member" | "workspace-conflict" | "workspace-source-changed";
+  action: "already-completed" | "stale-attempt" | "await-liveness" | "fail" | "retry" | "exhausted" | "generation-terminal" | "decision-terminal" | "route" | "terminal" | "loop-complete" | "max-rounds-stop" | "fan-group-member" | "workspace-conflict" | "workspace-source-changed";
   /** Stable identity for every replayable operation in this completion. */
   occurrenceId?: string;
   launches: RoutedLaunchPlan[];
@@ -45,6 +45,7 @@ const AGENT_COMPLETE_ACTIONS = new Set([
   "max-rounds-stop",
   "terminal",
   "generation-terminal",
+  "decision-terminal",
 ]);
 
 export function buildTypedExecutorPlan(input: TypedExecutorInput): TypedExecutorPlan {
@@ -176,6 +177,11 @@ export function buildTypedExecutorPlan(input: TypedExecutorInput): TypedExecutor
     effects.push({ type: "retry", plan: decision.retry });
   } else if (decision.action === "generation-terminal") {
     effects.push({ type: "generation-import", plan: decision.generation });
+    effects.push({ type: "terminal", plan: decision.terminal });
+  } else if (decision.action === "decision-terminal") {
+    // The decision import itself is fired by the terminal path
+    // (maybeTriggerDecisionImportOnCompletion), which is idempotent and
+    // single-flight guarded — no separate import effect to duplicate it.
     effects.push({ type: "terminal", plan: decision.terminal });
   } else if (decision.action === "terminal") {
     effects.push({ type: "terminal", plan: decision.terminal });

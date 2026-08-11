@@ -447,6 +447,7 @@
         "completed_from_cross_run_event",
         "completed_from_handoff_artifact",
         "completed_from_generation_artifact",
+        "completed_from_decision_artifact",
         "completed_empty_emits_last_agent",
         "no_completion_event",
         "retries_exhausted",

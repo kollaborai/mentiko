@@ -189,8 +189,9 @@ export function runRunnerV2CompletionEntrypoint(
         ? completionAttemptGuard(runId, agent.id, completionAttempt.id)
         : undefined;
       if (!completionAttempt || completionAttemptCurrent) {
-        updateRunAgent(runJsonPath, agent.id, "complete", input.now, undefined, attemptGuard);
-        updateRunStatus(runJsonPath, "completed", undefined, input.now, undefined, attemptGuard);
+        const completedReason = { actor: "system" as const, reason: "completion entrypoint accepted the agent's completion handoff" };
+        updateRunAgent(runJsonPath, agent.id, "complete", input.now, undefined, attemptGuard, completedReason);
+        updateRunStatus(runJsonPath, "completed", undefined, input.now, undefined, attemptGuard, completedReason);
       }
     }
     if (!input.dryRun && completionAttempt && integration && integration.status !== "conflict") {
@@ -339,6 +340,7 @@ export function runRunnerV2CompletionEntrypoint(
       now: input.now,
       terminal,
       generation: generationImportPlan(run, runDir, agent.id, env),
+      decision: decisionCompletionPlan(run, runDir, agent.id),
       completionRecoveryEvidence: monitorCompletionRecoveryEvidence(env),
       fanGroup,
       liveness,
@@ -597,8 +599,10 @@ export function runRunnerV2CompletionEntrypoint(
         runJsonPath,
         ...recoveredGuard,
       })) {
-        updateRunAgent(runJsonPath, agent.id, "complete", input.now, undefined, recoveredGuard);
-        updateRunStatus(runJsonPath, "failed", error.message, input.now, undefined, recoveredGuard);
+        updateRunAgent(runJsonPath, agent.id, "complete", input.now, undefined, recoveredGuard,
+          { actor: "system", reason: "generation artifact accepted; agent work completed" });
+        updateRunStatus(runJsonPath, "failed", error.message, input.now, undefined, recoveredGuard,
+          { actor: "system", reason: `generation import failed after agent completion: ${error.message}` });
       }
       removeAgentSessionsAndReleaseCapacity({
         sessionName: input.sessionName, stateDir, runId, runJsonPath,
@@ -763,8 +767,9 @@ function blockWorkspaceIntegrationConflict(input: {
     now: input.now,
   });
   const attemptGuard = completionAttemptGuard(input.runId, input.agentId, input.attemptId);
-  updateRunAgent(input.runJsonPath, input.agentId, "blocked", input.now, undefined, attemptGuard);
-  updateRunStatus(input.runJsonPath, "blocked", detail, input.now, undefined, attemptGuard);
+  const blockedReason = { actor: "system" as const, reason: detail };
+  updateRunAgent(input.runJsonPath, input.agentId, "blocked", input.now, undefined, attemptGuard, blockedReason);
+  updateRunStatus(input.runJsonPath, "blocked", detail, input.now, undefined, attemptGuard, blockedReason);
   removeAgentSessionsAndReleaseCapacity({
     sessionName: input.sessionName,
     stateDir: input.stateDir,
@@ -833,8 +838,9 @@ function blockSourceWorkspaceChanged(input: {
     now: input.now,
   });
   const attemptGuard = completionAttemptGuard(input.runId, input.agentId, input.attemptId);
-  updateRunAgent(input.runJsonPath, input.agentId, "blocked", input.now, undefined, attemptGuard);
-  updateRunStatus(input.runJsonPath, "blocked", detail, input.now, undefined, attemptGuard);
+  const blockedReason = { actor: "system" as const, reason: detail };
+  updateRunAgent(input.runJsonPath, input.agentId, "blocked", input.now, undefined, attemptGuard, blockedReason);
+  updateRunStatus(input.runJsonPath, "blocked", detail, input.now, undefined, attemptGuard, blockedReason);
   removeAgentSessionsAndReleaseCapacity({
     sessionName: input.sessionName,
     stateDir: input.stateDir,
@@ -1072,6 +1078,7 @@ function maybeHandleQualityGateFailure(input: {
   }) : { status: "planned" as const };
 
   if (!input.dryRun) {
+    const failureReason = { actor: "system" as const, reason: result.reason };
     updateRunAgent(
       input.runJsonPath,
       input.agent.id,
@@ -1079,6 +1086,7 @@ function maybeHandleQualityGateFailure(input: {
       input.now,
       input.onRunMutation,
       input.attemptGuard,
+      failureReason,
     );
     updateRunStatus(
       input.runJsonPath,
@@ -1087,6 +1095,7 @@ function maybeHandleQualityGateFailure(input: {
       input.now,
       input.onRunMutation,
       input.attemptGuard,
+      failureReason,
     );
   }
   return artifact;
@@ -1156,6 +1165,48 @@ function hasImportableGenerationPayload(input: {
     }
   }
   return false;
+}
+
+/**
+ * Decision-phase counterpart to generationImportPlan (C3).
+ *
+ * A decision core-chain run's real deliverable is `artifacts/decision-result.json`.
+ * The `mentiko decision import` CLI call that applies it is the LAST thing the
+ * agent does, and four runs died exactly there: valid artifact on disk, valid
+ * run-scoped import token, and a failed run because the model flubbed the final
+ * command. Completion must own that, with the CLI as an accelerant.
+ *
+ * Same identity discipline as the generation side — decision id, phase, the
+ * run-scoped token chain-run-service wrote, and an artifact written after this
+ * attempt started. A filename alone is never authoritative.
+ */
+function decisionCompletionPlan(
+  run: RunRecord,
+  runDir: string,
+  agentId: string,
+): { decisionId: string; phase: string; artifactPath: string } | undefined {
+  const metadata = objectValue(run.metadata);
+  const decisionId = stringValue(metadata?.decisionId);
+  const phase = stringValue(metadata?.decisionPhase);
+  if (!decisionId || !phase) return undefined;
+  if (!existsSync(join(runDir, ".internal", "decision-import-token"))) return undefined;
+
+  const artifactPath = join(runDir, "artifacts", "decision-result.json");
+  if (!existsSync(artifactPath)) return undefined;
+
+  const notBefore = generationArtifactNotBeforeMs(run, agentId);
+  try {
+    if (notBefore !== undefined && statSync(artifactPath).mtimeMs < notBefore) return undefined;
+    const payload = JSON.parse(readFileSync(artifactPath, "utf8")) as unknown;
+    // An empty object or an array is not a phase result; anything else is the
+    // decision route's business to validate, not ours to second-guess.
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return undefined;
+    if (Object.keys(payload as Record<string, unknown>).length === 0) return undefined;
+  } catch {
+    return undefined;
+  }
+
+  return { decisionId, phase, artifactPath };
 }
 
 function generationArtifactNotBeforeMs(run: RunRecord, agentId: string): number | undefined {

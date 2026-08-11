@@ -53,6 +53,7 @@ import { mintSessionToken, verifySessionToken } from "@/lib/auth/session-token";
 import { resolveRunAgentProfile } from "@/lib/agents/run-agent-profile";
 import { shouldRecordTaskExecutionMetadata } from "@/lib/runs/run-provenance";
 import { executionStartedLifecycleMetadata } from "@/lib/orchestration/task-lifecycle-metadata";
+import { mintAdHocGenerationJobIdentity } from "@/lib/generation/generation-job-identity";
 
 const SAFE_RUN_ID_RE = /^run-[A-Za-z0-9_-]{1,120}$/;
 
@@ -200,6 +201,12 @@ function markChainLaunchFailed(
     const errorRun = JSON.parse(readFileSync(errorRunPath, "utf-8"));
     errorRun.status = "failed";
     errorRun.error = message;
+    // C2: a launch that never produced a process is still a terminal write and
+    // still owes the reader its evidence. Without this the run showed `failed`
+    // with statusReason null and the spawn error buried in `error`.
+    errorRun.status_message = `chain launch failed: ${message}`;
+    errorRun.statusReason = { actor: "system", reason: `chain launch failed: ${message}` };
+    errorRun.completed = errorRun.completed || new Date().toISOString();
     writeFileSync(errorRunPath, JSON.stringify(errorRun, null, 2));
   }
   createNotification(namespaceId, {
@@ -478,7 +485,26 @@ export async function startChainRun({
 
   mkdirSync(runDir, { recursive: true });
 
-  const runMetadata = normalizeRunMetadata(body.metadata);
+  const callerRunMetadata = normalizeRunMetadata(body.metadata);
+
+  // C3: a core generation chain launched ad-hoc (the chains page Run button)
+  // arrives with no job identity, which made its artifact permanently
+  // unacceptable to the monitor — the agent finished as instructed and the run
+  // failed anyway. Mint the job here so EVERY core-generation run, however it
+  // was started, presents the same identity to completion. Never overrides the
+  // task-driven path's own job.
+  const adHocGenerationIdentity = mintAdHocGenerationJobIdentity({
+    chain: runChain,
+    existingMetadata: callerRunMetadata,
+    namespaceId,
+    prompt: userPrompt || "",
+    workspacePath: authorizedWorkspacePath,
+    taskId: typeof taskId === "string" ? taskId : undefined,
+  });
+  const runMetadata = adHocGenerationIdentity
+    ? { ...(callerRunMetadata || {}), ...adHocGenerationIdentity }
+    : callerRunMetadata;
+
   const decisionRunMetadata = runMetadata?.decisionId && runMetadata?.decisionPhase
     ? runMetadata
     : undefined;
@@ -665,10 +691,27 @@ export async function startChainRun({
         markChainLaunchFailed(runDir, validChainName, namespaceId, runObject, runId, error instanceof Error ? error.message : String(error));
       });
   } else {
-    const runnerV2Launch = await startRunnerV2Launch(runnerV2LaunchContext);
+    // C2: the background branch above already records launch failures in
+    // run.json. This one used to throw straight out to the caller, leaving a
+    // run.json stamped `running` with no session, no reason, and nothing to
+    // reap it — the caller saw a 500 and the run read as an unexplained
+    // silence forever (reproduced live with a spawn ENOENT). Same treatment
+    // both sides: the record explains itself, then the error propagates.
+    let runnerV2Launch: Awaited<ReturnType<typeof startRunnerV2Launch>>;
+    try {
+      runnerV2Launch = await startRunnerV2Launch(runnerV2LaunchContext);
+    } catch (error) {
+      try { closeSync(logFd); } catch { /* already closed */ }
+      markChainLaunchFailed(
+        runDir, validChainName, namespaceId, runObject, runId,
+        error instanceof Error ? error.message : String(error),
+      );
+      throw error;
+    }
 
     if (runnerV2Launch.support === "unsupported") {
       closeSync(logFd);
+      markChainLaunchFailed(runDir, validChainName, namespaceId, runObject, runId, runnerV2Launch.reason);
       throw new Error(runnerV2Launch.reason);
     }
 

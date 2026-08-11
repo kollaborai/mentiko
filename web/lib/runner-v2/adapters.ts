@@ -223,7 +223,7 @@ export function applyEffect(effect: TypedExecutorEffect, context: AdapterContext
       undefined,
       context.onRunMutation,
       context.attemptGuard,
-      effect.status === "stopped" ? { actor: "system", reason: effect.reason } : undefined,
+      { actor: "system", reason: effect.reason },
     );
   } else if (effect.type === "terminal") {
     for (const step of effect.plan.steps) {
@@ -235,6 +235,7 @@ export function applyEffect(effect: TypedExecutorEffect, context: AdapterContext
           undefined,
           context.onRunMutation,
           context.attemptGuard,
+          { actor: "system", reason: step.reason },
         );
       } else {
         launchesStarted.push(...applyOperation(step, context));

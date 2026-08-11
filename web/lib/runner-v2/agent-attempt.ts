@@ -27,6 +27,7 @@ export type AgentAttemptTerminalReason =
   | "completed_from_cross_run_event"
   | "completed_from_handoff_artifact"
   | "completed_from_generation_artifact"
+  | "completed_from_decision_artifact"
   | "completed_empty_emits_last_agent"
   | "no_completion_event"
   | "retries_exhausted"
@@ -525,6 +526,26 @@ export function markAgentAttemptCompletedFromGeneration(input: {
   return markLatestAttemptCompleted({
     ...input,
     reason: "completed_from_generation_artifact",
+  });
+}
+
+/**
+ * System-owned decision completion (C3): the run-scoped decision-result.json
+ * was the deliverable, so the run completes on the artifact rather than on the
+ * agent's final `mentiko decision import` shell command landing.
+ */
+export function markAgentAttemptCompletedFromDecisionArtifact(input: {
+  runJsonPath: string;
+  runId: string;
+  agentId: string;
+  attemptId?: string;
+  detail?: string;
+  now?: Date;
+  onMutation?: RunMutationObserver;
+}): AgentAttemptRecord | undefined {
+  return markLatestAttemptCompleted({
+    ...input,
+    reason: "completed_from_decision_artifact",
   });
 }
 

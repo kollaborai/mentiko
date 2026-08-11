@@ -119,8 +119,8 @@ export function createStandaloneMonitorRun(
     // The run directory is already exclusively published. Preserve that evidence,
     // but make it terminal so the watcher/UI cannot mistake it for live work.
     try {
-      updateRunAgent(paths.runJsonPath, agent.sessionPrefix, "blocked");
-      updateRunStatus(paths.runJsonPath, "blocked", reason);
+      updateRunAgent(paths.runJsonPath, agent.sessionPrefix, "blocked", undefined, undefined, undefined, { actor: "system", reason });
+      updateRunStatus(paths.runJsonPath, "blocked", reason, undefined, undefined, undefined, { actor: "system", reason });
     } catch {
       // The original publication error remains the actionable failure. A second
       // filesystem fault is not a reason to invent a successful launch.

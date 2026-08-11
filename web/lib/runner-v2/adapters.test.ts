@@ -1571,7 +1571,7 @@ describe("runner-v2 adapters", () => {
         plan: {
           reason: "no-downstream",
           steps: [
-            { type: "run-status", status: "completed" },
+            { type: "run-status", status: "completed", reason: "test terminal completion" },
             { type: "hook", event: "run-completed", runId: "run-123", details: { run_id: "run-123", task_id: "task-1" } },
           ],
         },
@@ -1622,7 +1622,7 @@ describe("runner-v2 adapters", () => {
         plan: {
           reason: "no-downstream",
           steps: [
-            { type: "run-status", status: "completed" },
+            { type: "run-status", status: "completed", reason: "test terminal completion" },
             { type: "session-policy", policy: "stop", sessions: ["writer-run-123", "monitor-writer-run-123"] },
           ],
         },
@@ -1670,7 +1670,7 @@ describe("runner-v2 adapters", () => {
         plan: {
           reason: "no-downstream",
           steps: [
-            { type: "run-status", status: "completed" },
+            { type: "run-status", status: "completed", reason: "test terminal completion" },
             { type: "next-chain", chainName: "deploy", parentRunId: "run-123" },
           ],
         },
@@ -1709,7 +1709,7 @@ describe("runner-v2 adapters", () => {
         plan: {
           reason: "no-downstream",
           steps: [
-            { type: "run-status", status: "completed" },
+            { type: "run-status", status: "completed", reason: "test terminal completion" },
             { type: "next-chain", chainName: "missing", parentRunId: "run-123" },
           ],
         },
@@ -1794,7 +1794,7 @@ describe("runner-v2 adapters", () => {
           plan: {
             reason: "no-downstream",
             steps: [
-              { type: "run-status", status: "completed" },
+              { type: "run-status", status: "completed", reason: "test terminal completion" },
               { type: "next-chain", chainName: "deploy", parentRunId: "run-123" },
             ],
           },
@@ -1820,7 +1820,7 @@ describe("runner-v2 adapters", () => {
         plan: {
           reason: "no-downstream",
           steps: [
-            { type: "run-status", status: "completed" },
+            { type: "run-status", status: "completed", reason: "test terminal completion" },
             { type: "task-status", status: "completed", taskId: "task-1" },
             { type: "webhook", event: "chain_complete", chainId: "build-chain", chainPath: join(dir, "chain.json"), lastEvent: "done", lastAgentId: "writer" },
             { type: "plugin", event: "chain-completed", chainName: "Build Chain", runId: "run-123", agentId: "writer" },

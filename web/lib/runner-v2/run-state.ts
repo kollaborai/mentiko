@@ -52,6 +52,32 @@ export interface CreateRunRecordInput {
 const TERMINAL_RUN_STATUSES = new Set(["blocked", "failed", "stopped", "completed", "cancelled"]);
 const TERMINAL_AGENT_STATUSES = new Set(["complete", "failed", "cancelled", "error"]);
 
+/**
+ * Terminal-evidence contract (stall-killer spec v2, C2).
+ *
+ * Every terminal run/agent write funnels through updateRunStatus/updateRunAgent,
+ * which makes this the one place the invariant can be enforced: a terminal
+ * state ALWAYS carries a {actor, reason}. Before this, `failed` runs persisted
+ * `statusReason: null` and `error: null` while the real cause sat one level
+ * down in runnerV2.attempts[].terminalReason — the run read as an unexplained
+ * silence in the UI (run-1786398409783-aed71cf8).
+ *
+ * A caller that supplies nothing gets a reason that says exactly that and
+ * blames the writer, rather than a plausible-sounding invention. Naming the
+ * gap is evidence; guessing the cause would be decoration.
+ */
+export const UNEXPLAINED_TERMINAL_REASON =
+  "terminal state written without a recorded reason (writer did not supply one)";
+
+function terminalReasonFor(
+  status: string,
+  terminalStatuses: ReadonlySet<string>,
+  provided: RunStatusReason | undefined,
+): RunStatusReason | undefined {
+  if (!terminalStatuses.has(status)) return provided;
+  return provided ?? { actor: "system", reason: UNEXPLAINED_TERMINAL_REASON };
+}
+
 /** A routed child may not revive a run already terminalized by completion. */
 export class TerminalRunRevivalError extends Error {}
 
@@ -119,15 +145,16 @@ export function updateRunStatus(
     if (attemptGuard) assertRunAgentAttemptCurrent(current, attemptGuard);
     const successfulTerminal = status === "completed";
     const active = status === "running";
+    // C2: `completed` is a terminal state too and now keeps its reason. Only a
+    // return to `running` clears the previous terminal evidence.
+    const effectiveReason = terminalReasonFor(status, TERMINAL_RUN_STATUSES, statusReason);
     return {
       ...current,
       status,
       ...(statusMessage
         ? { status_message: statusMessage }
         : successfulTerminal || active ? { status_message: undefined } : {}),
-      ...(statusReason
-        ? { statusReason }
-        : successfulTerminal || active ? { statusReason: undefined } : {}),
+      ...(effectiveReason ? { statusReason: effectiveReason } : active ? { statusReason: undefined } : {}),
       ...(TERMINAL_RUN_STATUSES.has(status) && (!current.completed || (successfulTerminal && current.status !== "completed"))
         ? { completed: nowIso(now) }
         : active ? { completed: undefined } : {}),
@@ -212,11 +239,12 @@ export function updateRunAgent(
       ...current,
       agents: (current.agents || []).map((agent) => {
         if (agent.id !== agentId) return agent;
+        const effectiveReason = terminalReasonFor(status, TERMINAL_AGENT_STATUSES, statusReason);
         return {
           ...agent,
           status,
           ...(TERMINAL_AGENT_STATUSES.has(status) && !agent.completed ? { completed: nowIso(now) } : {}),
-          ...(statusReason ? { statusReason } : {}),
+          ...(effectiveReason ? { statusReason: effectiveReason } : {}),
         };
       }),
     };

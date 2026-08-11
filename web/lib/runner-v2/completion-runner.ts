@@ -10,6 +10,7 @@ import {
   type RunAgentAttemptGuard,
   type RunMutationObserver,
   type RunRecord,
+  type RunStatusReason,
 } from "@/lib/runner-v2/run-state";
 import { decideNextRoute, routingContextForEvents, type RoutingChain, type RoutingDecision } from "@/lib/runner-v2/routing";
 import type { RunnerEventRecord } from "@/lib/runner-v2/events";
@@ -20,6 +21,7 @@ import { applyLoopGuardToRoute, routeAgentIds, type LoopGuardDecision } from "@/
 import {
   markAgentAttemptCompletedFromCrossRunEvent,
   markAgentAttemptCompletedFromDurableMarker,
+  markAgentAttemptCompletedFromDecisionArtifact,
   markAgentAttemptCompletedFromEmptyEmits,
   markAgentAttemptCompletedFromEvent,
   markAgentAttemptCompletedFromGeneration,
@@ -36,6 +38,7 @@ export type CompletionRunnerDecision =
   | { action: "retry"; reason: string; retry: Extract<RetryNoEventPlan, { action: "retry" }>; run: RunRecord }
   | { action: "exhausted"; reason: string; retry: Extract<RetryNoEventPlan, { action: "exhausted" }>; run: RunRecord; fanGroup?: FanGroupCompletionPlan }
   | { action: "generation-terminal"; reason: string; generation: GenerationImportPlan; terminal: TerminalCompletionPlan; run: RunRecord }
+  | { action: "decision-terminal"; reason: string; decision: DecisionCompletionPlan; terminal: TerminalCompletionPlan; run: RunRecord }
   | { action: "fan-group-member"; event: RunnerEventRecord; agent: CompletionAgentRef; run: RunRecord; fanGroup: FanGroupCompletionPlan }
   | { action: "route"; event: RunnerEventRecord; route: RoutingDecision; loopGuard?: LoopGuardDecision; run: RunRecord; fanGroup?: FanGroupCompletionPlan }
   | { action: "loop-complete"; event: RunnerEventRecord; loopGuard: Extract<LoopGuardDecision, { action: "complete" }>; run: RunRecord; fanGroup?: FanGroupCompletionPlan }
@@ -65,6 +68,8 @@ export interface CompleteAgentInput {
   };
   fanGroup?: FanGroupState;
   generation?: GenerationImportPlan & { importablePayload?: boolean };
+  /** run-scoped, validated decision artifact — see decisionCompletionPlan */
+  decision?: DecisionCompletionPlan;
   // Recovery evidence can only be introduced by the typed monitor after it
   // validates the corresponding durable proof. It is intentionally distinct
   // from a declared event so the run record does not claim an event was
@@ -102,6 +107,12 @@ export interface AgentLivenessInput {
 export interface AgentLivenessDecision {
   disposition: "working" | "grace" | "silent-timeout" | "dead";
   reason: string;
+}
+
+export interface DecisionCompletionPlan {
+  decisionId: string;
+  phase: string;
+  artifactPath: string;
 }
 
 export interface GenerationImportPlan {
@@ -221,17 +232,29 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
       };
     }
   }
-  const setAgentStatus = (status: Parameters<typeof updateRunAgent>[2]) => updateRunAgent(
+  // C2 terminal-evidence contract. Each terminal decision below already
+  // computes the human-readable cause it is about to record on the attempt;
+  // project that same string onto run/agent statusReason so the run record
+  // explains itself without the reader having to open runnerV2.attempts.
+  // `actor` is "system" throughout: these are the runner's own decisions, not
+  // a user stop, the reaper, the reconciler, or admission.
+  const evidence = (reason: string): RunStatusReason => ({ actor: "system", reason });
+  const setAgentStatus = (
+    status: Parameters<typeof updateRunAgent>[2],
+    statusReason?: RunStatusReason,
+  ) => updateRunAgent(
     input.runJsonPath,
     input.agent.id,
     status,
     input.now,
     input.onRunMutation,
     attemptGuard,
+    statusReason,
   );
   const setRunStatus = (
     status: Parameters<typeof updateRunStatus>[1],
     statusMessage?: string,
+    statusReason?: RunStatusReason,
   ) => updateRunStatus(
     input.runJsonPath,
     status,
@@ -239,6 +262,9 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
     input.now,
     input.onRunMutation,
     attemptGuard,
+    // A terminal write with a message and no explicit reason means the message
+    // IS the reason — no site should have to repeat itself to stay explained.
+    statusReason ?? (statusMessage ? evidence(statusMessage) : undefined),
   );
 
   // Core generation completion has two required proofs: an agent completion
@@ -255,7 +281,7 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
   ) {
     const reason = `generation agent completed without a valid ${input.generation.generationKind} JSON payload`;
     const fanGroup = planFanGroupCompletion(input, "failed");
-    setAgentStatus("failed");
+    setAgentStatus("failed", evidence(reason));
     const run = setRunStatus("failed", reason);
     markAgentAttemptFailedNoCompletion({
       runJsonPath: input.runJsonPath,
@@ -271,8 +297,9 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
 
   if (!match.matched || !match.event) {
     if (input.generation?.jobId && input.generation.generationKind && input.generation.importablePayload) {
-      setAgentStatus("complete");
-      const run = setRunStatus("completed");
+      const generationDetail = match.reason || "no matching completion event; generation payload accepted";
+      setAgentStatus("complete", evidence(generationDetail));
+      const run = setRunStatus("completed", undefined, evidence(generationDetail));
       markAgentAttemptCompletedFromGeneration({
         runJsonPath: input.runJsonPath,
         runId: input.runId,
@@ -286,6 +313,42 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
         action: "generation-terminal",
         reason: match.reason || "no matching completion event; generation payload accepted",
         generation: input.generation,
+        terminal: planTerminalCompletion(input.terminal || {
+          runId: input.runId,
+          chainId: input.chain.id,
+          chainName: input.chain.name || input.chain.id || "unknown",
+          lastAgentId: input.agent.id,
+        }, "explicit-stop"),
+        run,
+      };
+    }
+
+    // C3, decision half of the same rule: a run-scoped, post-attempt
+    // decision-result.json IS the deliverable. The `mentiko decision import`
+    // call that applies it is the agent's last shell command and four runs died
+    // on exactly that command while the artifact sat valid on disk. Complete
+    // the run on the artifact; the terminal path then fires the (idempotent,
+    // single-flight-guarded) import replay, and the decision reconciler's
+    // awaiting_import recovery — which only engages for COMPLETED runs — can
+    // finally see it as a backstop.
+    if (input.decision) {
+      const decisionDetail =
+        `no matching completion event; decision ${input.decision.phase} artifact accepted`;
+      setAgentStatus("complete", evidence(decisionDetail));
+      const run = setRunStatus("completed", undefined, evidence(decisionDetail));
+      markAgentAttemptCompletedFromDecisionArtifact({
+        runJsonPath: input.runJsonPath,
+        runId: input.runId,
+        agentId: input.agent.id,
+        attemptId: input.attemptId,
+        detail: decisionDetail,
+        now: input.now,
+        onMutation: input.onRunMutation,
+      });
+      return {
+        action: "decision-terminal",
+        reason: decisionDetail,
+        decision: input.decision,
         terminal: planTerminalCompletion(input.terminal || {
           runId: input.runId,
           chainId: input.chain.id,
@@ -316,7 +379,7 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
     if (input.completionRecoveryEvidence === "durable-marker" && expectedEvent) {
       const reason = `agent ${input.agent.id} reported AGENT_COMPLETE without declared event '${expectedEvent}'`;
       const fanGroup = planFanGroupCompletion(input, "failed");
-      setAgentStatus("failed");
+      setAgentStatus("failed", evidence(reason));
       const run = setRunStatus("failed", reason);
       markAgentAttemptFailedNoCompletion({
         runJsonPath: input.runJsonPath,
@@ -351,8 +414,9 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
     }
 
     if (shouldCompleteEmptyEmitsAgent(input.agent.emits, hasDownstreamForAgent(input.chain, input.agent.id))) {
-      setAgentStatus("complete");
-      const run = setRunStatus("completed");
+      const emptyEmitsDetail = "empty emits last agent accepted as terminal completion";
+      setAgentStatus("complete", evidence(emptyEmitsDetail));
+      const run = setRunStatus("completed", undefined, evidence(emptyEmitsDetail));
       markAgentAttemptCompletedFromEmptyEmits({
         runJsonPath: input.runJsonPath,
         runId: input.runId,
@@ -402,11 +466,9 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
         };
       }
 
-      setAgentStatus("failed");
-      const run = setRunStatus(
-        "stopped",
-        `agent ${input.agent.id} completed without declared event; retries exhausted`,
-      );
+      const exhaustedDetail = `agent ${input.agent.id} completed without declared event; retries exhausted`;
+      setAgentStatus("failed", evidence(exhaustedDetail));
+      const run = setRunStatus("stopped", exhaustedDetail);
       markAgentAttemptRetriesExhausted({
         runJsonPath: input.runJsonPath,
         runId: input.runId,
@@ -426,11 +488,9 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
     }
 
     const fanGroup = planFanGroupCompletion(input, "failed");
-    setAgentStatus("failed");
-    const run = setRunStatus(
-      "failed",
-      `agent ${input.agent.id} completed without declared event: ${match.reason}`,
-    );
+    const noEventDetail = `agent ${input.agent.id} completed without declared event: ${match.reason}`;
+    setAgentStatus("failed", evidence(noEventDetail));
+    const run = setRunStatus("failed", noEventDetail);
     markAgentAttemptFailedNoCompletion({
       runJsonPath: input.runJsonPath,
       runId: input.runId,
@@ -449,7 +509,7 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
   }
 
   const fanGroup = planFanGroupCompletion(input, "complete");
-  setAgentStatus("complete");
+  setAgentStatus("complete", evidence(`completion event '${match.event.event}' accepted (${completionEvidence})`));
   markCompletionEvidence({
     runJsonPath: input.runJsonPath,
     runId: input.runId,
@@ -491,7 +551,7 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
   }) : undefined;
 
   if (loopGuard?.action === "complete") {
-    const run = setRunStatus("completed");
+    const run = setRunStatus("completed", undefined, evidence(`loop guard completed the chain: ${loopGuard.reason} (${loopGuard.visitKey})`));
     return {
       action: "loop-complete",
       event: match.event,
@@ -502,10 +562,7 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
   }
 
   if (loopGuard?.action === "stop") {
-    const run = setRunStatus(
-      "stopped",
-      `max rounds exceeded (${loopGuard.maxRounds})`,
-    );
+    const run = setRunStatus("stopped", `max rounds exceeded (${loopGuard.maxRounds})`);
     return {
       action: "max-rounds-stop",
       event: match.event,

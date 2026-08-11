@@ -59,9 +59,11 @@ import { TerminalIcon } from "@/components/ui/terminal-icon";
 import { PeerSplitView } from "@/components/terminal/peer-split-view";
 import { LinkRunTimeline } from "@/components/run/link-run-timeline";
 import { Markdown } from "@/components/ui/markdown";
+import { resolveAgentDisplayOutput } from "@/components/run/agent-output";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { unwrapApiData, getApiErrorMessage } from "@/lib/api/api-client";
 import { cn } from "@/lib/utils";
+import { describeTerminalEvidence } from "@/components/run/terminal-evidence";
 import type { RunStatusReason } from "@/lib/types";
 
 interface RunAgent extends Omit<WorkflowAgent, "emits"> {
@@ -149,6 +151,8 @@ interface Run {
   started: string;
   completed?: string;
   status: string;
+  /** free-text mirror of the terminal reason (C2: kept until the field merge) */
+  status_message?: string;
   statusReason?: RunStatusReason;
   agents: RunAgent[];
   sessions: string[];
@@ -720,7 +724,7 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
         name: agentName,
         since: run?.started || "",
       });
-      if (run?.id) params.set("runId", run.id);
+      if (run?.id) params.set("runId", run?.id);
       if (agentId) params.set("agentId", agentId);
       if (run?.workspacePath) params.set("cwd", run.workspacePath);
 
@@ -748,11 +752,12 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
     if (!conversationId) return;
 
     try {
-        const cwdParam = run?.workspacePath
-          ? `&cwd=${encodeURIComponent(run.workspacePath)}`
-          : "";
+        const params = new URLSearchParams({ mode: "tail", tail: "100" });
+        if (run?.workspacePath) params.set("cwd", run.workspacePath);
+        if (run?.id) params.set("runId", run.id);
+        params.set("agentId", agentId);
         const res = await fetchWithNamespace(
-          `/api/conversations/${conversationId}?mode=tail&tail=100${cwdParam}`,
+          `/api/conversations/${conversationId}?${params.toString()}`,
         );
       if (res.ok) {
         const raw = await res.json();
@@ -778,7 +783,7 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
       // ignore
     }
     },
-    [agentConversations, run?.workspacePath, fetchWithNamespace],
+    [agentConversations, run?.id, run?.workspacePath, fetchWithNamespace],
   );
 
   const fetchCost = useCallback(async () => {
@@ -989,12 +994,11 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
     return () => clearInterval(interval);
   }, [selectedAgent, agentConversations, fetchAgentMessages]);
 
-  // fallback: when live conversation not found, load from captured artifacts
+  // fallback: when the live conversation has no messages yet, load captured artifacts
   useEffect(() => {
     if (!selectedAgent || !run) return;
     const agent = run.agents?.find((a) => a.id === selectedAgent);
     if (!agent) return;
-    if (agentConversations[selectedAgent] !== null) return;
     // already have messages from a previous fallback
     if ((agentMessages[selectedAgent]?.length ?? 0) > 0) return;
 
@@ -1022,11 +1026,14 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
         }));
       }
     }
-    // also load captured output as fallback for raw output display
-    if (activity.output && agent.session) {
+    // load durable session output or the completed agent summary as fallback
+    // for the raw output display. Completed agents often have no live PTY
+    // transcript, but their summary is still the user-facing result.
+    const fallbackOutput = resolveAgentDisplayOutput(activity);
+    if (fallbackOutput && agent.session) {
       const session = agent.session;
       if (!outputsRef.current[session]) {
-        outputsRef.current[session] = activity.output;
+        outputsRef.current[session] = fallbackOutput.content;
         setAgentOutputs({ ...outputsRef.current });
       }
     }
@@ -1466,6 +1473,12 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
   const isActive = run?.status === "running" || run?.status === "pending";
   const isWaitingApproval = run?.status === "waiting_approval";
   const isLinkRun = run?.type === "link";
+  // C2 terminal-evidence contract: a terminal run explains itself for EVERY
+  // terminal state, not just stopped/cancelled. A failed run used to render as
+  // silence here while its cause sat in runnerV2.attempts. statusReason is
+  // authoritative; status_message is the free-text mirror we fall back to for
+  // records written before the contract landed.
+  const terminalEvidence = describeTerminalEvidence(run);
   const completedAgents =
     run?.agents?.filter((a) => a.status === "complete").length || 0;
   const totalAgents = run?.agents?.length || 0;
@@ -1790,10 +1803,10 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
                   </Link>
                 )}
               </div>
-              {(run.status === "stopped" || run.status === "cancelled") && run.statusReason?.reason && (
+              {terminalEvidence && (
                 <div className="mt-1 flex min-w-0 items-center gap-1 text-[10px] text-foreground/40">
-                  <span className="truncate">
-                    {run.statusReason.actor === "user" ? "stopped by you" : `stopped by ${run.statusReason.actor}`}: {run.statusReason.reason}
+                  <span className="truncate" title={terminalEvidence.detail}>
+                    {terminalEvidence.label}: {terminalEvidence.detail}
                   </span>
                 </div>
               )}

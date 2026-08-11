@@ -21,7 +21,9 @@ export interface TerminalCompletionInput {
 }
 
 export type TerminalCompletionStep =
-  | { type: "run-status"; status: "completed" }
+  // C2: a terminal plan step carries the evidence for its own write, so the
+  // adapter never has to terminalize a run with an unexplained status.
+  | { type: "run-status"; status: "completed"; reason: string }
   | { type: "task-status"; status: "completed"; taskId?: string; runId?: string }
   | { type: "schedule-mark"; status: "success"; chainPath?: string }
   | { type: "webhook"; event: "chain_complete"; chainId?: string; chainPath?: string; lastEvent?: string; lastAgentId?: string; lastAgentName?: string }
@@ -40,13 +42,20 @@ export interface TerminalCompletionPlan {
   steps: TerminalCompletionStep[];
 }
 
+/** Human-readable evidence for each way a chain reaches successful completion. */
+const TERMINAL_COMPLETION_REASONS: Record<TerminalCompletionPlan["reason"], string> = {
+  "explicit-stop": "chain completed: on_complete policy reached its terminal stop",
+  "no-downstream": "chain completed: last emitted event had no downstream agent",
+  "empty-emits-last-agent": "chain completed: final agent declares no further event",
+};
+
 export function planTerminalCompletion(
   input: TerminalCompletionInput,
   reason: TerminalCompletionPlan["reason"] = "no-downstream",
 ): TerminalCompletionPlan {
   const onComplete = input.onComplete || "stop";
   const steps: TerminalCompletionStep[] = [
-    { type: "run-status", status: "completed" },
+    { type: "run-status", status: "completed", reason: TERMINAL_COMPLETION_REASONS[reason] },
   ];
   if (input.taskId) {
     steps.push({ type: "task-status", status: "completed", taskId: input.taskId, runId: input.runId });
