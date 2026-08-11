@@ -143,7 +143,12 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
       WORKSPACE_CONTEXT: workspaceContext,
     });
 
-    input.prompt = prompt;
+    // Post-exhaustion fallback (W1): chain generation for this task is spent,
+    // so generate_new is not an available answer — either something in the
+    // catalog fits, or the task needs a human.
+    input.prompt = input.existingOnly === true
+      ? `${prompt}\n\nHARD CONSTRAINT: chain generation has already been tried for this task and failed repeatedly. You MUST NOT answer "generate_new". Choose "use_existing" only if a chain in the catalog above genuinely fits the task; otherwise answer "no_action_needed" and explain in reasoning what is missing.`
+      : prompt;
   }
 
   if (type === "generate") {
