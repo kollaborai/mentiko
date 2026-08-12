@@ -10,6 +10,15 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (2026) ---
   {
+    version: "v0.3.52",
+    date: "August 12, 2026",
+    title: "Decision Research Recovers Itself and Runs Open Live",
+    description:
+      "A decision stuck mid-research can now be repaired. Recovery previously watched only the guided generation phases, so a research run that died or finished without importing left the decision researching forever; the reconciler now inspects the research pointer too, replays a completed import, and the decision page offers a retry instead of a dead spinner. Opening an active run lands you on the live agent terminal immediately rather than an empty output pane, and the embedded run panel sizes itself to the pane it is in. Notifications that still pointed at the retired decisions page now rewrite themselves to the task surface on read. Codex agent profiles move to the GPT-5.6 lineup (Sol, Terra, Luna) with per-model pricing: each Codex launch gets a disposable, trusted config home so a first-run prompt can never eat the assignment, and the bypass flag is the short --yolo alias. Clearing a profile's pre-exec command now actually persists.",
+    category: "improvement",
+    docsHref: "/tasks",
+  },
+  {
     version: "v0.3.51",
     date: "August 1, 2026",
     title: "Agent Runs Submit Their Work and Close Reliably",
