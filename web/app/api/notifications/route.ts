@@ -29,6 +29,20 @@ function resolveActionUrl(
   type: string,
   metadata?: NotificationMetadata,
 ): { actionUrl?: string; actionLabel?: string } {
+  // The standalone /decisions page was folded into the task detail surface.
+  // Repair persisted notifications that still point at the retired route when
+  // their task identity is available; this also fixes old records on read.
+  if (
+    metadata?.taskId
+    && metadata.actionUrl
+    && /^\/decisions(?:\?|$)/.test(metadata.actionUrl)
+  ) {
+    return {
+      actionUrl: `/tasks?type=decision&task=${encodeURIComponent(metadata.taskId)}`,
+      actionLabel: "View Decision",
+    };
+  }
+
   if (metadata?.actionUrl) {
     return { actionUrl: metadata.actionUrl, actionLabel: metadata.actionLabel };
   }
@@ -233,16 +247,14 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     }
 
     for (const notification of notifications) {
-      if (!notification.metadata?.actionUrl) {
-        const resolved = resolveActionUrl(notification.type, notification.metadata);
-        if (resolved.actionUrl) {
-          if (!notification.metadata) notification.metadata = {};
-          notification.metadata.actionUrl = resolved.actionUrl;
-          if (!notification.metadata.actionLabel) {
-            notification.metadata.actionLabel = resolved.actionLabel;
-          }
-          write = true;
+      const resolved = resolveActionUrl(notification.type, notification.metadata);
+      if (resolved.actionUrl && resolved.actionUrl !== notification.metadata?.actionUrl) {
+        if (!notification.metadata) notification.metadata = {};
+        notification.metadata.actionUrl = resolved.actionUrl;
+        if (!notification.metadata.actionLabel) {
+          notification.metadata.actionLabel = resolved.actionLabel;
         }
+        write = true;
       }
     }
 
