@@ -469,6 +469,10 @@ function canInteractWithAgentTerminal(agent?: RunAgent | null) {
   );
 }
 
+function findLiveAgent(agents?: RunAgent[]) {
+  return agents?.find(canInteractWithAgentTerminal) ?? null;
+}
+
 function SummaryList({ label, items }: { label: string; items?: string[] }) {
   if (!items || items.length === 0) return null;
   return (
@@ -842,6 +846,20 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
     agentMessages,
     findAgentConversation,
   ]);
+
+  // Active runs should open directly on the live PTY instead of leaving the
+  // output pane empty until the user guesses that an agent row is selectable.
+  // Re-run this when polling supplies the session after initial admission.
+  useEffect(() => {
+    if (selectedAgent || !run) return;
+    if (run.status !== "running" && run.status !== "pending") return;
+
+    const liveAgent = findLiveAgent(run.agents);
+    if (!liveAgent) return;
+
+    setSelectedAgent(liveAgent.id);
+    setOutputView("terminal");
+  }, [run, selectedAgent]);
 
   useEffect(() => {
     const eventSource = new EventSource(
@@ -1492,7 +1510,7 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
     ? artifactPreview
     : null;
   const panelClassName = embedded
-    ? "flex min-h-[720px] flex-col overflow-hidden bg-transparent"
+    ? "flex h-full min-h-[min(560px,70vh)] min-w-0 flex-col overflow-hidden bg-transparent"
     : "h-full overflow-hidden flex flex-col";
   const headerClassName = embedded
     ? "mx-2 mt-2 shrink-0"
@@ -1993,7 +2011,11 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
 
       {/* tabs */}
       <div className="flex-1 overflow-hidden">
-        <Tabs defaultValue="goal" className="h-full flex flex-col">
+        <Tabs
+          key={runId}
+          defaultValue={isActive ? "output" : "goal"}
+          className="h-full flex flex-col"
+        >
           <div className={tabsChromeClassName}>
             <TabsList className={tabsListClassName}>
               <TabsTrigger
