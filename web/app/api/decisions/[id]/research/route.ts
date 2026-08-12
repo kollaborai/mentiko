@@ -12,6 +12,11 @@ import { Unauthorized, NotFound, BadRequest, InternalServerError } from "@/lib/a
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
 import { startDecisionChainRun, startDecisionResearch } from "@/lib/decisions/decision-chain-dispatch";
+import {
+  isCompletedRunAwaitingDecisionImport,
+  isDecisionGenerationPointerDead,
+  triggerDecisionImportReplay,
+} from "@/lib/decisions/decision-auto-advance";
 import { taskUpdate } from "@/lib/tasks/task-store";
 
 export const dynamic = "force-dynamic";
@@ -57,7 +62,7 @@ export const POST = withErrorHandling(async (
   const userId = session?.id;
   const authorizedWorkspacePath = resolveAuthorizedWorkspacePath(namespaceId, orgId, workspacePath, userId);
 
-  let body: { steering?: string; jobId?: string } = {};
+  let body: { steering?: string; jobId?: string; repair?: boolean } = {};
   try { body = await request.json(); } catch { /* empty body ok */ }
 
   // phase 2: apply completed job result to decision
@@ -90,6 +95,45 @@ export const POST = withErrorHandling(async (
   // phase 1: start research job
   const decision = getDecision(namespaceId, orgId, id, workspacePath);
   if (!decision) throw new NotFound("Decision", id);
+
+  if (body.repair) {
+    const pointer = {
+      runId: decision.researchRunId,
+      jobId: decision.activeJobId,
+    };
+    const hasPointer = Boolean(pointer.runId || pointer.jobId);
+
+    if (hasPointer && isCompletedRunAwaitingDecisionImport(namespaceId, orgId, decision.researchRunId)) {
+      triggerDecisionImportReplay({
+        namespaceId,
+        orgId,
+        decisionId: id,
+        phase: "research",
+        runId: decision.researchRunId!,
+        workspacePath,
+      });
+      return apiSuccess({
+        runId: decision.researchRunId,
+        status: "importing",
+        decision,
+      });
+    }
+
+    const pointerIsDead = hasPointer && isDecisionGenerationPointerDead(namespaceId, orgId, pointer);
+    if (hasPointer && !pointerIsDead) {
+      if (decision.status === "researching") {
+        return apiSuccess({
+          runId: decision.researchRunId,
+          status: "already_running",
+          decision,
+        });
+      }
+      throw new BadRequest("Research is not in a recoverable state.");
+    }
+    if (decision.status !== "intake" && decision.status !== "researching") {
+      throw new BadRequest("Only an unfinished research phase can be repaired.");
+    }
+  }
 
   const workspaceContext = authorizedWorkspacePath
     ? `\nWORKSPACE CONTEXT:\n- Source checkout: ${authorizedWorkspacePath}\n- If this decision involves code, inspect files under this checkout and cite repo-relative paths in references.\n`

@@ -148,4 +148,34 @@ describe("DecisionDetail", () => {
       expect(onOpenTask).toHaveBeenCalledWith("EPIC-009");
     });
   });
+
+  it("shows an explicit repair action for a dead research pointer", async () => {
+    const stuckDecision: Decision = {
+      ...approvedDecision,
+      id: "decision-stuck",
+      status: "intake",
+      options: [],
+      resolution: undefined,
+      researchRunId: "run-stopped",
+      researchRecovery: "dead",
+    };
+    mockFetchWithNamespace.mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: { decision: stuckDecision } }),
+    });
+
+    render(<DecisionDetail decisionId="decision-stuck" workspacePath="/repo" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /repair research/i }));
+
+    await waitFor(() => {
+      expect(mockFetchWithNamespace).toHaveBeenCalledWith(
+        "/api/decisions/decision-stuck/research?workspace=%2Frepo",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ repair: true }),
+        }),
+      );
+    });
+  });
 });

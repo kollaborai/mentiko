@@ -143,15 +143,26 @@ export interface DecisionGenerationPointer {
 
 export type DecisionGenerationPhase = "questions" | "options" | "plan";
 
+export type DecisionRecoveryPhase = "research" | DecisionGenerationPhase;
+
 export interface ActiveDecisionGenerationPhase {
   phase: DecisionGenerationPhase;
   pointer: DecisionGenerationPointer;
   selectedOptionId?: string;
 }
 
-export interface DecisionGenerationRecovery extends ActiveDecisionGenerationPhase {
+export interface ActiveDecisionRecoveryPhase {
+  phase: DecisionRecoveryPhase;
+  pointer: DecisionGenerationPointer;
+  selectedOptionId?: string;
+}
+
+export interface DecisionRecovery extends ActiveDecisionRecoveryPhase {
   kind: "dead" | "awaiting_import";
 }
+
+// Kept as an alias for callers and tests that only deal with guided generation.
+export type DecisionGenerationRecovery = DecisionRecovery;
 
 /** Run statuses that mean "this launch will never produce a result" -- excludes
  * completed/complete (success) and running/pending (still live). */
@@ -250,12 +261,32 @@ export function getActiveDecisionGenerationPhase(
   return null;
 }
 
-export function inspectDecisionGenerationRecovery(input: {
-  namespaceId: string;
-  orgId: string;
-  decision: Decision;
-}): DecisionGenerationRecovery | null {
-  const active = getActiveDecisionGenerationPhase(input.decision);
+export function getActiveDecisionRecoveryPhase(
+  decision: Decision,
+): ActiveDecisionRecoveryPhase | null {
+  if (
+    decision.status === "researching"
+    && (decision.researchRunId || decision.activeJobId)
+  ) {
+    return {
+      phase: "research",
+      pointer: {
+        runId: decision.researchRunId,
+        jobId: decision.activeJobId,
+      },
+    };
+  }
+
+  return getActiveDecisionGenerationPhase(decision);
+}
+
+function inspectDecisionRecoveryAt(
+  input: {
+    namespaceId: string;
+    orgId: string;
+  },
+  active: ActiveDecisionRecoveryPhase | null,
+): DecisionRecovery | null {
   if (!active) return null;
   if (isDecisionGenerationPointerDead(input.namespaceId, input.orgId, active.pointer)) {
     return { ...active, kind: "dead" };
@@ -264,6 +295,28 @@ export function inspectDecisionGenerationRecovery(input: {
     return { ...active, kind: "awaiting_import" };
   }
   return null;
+}
+
+export function inspectDecisionGenerationRecovery(input: {
+  namespaceId: string;
+  orgId: string;
+  decision: Decision;
+}): DecisionGenerationRecovery | null {
+  return inspectDecisionRecoveryAt(
+    input,
+    getActiveDecisionGenerationPhase(input.decision),
+  );
+}
+
+export function inspectDecisionRecovery(input: {
+  namespaceId: string;
+  orgId: string;
+  decision: Decision;
+}): DecisionRecovery | null {
+  return inspectDecisionRecoveryAt(
+    input,
+    getActiveDecisionRecoveryPhase(input.decision),
+  );
 }
 
 /**
@@ -598,15 +651,18 @@ export function advanceDecisionAfterPhase(input: {
   // crashed after writing decision-result.json, mistyped the decision id, or
   // the completion-driven import failed). Replay the import for that case
   // instead of no-opping forever.
-  const recovery = inspectDecisionGenerationRecovery({ namespaceId, orgId, decision });
+  const recovery = inspectDecisionRecovery({ namespaceId, orgId, decision });
   if (recovery?.kind === "dead") {
     const body = recovery.phase === "plan"
       ? { selectedOptionId: recovery.selectedOptionId }
       : undefined;
+    const path = recovery.phase === "research"
+      ? `/api/decisions/${decision.id}/research`
+      : `/api/decisions/${decision.id}/guided/${recovery.phase}`;
     internalDecisionPost(
       namespaceId,
       orgId,
-      `/api/decisions/${decision.id}/guided/${recovery.phase}`,
+      path,
       ws,
       body,
     );

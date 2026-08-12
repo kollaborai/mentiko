@@ -4,9 +4,9 @@ import { dirname, join } from "node:path";
 import config from "@/lib/config";
 import {
   advanceDecisionAfterPhase,
-  getActiveDecisionGenerationPhase,
-  inspectDecisionGenerationRecovery,
-  type DecisionGenerationRecovery,
+  getActiveDecisionRecoveryPhase,
+  inspectDecisionRecovery,
+  type DecisionRecovery,
 } from "@/lib/decisions/decision-auto-advance";
 import { listDecisions } from "@/lib/decisions/decision-storage";
 import type { Decision } from "@/lib/decisions/decision-types";
@@ -21,7 +21,7 @@ interface DecisionRecoveryLedgerEntry {
   orgId: string;
   decisionId: string;
   workspacePath?: string;
-  phase: "questions" | "options" | "plan";
+  phase: "research" | "questions" | "options" | "plan";
   selectedOptionId?: string;
   attempts: number;
   lastAttemptAt: string;
@@ -62,7 +62,7 @@ export interface DecisionReconcilerDependencies {
     namespaceId: string;
     orgId: string;
     decision: Decision;
-  }) => DecisionGenerationRecovery | null;
+  }) => DecisionRecovery | null;
   advance: typeof advanceDecisionAfterPhase;
 }
 
@@ -82,7 +82,7 @@ export interface ReconcileDecisionsOptions {
 const DEFAULT_DEPENDENCIES: DecisionReconcilerDependencies = {
   listWorkspaces,
   listDecisions,
-  inspectRecovery: inspectDecisionGenerationRecovery,
+  inspectRecovery: inspectDecisionRecovery,
   advance: advanceDecisionAfterPhase,
 };
 
@@ -214,7 +214,7 @@ export function reconcileDecisions(
   for (const decision of decisions) {
     result.examined += 1;
     try {
-      const active = getActiveDecisionGenerationPhase(decision);
+      const active = getActiveDecisionRecoveryPhase(decision);
       const key = active
         ? recoveryKey({
             namespaceId,

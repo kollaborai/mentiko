@@ -158,6 +158,71 @@ describe("GET /api/decisions/[id]", () => {
     });
   });
 
+  test("marks a blocked research run as recoverable instead of leaving it researching forever", async () => {
+    const decision = {
+      id: "decision-blocked",
+      status: "researching",
+      prompt: "choose a path",
+      createdAt: "2026-06-09T00:00:00.000Z",
+      updatedAt: "2026-06-09T00:00:00.000Z",
+      options: [],
+      researchRunId: "run-blocked",
+    };
+    const updatedDecision = { ...decision, activeJobId: undefined };
+
+    getDecision.mockReturnValue(decision);
+    existsSync.mockReturnValue(true);
+    readFileSync.mockReturnValue(JSON.stringify({ status: "blocked" }));
+    updateDecision.mockResolvedValue(updatedDecision);
+
+    const res = await GET(makeRequest(), { params: Promise.resolve({ id: decision.id }) });
+
+    expect(updateDecision).toHaveBeenCalledWith(
+      "default",
+      "default",
+      decision.id,
+      { activeJobId: undefined },
+      undefined,
+    );
+    await expect(res.json()).resolves.toMatchObject({
+      data: {
+        decision: {
+          status: "researching",
+          researchRecovery: "dead",
+        },
+      },
+    });
+  });
+
+  test("keeps the repair marker for an intake decision with a dead research pointer", async () => {
+    const decision = {
+      id: "decision-intake-repair",
+      status: "intake",
+      prompt: "choose a path",
+      createdAt: "2026-06-09T00:00:00.000Z",
+      updatedAt: "2026-06-09T00:00:00.000Z",
+      options: [],
+      researchRunId: "run-stopped",
+    };
+
+    getDecision.mockReturnValue(decision);
+    existsSync.mockReturnValue(true);
+    readFileSync.mockReturnValue(JSON.stringify({ status: "stopped" }));
+
+    const res = await GET(makeRequest(), { params: Promise.resolve({ id: decision.id }) });
+
+    expect(updateDecision).not.toHaveBeenCalled();
+    await expect(res.json()).resolves.toMatchObject({
+      data: {
+        decision: {
+          id: decision.id,
+          status: "intake",
+          researchRecovery: "dead",
+        },
+      },
+    });
+  });
+
   test("nudges a completed-but-unimported guided round without blocking the response (this is the surface the guided-flow UI actually polls)", async () => {
     const originalFetch = global.fetch;
     const decision = {
