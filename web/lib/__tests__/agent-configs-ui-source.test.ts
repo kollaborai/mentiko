@@ -8,6 +8,13 @@ describe("agent config settings source contract", () => {
     expect(source).not.toContain("env: Object.keys(editEnv).length ? editEnv : undefined");
   });
 
+  it("sends an empty pre-exec value so a saved command can be cleared", () => {
+    const source = readFileSync("app/settings/agent-configs/page.tsx", "utf8");
+
+    expect(source).toContain("pre_exec: editPreExec.trim(),");
+    expect(source).not.toContain("pre_exec: editPreExec.trim() || undefined");
+  });
+
   it("routes profile tests to the real chain run instead of a terminal session", () => {
     const source = readFileSync("app/settings/agent-configs/page.tsx", "utf8");
 

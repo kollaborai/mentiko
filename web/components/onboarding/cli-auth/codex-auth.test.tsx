@@ -49,7 +49,7 @@ describe("CodexAuth", () => {
       expect(select).toHaveValue("codex-default");
     });
 
-    expect(screen.getByRole("option", { name: "Codex / GPT-5.5" })).toHaveValue("codex-default");
+    expect(screen.getByRole("option", { name: "Codex / GPT-5.6 Sol" })).toHaveValue("codex-default");
     expect(screen.queryByRole("option", { name: "gpt-4o" })).toBeNull();
   });
 });

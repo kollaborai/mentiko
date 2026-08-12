@@ -165,6 +165,50 @@ describe("runner-v2 agent profile contract", () => {
       .toThrow("Invalid pipe_flag");
   });
 
+  it("builds Codex exec invocation and isolated trusted CODEX_HOME for interactive and noninteractive launches", () => {
+    const root = tempDir();
+    const profilePath = join(root, "codex.json");
+    writeJson(profilePath, {
+      id: "codex",
+      name: "Codex",
+      cli: "codex",
+      pipe_flag: "exec",
+      model: "gpt-5.6-sol",
+      permission_flag: "--dangerously-bypass-approvals-and-sandbox",
+    });
+
+    const interactive = buildAgentProfileCommand({ profilePath, interactive: true, namespaceId: "default", orgId: "default" });
+    const noninteractive = buildAgentProfileCommand({ profilePath, interactive: false, namespaceId: "default", orgId: "default" });
+    for (const command of [interactive, noninteractive]) {
+      expect(command).toContain("'codex' 'exec' '-c' 'check_for_update_on_startup=false' '--dangerously-bypass-hook-trust'");
+      expect(command.match(/(?:^|[ ;])'exec'/g)?.length ?? 0).toBe(1);
+      expect(command).toContain('MENTIKO_CODEX_AUTH_HOME="${CODEX_HOME:-$HOME/.codex}"');
+      expect(command).toContain('CODEX_HOME="$(mktemp -d');
+      expect(command).toContain("export CODEX_HOME");
+      expect(command).toContain("cp \"$MENTIKO_CODEX_AUTH_HOME/auth.json\" \"$CODEX_HOME/auth.json\"");
+      expect(command).toContain("chmod 600 \"$CODEX_HOME/auth.json\"");
+      expect(command).toContain("check_for_update_on_startup = false");
+      expect(command).toContain("MENTIKO_CODEX_PROJECT_KEY");
+      expect(command).toContain("[projects.\"%s\"]");
+      expect(command).toContain("trust_level = \"trusted\"");
+      expect(command).toContain("trap 'rm -rf \"$CODEX_HOME\"' EXIT");
+      expect(command).not.toContain("--mcp-config");
+    }
+  });
+
+  it("does not add Codex invocation or isolated-home setup to non-Codex profiles", () => {
+    const root = tempDir();
+    const profilePath = join(root, "claude.json");
+    writeJson(profilePath, { id: "claude", name: "Claude", cli: "claude", pipe_flag: "-p" });
+    const command = buildAgentProfileCommand({ profilePath, interactive: false, namespaceId: "default", orgId: "default" });
+    expect(command).toContain("'claude' '-p'");
+    expect(command).not.toContain("'codex'");
+    expect(command).not.toContain("check_for_update_on_startup");
+    expect(command).not.toContain("CODEX_HOME");
+    expect(command).not.toContain("dangerously-bypass-hook-trust");
+  });
+
+
   it("rejects malformed profile values before they reach an external CLI", () => {
     const root = tempDir();
     const profilePath = join(root, "profile.json");

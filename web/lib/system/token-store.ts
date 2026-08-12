@@ -76,6 +76,10 @@ const MODEL_PRICING: Record<string, ModelPricing> = {
   "claude-3-5-haiku-20241022":     { inputCentsPerMillion: 80,   outputCentsPerMillion: 400 },
   "claude-3-opus-20240229":        { inputCentsPerMillion: 1500, outputCentsPerMillion: 7500 },
   // OpenAI
+  "gpt-5.6":                       { inputCentsPerMillion: 500,  outputCentsPerMillion: 3000 },
+  "gpt-5.6-sol":                   { inputCentsPerMillion: 500,  outputCentsPerMillion: 3000 },
+  "gpt-5.6-terra":                 { inputCentsPerMillion: 250,  outputCentsPerMillion: 1500 },
+  "gpt-5.6-luna":                  { inputCentsPerMillion: 100,  outputCentsPerMillion: 600 },
   "gpt-5.5":                       { inputCentsPerMillion: 500,  outputCentsPerMillion: 3000 },
   "gpt-5.4":                       { inputCentsPerMillion: 250,  outputCentsPerMillion: 1500 },
   "gpt-5.4-mini":                  { inputCentsPerMillion: 75,   outputCentsPerMillion: 450 },
