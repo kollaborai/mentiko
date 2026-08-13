@@ -23,6 +23,9 @@ on:
     paths:
       - 'lib/**'
       - 'bin/**'
+      - 'web/lib/runner-v2/**'
+      - 'scripts/build-runner-bundles.mjs'
+      - 'tests/runner-typed-bundle-parity.test.mjs'
       - 'web/e2e/engine/**'
       - 'web/lib/__tests__/engine-event-contract.test.ts'
       - 'web/lib/runs/run-json-lock.ts'
@@ -32,6 +35,9 @@ on:
     paths:
       - 'lib/**'
       - 'bin/**'
+      - 'web/lib/runner-v2/**'
+      - 'scripts/build-runner-bundles.mjs'
+      - 'tests/runner-typed-bundle-parity.test.mjs'
       - 'web/e2e/engine/**'
       - 'web/lib/__tests__/engine-event-contract.test.ts'
       - 'web/lib/runs/run-json-lock.ts'
@@ -114,11 +120,11 @@ jobs:
             -e CI=true \
             "${REGISTRY}/kollaborai/mentiko-base:${BASE_TAG}" \
             bash web/e2e/engine/engine-e2e-runjson.sh
-      - name: engine contract tests (jest)
+      - name: bundle parity + engine contract tests (jest)
         run: |
           docker run --rm --init \
             -v "$PWD:/opt/mentiko-src:rw" \
             -w /opt/mentiko-src \
             -e CI=true \
             "${REGISTRY}/kollaborai/mentiko-base:${BASE_TAG}" \
-            bash -c "cd web && npm ci --no-audit --no-fund && npx jest engine-event-contract run-json-lock"
+            bash -c "cd web && npm ci --no-audit --no-fund && node ../tests/runner-typed-bundle-parity.test.mjs && npx jest engine-event-contract run-json-lock"

@@ -2,6 +2,7 @@
 # mentiko - CLI entry point
 #
 # usage:
+#   mentiko auth [status|token|logout]
 #   mentiko run <chain.json> [--workspace <path>] [--start <agent-id>] [--debug]
 #   mentiko generate "<prompt>" [--output <dir>] [--template <file>] [--json] [--raw]
 #   mentiko decision import <artifact.json> --decision <id> --phase <phase>
@@ -56,7 +57,7 @@ case "$CMD" in
     # -------------------------------------------------------------------
 
     run)
-        exec node "$LIB_DIR/runner-v2-direct-run.js" "$@"
+        exec node "$LIB_DIR/mentiko-cli-run.mjs" "$@"
         ;;
 
     generate)
@@ -88,6 +89,12 @@ case "$CMD" in
         fi
         ;;
 
+    auth)
+        # Credential for every ops-endpoint command. Shares the sidecar with the
+        # MCP bridge (~/.mentiko/mcp/session.json), so authorizing once covers both.
+        exec node "$LIB_DIR/mentiko-cli-auth.mjs" "$@"
+        ;;
+
     decision)
         node "$LIB_DIR/mentiko-cli-decision.mjs" "$@"
         ;;
@@ -98,6 +105,14 @@ case "$CMD" in
 
     list_schedules|create_schedule|update_schedule|delete_schedule|run_schedule_now|list_applications|register_application|update_application|delete_application)
         node "$LIB_DIR/mentiko-cli-schedules.mjs" "$CMD" "$@"
+        ;;
+
+    list_tasks|get_task|create_task|update_task|close_task|comment_task|link_task|unlink_task)
+        node "$LIB_DIR/mentiko-cli-tasks.mjs" "$CMD" "$@"
+        ;;
+
+    list_agents|create_agent|list_secrets|create_secret|list_workspaces)
+        node "$LIB_DIR/mentiko-cli-org.mjs" "$CMD" "$@"
         ;;
 
     # -------------------------------------------------------------------
@@ -212,6 +227,18 @@ case "$CMD" in
         ;;
 
     emit)
+        # Pull global flags out of the positionals before <event> [source] [data]
+        # parsing, so `--web-url` is not swallowed as the data argument.
+        EMIT_WEB_URL=""
+        EMIT_POS=()
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                --web-url) EMIT_WEB_URL="${2:-}"; shift 2;;
+                *) EMIT_POS+=("$1"); shift;;
+            esac
+        done
+        set -- "${EMIT_POS[@]}"
+
         EVENT_SCOPE="run"
         if [[ "${1:-}" == "--scope" ]]; then
             if [[ -z "${2:-}" ]]; then
@@ -270,18 +297,19 @@ case "$CMD" in
             exit 1
         fi
 
-        # Invoke the typed writer directly. Run scope is the normal agent path.
-        # Empty-run ingress is exceptional and must be declared explicitly; it is never
-        # inferred as a compatibility path.
-        RUNNER_EVENT_EMITTER="${MENTIKO_CODE_ROOT:?MENTIKO_CODE_ROOT must be configured}/lib/runner-event-emitter.js"
-        if ! node "$RUNNER_EVENT_EMITTER" emit \
+        # Route through the ops endpoint (ns/org from the verified token); the
+        # client degrades to the local typed writer if the web process is down, so
+        # the completion signal never fails closed. Same flag contract as the bundle.
+        EMIT_CLIENT="${MENTIKO_CODE_ROOT:?MENTIKO_CODE_ROOT must be configured}/lib/mentiko-cli-emit.mjs"
+        if ! node "$EMIT_CLIENT" emit \
             --scope "$EVENT_SCOPE" \
             --event "$EVENT_NAME" \
             --source "$SOURCE" \
             --run-id "${MENTIKO_RUN_ID:-${RUN_ID:-}}" \
-            --data "$DATA"
+            --data "$DATA" \
+            ${EMIT_WEB_URL:+--web-url "$EMIT_WEB_URL"}
         then
-            echo "  error: typed runner event emission failed" >&2
+            echo "  error: runner event emission failed (http + local fallback)" >&2
             exit 1
         fi
 
