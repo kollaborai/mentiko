@@ -1,7 +1,12 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { buildAgentBootstrapPlan, extractAcceptanceCriteria } from "@/lib/runner-v2/agent-bootstrap-plan";
+import {
+  buildAgentBootstrapPlan,
+  extractAcceptanceCriteria,
+  retargetAgentBootstrapPlan,
+  writeAgentNodeChainSnapshot,
+} from "@/lib/runner-v2/agent-bootstrap-plan";
 
 jest.mock("@/lib/config", () => ({
   __esModule: true,
@@ -70,6 +75,7 @@ describe("runner-v2 agent bootstrap plan", () => {
         MENTIKO_AI_GATEWAY_LOCAL_PROXY_ENABLED: "true",
         MENTIKO_AI_GATEWAY_LOCAL_BASE_URL: "http://127.0.0.1:3200/api/ai-gateway/local/v1",
         MENTIKO_AI_GATEWAY_LOCAL_TOKEN: "internal-proxy-token",
+        TASK_CONTEXT_JSON: "{\"immutable\":true}",
         ANTHROPIC_API_KEY: "must-not-reach-pty",
       },
     });
@@ -91,6 +97,7 @@ describe("runner-v2 agent bootstrap plan", () => {
       MENTIKO_AGENT_EMITS: "draft-ready",
       EVENTS_DIR: join(root, "events"),
       ARTIFACTS_DIR: join(runDir, "artifacts"),
+      TASK_CONTEXT_JSON: "{\"immutable\":true}",
       AGENT_PROFILES_DIR: profilesDir,
       MENTIKO_AI_GATEWAY_LOCAL_PROXY_ENABLED: "true",
       MENTIKO_AI_GATEWAY_LOCAL_BASE_URL: "http://127.0.0.1:3200/api/ai-gateway/local/v1",
@@ -114,6 +121,46 @@ describe("runner-v2 agent bootstrap plan", () => {
     expect(plan.monitorCommand).toContain("MENTIKO_AI_GATEWAY_LOCAL_TOKEN='internal-proxy-token'");
     expect(plan.monitorCommand).not.toContain("ANTHROPIC_API_KEY");
     expect(plan.monitorCommand).not.toContain("monitor-chain-agent");
+
+    const nodeWorkspace = join(root, "run-worktrees", "attempt-writer");
+    const isolated = retargetAgentBootstrapPlan(plan, nodeWorkspace, { PATH: "/bin" });
+    expect(isolated.sessionName).toBe(plan.sessionName);
+    expect(isolated.sourceWorkspacePath).toBe(join(root, "workspace"));
+    expect(isolated.projectRoot).toBe(nodeWorkspace);
+    expect(isolated.runContextExports.MENTIKO_PROJECT_ROOT).toBe(nodeWorkspace);
+    expect(isolated.localStartCommand).toContain(nodeWorkspace);
+    expect(isolated.monitorCommand).toContain(`export MENTIKO_PROJECT_ROOT='${nodeWorkspace}'`);
+    expect(isolated.profilePath).toBe(plan.profilePath);
+  });
+
+  it("rewrites the agent-facing chain snapshot to the isolated node workspace", () => {
+    const root = tempDir();
+    const sourceWorkspace = join(root, "source-workspace");
+    const nodeWorkspace = join(root, "run-worktrees", "attempt-writer");
+    const chainPath = join(root, "chain.json");
+    const targetPath = join(root, "artifacts", "writer-chain.json");
+    mkdirSync(join(root, "artifacts"), { recursive: true });
+    writeJson(chainPath, {
+      config: {
+        project_root: sourceWorkspace,
+        prompt: `Use ${sourceWorkspace}/docs only as a reference`,
+      },
+      agents: [{ id: "writer", triggers: ["manual-start"] }],
+    });
+
+    writeAgentNodeChainSnapshot({
+      chainPath,
+      sourceWorkspacePath: sourceWorkspace,
+      nodeWorkspacePath: nodeWorkspace,
+      targetPath,
+    });
+
+    const snapshot = JSON.parse(readFileSync(targetPath, "utf8")) as {
+      config: { project_root: string; prompt: string };
+    };
+    expect(snapshot.config.project_root).toBe(nodeWorkspace);
+    expect(snapshot.config.prompt).toBe(`Use ${nodeWorkspace}/docs only as a reference`);
+    expect(readFileSync(targetPath, "utf8")).not.toContain(sourceWorkspace);
   });
 
   it("emits the compiled typed monitor command without a shell compatibility route", () => {
@@ -304,39 +351,7 @@ describe("runner-v2 agent bootstrap plan", () => {
       return { plan, runDir, root };
     }
 
-    it("populates TASK_CONTEXT with resolved run identity instead of an empty string", () => {
-      const { plan, runDir, root } = planWith((chainRoot) => ({
-        id: "build-chain",
-        name: "Build Chain",
-        description: "ship the thing",
-        metadata: { implementationFocus: "runner", taskId: "TASK-500" },
-        config: { project_root: join(chainRoot, "workspace"), session_prefix: "build" },
-        agents: [{ id: "writer", name: "Writer", role: "author", triggers: ["manual-start"] }],
-      }));
-
-      expect(plan.runContextExports.TASK_CONTEXT).not.toBe("");
-      const context = JSON.parse(plan.runContextExports.TASK_CONTEXT);
-      expect(context).toMatchObject({
-        RUN_ID: "run-ctx",
-        AGENT_ID: "writer",
-        CHAIN_ID: "build-chain",
-        TASK_ID: "TASK-500",
-        CHAIN_NAME: "Build Chain",
-        CHAIN_DESCRIPTION: "ship the thing",
-        AGENT_NAME: "Writer",
-        AGENT_ROLE: "author",
-        CHAIN_OBJECTIVE: "ship the thing",
-        IMPLEMENTATION_FOCUS: "runner",
-        SESSION_PREFIX: "build",
-      });
-      // The bundle-only version read these from process.env, which is empty on a
-      // direct CLI launch — the exact case this branch fixes. They must be resolved.
-      expect(context.ARTIFACTS_DIR).toBe(join(runDir, "artifacts"));
-      expect(context.EVENTS_DIR).toBe("/project/events");
-      expect(context.WORKSPACE_PATH).toBe(join(root, "workspace"));
-    });
-
-    it("lets a caller-supplied TASK_CONTEXT win over the derived blob", () => {
+    it("passes a caller-supplied TASK_CONTEXT through untouched", () => {
       const { plan } = planWith(
         { agents: [{ id: "writer", triggers: ["manual-start"] }] },
         { TASK_CONTEXT: "explicit context" },
@@ -344,14 +359,11 @@ describe("runner-v2 agent bootstrap plan", () => {
       expect(plan.runContextExports.TASK_CONTEXT).toBe("explicit context");
     });
 
-    it("keeps TASK_ID identical in the export and the context blob", () => {
-      // The bundle version consulted agent.taskId for the export but not the blob,
-      // so an agent-level id appeared in one and was missing from the other.
+    it("prefers an agent-level taskId for the TASK_ID export", () => {
       const { plan } = planWith({
         agents: [{ id: "writer", taskId: "TASK-AGENT", triggers: ["manual-start"] }],
       });
       expect(plan.runContextExports.TASK_ID).toBe("TASK-AGENT");
-      expect(JSON.parse(plan.runContextExports.TASK_CONTEXT).TASK_ID).toBe("TASK-AGENT");
     });
 
     it("resolves acceptance criteria agent -> chain metadata -> generated contract", () => {

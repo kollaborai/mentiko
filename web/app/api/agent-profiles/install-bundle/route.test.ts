@@ -97,7 +97,15 @@ describe("POST /api/agent-profiles/install-bundle", () => {
       "default",
       expect.objectContaining({
         id: "codex-fast",
-        model: "gpt-5.4-mini",
+        model: "gpt-5.6-luna",
+      }),
+    );
+    expect(mockCreateProfile).toHaveBeenCalledWith(
+      "default",
+      "default",
+      expect.objectContaining({
+        id: "codex-terra",
+        model: "gpt-5.6-terra",
       }),
     );
     expect(mockUpdateProfile).toHaveBeenCalledWith(
@@ -105,8 +113,8 @@ describe("POST /api/agent-profiles/install-bundle", () => {
       "default",
       "codex-default",
       expect.objectContaining({
-        name: "Codex / GPT-5.5",
-        model: "gpt-5.5",
+        name: "Codex / GPT-5.6 Sol",
+        model: "gpt-5.6-sol",
       }),
     );
     expect(mockUpdateProfile).not.toHaveBeenCalledWith(
@@ -138,10 +146,10 @@ describe("POST /api/agent-profiles/install-bundle", () => {
       "default",
       "codex-spark",
       expect.objectContaining({
-        model: "gpt-5.4-mini",
+        model: "gpt-5.6-luna",
       }),
     );
-    expect(mockCreateProfile).toHaveBeenCalledTimes(2);
+    expect(mockCreateProfile).toHaveBeenCalledTimes(3);
     expect(mockCreateProfile).not.toHaveBeenCalledWith(
       "default",
       "default",

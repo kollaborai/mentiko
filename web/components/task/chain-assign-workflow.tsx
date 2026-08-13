@@ -13,7 +13,7 @@ import {
   normalizeTaskChainRecommendation,
   type TaskChainRecommendation,
 } from "@/lib/tasks/task-chain-recommendation";
-import type { Task } from "@/lib/tasks/task-types";
+import type { Task, TaskChainBinding } from "@/lib/tasks/task-types";
 
 type WorkflowStep =
   | "idle"
@@ -25,7 +25,60 @@ type WorkflowStep =
   | "generating"
   | "generated"
   | "error"
-  | "stale";  // metadata exists but job is gone/failed - needs reset
+  | "stale"   // metadata exists but job is gone/failed - needs reset
+  | "stopped"; // deterministic rejection stop (A4) - needs explicit recovery
+
+// Truthful phase labels for the typed rejection envelope (A5): the UI names
+// the door that rejected the candidate instead of blaming generation or the
+// model for a save/import contract failure.
+const REJECTION_PHASE_LABELS: Record<string, string> = {
+  import: "Import contract rejected",
+  recovery: "Artifact recovery found a previously rejected candidate",
+  save: "Save contract rejected",
+  run_start: "Run start rejected",
+};
+
+const GENERATION_STOP_LABELS: Record<string, string> = {
+  deterministic_duplicate:
+    "Automatic retries stopped intentionally: the same rejected chain came back unchanged, so regenerating again cannot succeed.",
+  deterministic_budget_exhausted:
+    "Automatic retries stopped intentionally: the corrective regeneration was also rejected, so the deterministic retry allowance is spent.",
+};
+
+const ATTEMPT_PHASE_LABELS: Record<string, string> = {
+  generation: "Generation",
+  import: "Import",
+  recovery: "Recovery",
+  save: "Save",
+  binding: "Binding",
+  execution: "Execution",
+  completion_audit: "Completion Audit",
+};
+
+/**
+ * The phase-aware attempt ledger (B7), rendered as the status story. Each row
+ * is a real recorded decision -- which door, what outcome, deterministic or
+ * transient -- instead of a bare retry integer the reader has to interpret.
+ */
+function AttemptTrail({ attempts }: { attempts?: TaskChainBinding["generation_attempts"] }) {
+  if (!attempts || attempts.length === 0) return null;
+  const recent = attempts.slice(-4);
+  return (
+    <div className="space-y-0.5" data-testid="generation-attempt-trail">
+      {recent.map((attempt, index) => (
+        <div key={`${attempt.at}-${index}`} className="text-[10px] text-foreground/30">
+          {ATTEMPT_PHASE_LABELS[attempt.phase] || attempt.phase}
+          {" · "}{attempt.code}
+          {" · "}
+          <span className={attempt.class === "deterministic" ? "text-amber-400/70" : ""}>
+            {attempt.class}
+          </span>
+          {attempt.stop_reason ? ` · stopped (${attempt.stop_reason})` : ""}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 type Recommendation = TaskChainRecommendation;
 
@@ -303,12 +356,20 @@ export function ChainAssignWorkflow({
 
       const result = unwrapApiData<{
         action?: string;
+        reason?: string;
         error?: string;
         retryCount?: number;
         retryLimit?: number;
         recoveryScheduled?: boolean;
       }>(await response.json());
 
+      if (result.action === "generation_rejected_regenerating") {
+        return "contract rejection recorded; one corrected regeneration scheduled with the rejection as guidance";
+      }
+      if (result.action === "generation_stopped") {
+        return GENERATION_STOP_LABELS[result.reason || ""]
+          || "automatic retries stopped intentionally after a repeated deterministic rejection";
+      }
       if (result.action !== "generation_save_failed") {
         return "auto-run rechecked the task and will continue from its latest durable state";
       }
@@ -597,6 +658,13 @@ export function ChainAssignWorkflow({
   async function checkExistingJob() {
     const binding = task.chainBinding;
 
+    // Deterministic stop takes priority over everything (A4/A5): automatic
+    // retries were halted on purpose; only an explicit recovery re-admits.
+    if (binding?.generation_stop_reason) {
+      setStep("stopped");
+      return;
+    }
+
     // check for generation job FIRST - generation result takes priority over analysis
     if (binding?.generation_job_id) {
       try {
@@ -654,7 +722,13 @@ export function ChainAssignWorkflow({
             setStep("generated");
             return;
           } else if (jobData.status === "failed") {
-            setErrorMessage(jobData.error || "Generation failed");
+            // Phase-truthful failure copy (A5): a contract rejection names the
+            // door that rejected the candidate; only a real generation failure
+            // is labeled as one.
+            const rejection = task.chainBinding?.generation_rejection;
+            setErrorMessage(rejection
+              ? `${REJECTION_PHASE_LABELS[rejection.phase] || rejection.phase}: ${rejection.message}`
+              : (jobData.error || "Generation failed"));
             setStep("error");
             return;
           }
@@ -976,6 +1050,72 @@ export function ChainAssignWorkflow({
 
     onCancel();
   }, [task, onCancel, fetchWithNamespace, wsParam]);
+
+  // deterministic-rejection stop (A4): retries were halted intentionally.
+  // Recovery is EXPLICIT -- clear only the generation stop/rejection state,
+  // never run history -- and returns the task to the idle workflow.
+  if (step === "stopped") {
+    const rejection = task.chainBinding?.generation_rejection;
+    const stopReason = task.chainBinding?.generation_stop_reason || "deterministic_duplicate";
+    return (
+      <div className="space-y-2" data-testid="generation-stopped">
+        <div className="text-[10px] text-red-400">
+          {GENERATION_STOP_LABELS[stopReason] || "Automatic retries stopped intentionally after a repeated deterministic rejection."}
+        </div>
+        {rejection && (
+          <div className="text-[10px] text-foreground/40 whitespace-pre-wrap">
+            {(REJECTION_PHASE_LABELS[rejection.phase] || rejection.phase)}: {rejection.message}
+          </div>
+        )}
+        <AttemptTrail attempts={task.chainBinding?.generation_attempts} />
+        <div className="flex items-center gap-2">
+          <button
+            className="px-2.5 py-1.5 rounded-md bg-cyan-500/15 text-cyan-400 text-[10px] font-medium hover:bg-cyan-500/25 transition-colors"
+            onClick={async () => {
+              // Explicit recovery: clear ONLY the generation pause/rejection
+              // condition (nulls, not undefined -- the server merge keeps
+              // undefined keys). Attempt history in the rejection ledger and
+              // run records is preserved.
+              const metadata = {
+                ...task.chainBinding,
+                generation_job_id: null,
+                generation_status: null,
+                generation_stop_reason: null,
+                generation_rejection: null,
+                generation_rejection_job_id: null,
+                generation_rejection_fingerprints: null,
+                generation_last_error: null,
+                auto_run_retries: 0,
+              };
+              await fetchWithNamespace(`/api/tasks/${encodeURIComponent(task.id)}${wsParam}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ metadata: JSON.stringify(metadata) }),
+              });
+              setGenerationJob(null);
+              setErrorMessage(null);
+              setStep("idle");
+            }}
+            data-testid="clear-generation-stop-btn"
+          >
+            Clear & Start Over
+          </button>
+          <button
+            className="text-[10px] text-foreground/30 hover:text-foreground/50"
+            onClick={goManual}
+          >
+            Pick Manually
+          </button>
+          <button
+            className="text-[10px] text-foreground/30 hover:text-foreground/50"
+            onClick={handleCancel}
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   // stale state - metadata exists but job is gone, offer reset
   if (step === "stale") {

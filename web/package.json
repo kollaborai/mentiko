@@ -1,6 +1,6 @@
 {
   "name": "mentiko",
-  "version": "0.3.41",
+  "version": "0.3.52",
   "private": true,
   "scripts": {
     "dev": "npx tsx scripts/doctor.ts --preflight && npx tsx lib/process-manager.ts",
@@ -43,7 +43,7 @@
     "@react-three/fiber": "^9.6.1",
     "@sentry/nextjs": "^10.42.0",
     "@types/d3": "^7.4.3",
-    "@types/three": "^0.185.1",
+    "@types/three": "^0.182.0",
     "@types/ws": "^8.18.1",
     "@xterm/addon-clipboard": "^0.2.0",
     "@xterm/addon-fit": "^0.11.0",
@@ -88,7 +88,7 @@
     "remark-gfm": "^4.0.1",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.5.0",
-    "three": "^0.185.1",
+    "three": "^0.182.0",
     "ws": "^8.19.0",
     "zustand": "^5.0.11"
   },

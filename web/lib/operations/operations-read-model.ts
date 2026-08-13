@@ -399,7 +399,7 @@ export async function buildOperationsView(
   const tasks = sources.listTasks(orgId, { status: "all" }, undefined, namespaceId);
   const allEdges: DepEdgeInput[] = sources.listDeps(orgId, namespaceId);
   const snapshot: RunsSnapshot = sources.buildSnapshot(namespaceId);
-  const digest = await sources.buildDigest(namespaceId, orgId);
+  const digest = await sources.buildDigest(namespaceId, orgId, workspaceId);
   const worker = sources.workerStatus();
   const maxConcurrent = sources.maxConcurrent(namespaceId);
   const timelineScan = sources.scanRuns(namespaceId);
@@ -545,7 +545,13 @@ export async function buildOperationsView(
   const dependencyCycleTaskIds = detectDependencyCycles(openTaskIds, allEdges);
 
   // Workspace-scoped projection of task states for the view sections.
+  const visibleTasks = tasks.filter((task) => inWorkspace(task.workspace_id));
   const visibleStates = states.filter((state) => inWorkspace(state.workspaceId));
+  const visibleTaskIds = new Set(visibleTasks.map((task) => task.id));
+  const scopedDependencyCycleTaskIds = !workspaceId
+    || dependencyCycleTaskIds.some((taskId) => visibleTaskIds.has(taskId))
+    ? dependencyCycleTaskIds
+    : [];
 
   // ---- running now (live snapshot, includes system runs holding slots) ----
   const runningNow: OpsRunningItem[] = snapshot.activeRuns
@@ -643,11 +649,11 @@ export async function buildOperationsView(
       updatedAt: state.updatedAt,
     });
   }
-  if (dependencyCycleTaskIds.length > 0) {
+  if (scopedDependencyCycleTaskIds.length > 0) {
     attention.push({
       severity: "critical",
       reason: "dependency_cycle",
-      message: `Dependency cycle: ${dependencyCycleTaskIds.join(" → ")}`,
+      message: `Dependency cycle: ${scopedDependencyCycleTaskIds.join(" → ")}`,
       detail: "These tasks block each other — no valid execution order exists until an edge is removed",
       source: "task_dependencies (Kahn peel)",
       blockedDownstreamTaskIds: [],
@@ -664,7 +670,9 @@ export async function buildOperationsView(
       actionUrl: item.actionUrl,
     });
   }
-  for (const corrupt of timelineScan.corrupt.slice(0, 3)) {
+  // A corrupt record has no trustworthy workspace identity. Keep it visible
+  // in the global view, but never attribute it to a selected workspace.
+  for (const corrupt of (workspaceId ? [] : timelineScan.corrupt).slice(0, 3)) {
     attention.push({
       severity: "warn",
       reason: "corrupt_run_record",
@@ -724,8 +732,8 @@ export async function buildOperationsView(
 
   // ---- accomplishments (audited closes only) ----
   const recentAccomplishments: OpsAccomplishment[] = [];
-  const closedAudited = tasks
-    .filter((task) => isTerminalTaskStatus(task.status) && inWorkspace(task.workspace_id))
+  const closedAudited = visibleTasks
+    .filter((task) => isTerminalTaskStatus(task.status))
     .map((task) => ({ task, metadata: metadataRecord(task.metadata) }))
     .filter(({ metadata }) => !!metadata.task_outcome_summary && hasDurableAuditedClose(metadata))
     .sort((a, b) => (b.task.closed_at ?? b.task.updated_at).localeCompare(a.task.closed_at ?? a.task.updated_at))
@@ -785,7 +793,6 @@ export async function buildOperationsView(
     timeline.push(item);
   };
 
-  const visibleTaskIds = new Set(tasks.filter((task) => inWorkspace(task.workspace_id)).map((task) => task.id));
   for (const task of tasks) {
     if (!inWorkspace(task.workspace_id)) continue;
     push({
@@ -975,11 +982,11 @@ export async function buildOperationsView(
     recentAccomplishments,
     timeline: boundedTimeline,
     taskStates: visibleStates,
-    dependencyCycleTaskIds,
+    dependencyCycleTaskIds: scopedDependencyCycleTaskIds,
     counts: {
-      tasksOpen: digest.tasks.open,
-      tasksInProgress: digest.tasks.inProgress,
-      tasksClosed: tasks.filter((task) => isTerminalTaskStatus(task.status) && inWorkspace(task.workspace_id)).length,
+      tasksOpen: visibleTasks.filter((task) => task.status === "open").length,
+      tasksInProgress: visibleTasks.filter((task) => task.status === "in_progress").length,
+      tasksClosed: visibleTasks.filter((task) => isTerminalTaskStatus(task.status)).length,
       runsActive: activeRunCount,
       maxConcurrentRuns: maxConcurrent,
       availableSlots,

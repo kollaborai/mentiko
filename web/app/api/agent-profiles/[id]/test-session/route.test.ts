@@ -131,6 +131,7 @@ describe("POST /api/agent-profiles/[id]/test-session", () => {
         id: "readiness_probe",
         agent_profile: "kollab",
         prompt: expect.stringContaining("Readiness probe"),
+        triggers: ["manual-start"],
       }),
     ]);
   });

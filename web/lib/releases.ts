@@ -10,11 +10,100 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (2026) ---
   {
-    version: "v0.3.42",
-    date: "July 21, 2026",
-    title: "Operations Timeline",
+    version: "v0.3.52",
+    date: "August 12, 2026",
+    title: "Decision Research Recovers Itself and Runs Open Live",
     description:
-      "The Activity page is now a full operational view of the platform. One server-side read model composes the task store, live run claims, the auto-run admission gate, completion audits, and system health into a single truthful answer: what is running, what is expected next and why, what is waiting on dependencies, capacity, audits, or a human decision, which errors are blocking downstream work (with the causal path), and what audited completions accomplished — with their artifacts and evidence. Task rows gain distinct attention indicators (failed, audit failed, blocked, blocking, review needed, paused, running, expected next), the app shell shows a live operations verdict, and durable state transitions raise idempotent notifications that deep-link to the affected task, run, or decision. The previous chain/agent event feed is preserved under the Feed toggle.",
+      "A decision stuck mid-research can now be repaired. Recovery previously watched only the guided generation phases, so a research run that died or finished without importing left the decision researching forever; the reconciler now inspects the research pointer too, replays a completed import, and the decision page offers a retry instead of a dead spinner. Opening an active run lands you on the live agent terminal immediately rather than an empty output pane, and the embedded run panel sizes itself to the pane it is in. Notifications that still pointed at the retired decisions page now rewrite themselves to the task surface on read. Codex agent profiles move to the GPT-5.6 lineup (Sol, Terra, Luna) with per-model pricing: each Codex launch gets a disposable, trusted config home so a first-run prompt can never eat the assignment, and the bypass flag is the short --yolo alias. Clearing a profile's pre-exec command now actually persists.",
+    category: "improvement",
+    docsHref: "/tasks",
+  },
+  {
+    version: "v0.3.51",
+    date: "August 1, 2026",
+    title: "Agent Runs Submit Their Work and Close Reliably",
+    description:
+      "Chain runs no longer hang after an agent finishes. Instructions sent to an agent's CLI are now actually submitted: the platform was pasting text into the composer without ever sending the return keystroke, so an agent could sit holding its assignment unread until an unrelated keypress happened to release it. The submit path is now a single verified contract -- text goes in, and the platform confirms the CLI accepted it before moving on, retrying if it did not. Completion detection is CLI-agnostic again. Recognising that an agent had finished depended on reading a session identifier off the terminal screen, which only one CLI configuration ever prints, so runs driven by any other agent CLI could never close on their own. The platform now identifies an agent's conversation by the instructions it was given, which every CLI records, and a chain event whose name carried incidental whitespace no longer fails to match forever in silence. An agent profile with no configured log location now says so instead of failing quietly.",
+    category: "fix",
+    docsHref: "/runs",
+  },
+  {
+    version: "v0.3.50",
+    date: "August 1, 2026",
+    title: "Typed Chain Lifecycle Contract and Single Acceptance Path",
+    description:
+      "Generated chains can now state lifecycle requirements as typed data instead of prose. A version 2 contract carries explicit lifecycle checks naming their subject, phase, owner, and assertion, so the rules that matter -- an agent may never require its own active run or linked task to already be terminal, and post-run reconciliation belongs to the completion audit alone -- are enforced from structure rather than wording. Existing version 1 chains keep working unchanged and are never silently upgraded. Every acceptance door (generated-chain import, chain save, artifact recovery, and run start) now runs through one authoritative service: it materializes the chain without side effects, validates it, and only then writes anything, so a rejected chain leaves no half-created agents behind. An accepted chain is recorded as an immutable execution manifest with a digest, and a run executes what was accepted rather than being reinterpreted under a later release's rules; changed content asks for an explicit re-save. Each attempt is recorded in a phase-aware ledger -- which door decided what, deterministic or transient -- so task status shows the real story instead of a bare retry count. Agents receive an immutable launch context and query live task and run state through typed tools.",
+    category: "improvement",
+    docsHref: "/tasks",
+  },
+  {
+    version: "v0.3.49",
+    date: "July 31, 2026",
+    title: "Generated Chain Acceptance Reliability",
+    description:
+      "Generated-chain acceptance no longer infers lifecycle requirements from agent prose: the keyword classifier that falsely rejected valid chains (including child-task verification and compliance language such as 'without requiring terminal state') is removed, while every structural check remains blocking. Rejections now carry a typed envelope with a canonical artifact hash, and an identical rejected candidate stops immediately across import, artifact recovery, and save instead of consuming the retry budget. The task chain workflow reports the true rejection phase, and an admin-only, audited, namespace-scoped warning mode exists for future semantic policy gates -- structural and security checks are never demotable.",
+    category: "fix",
+    docsHref: "/tasks",
+  },
+  {
+    version: "v0.3.48",
+    date: "July 30, 2026",
+    title: "Task Auto-Run Contract Reliability",
+    description:
+      "Generated task chains now receive and enforce the real post-admission runtime contract: tasks may already be in progress, chain selection lives in task metadata, and in-run agents cannot require their own terminal state. Missing declared events fail explicitly instead of being fabricated, while retry reconciliation prevents an obsolete run from routing after a newer task execution takes ownership.",
+    category: "fix",
+    docsHref: "/tasks",
+  },
+  {
+    version: "v0.3.47",
+    date: "July 30, 2026",
+    title: "Unattended Claude Generation",
+    description:
+      "Claude tenant agents now use the current non-interactive permission flag, avoiding the first-run consent prompt that blocked unattended execution. Chain sessions also route their private MCP and generation-import calls through the tenant's local HTTP origin, so accepted generation artifacts import into Tasks instead of failing against an invalid HTTPS loopback address.",
+    category: "fix",
+    docsHref: "/tasks",
+  },
+  {
+    version: "v0.3.46",
+    date: "July 30, 2026",
+    title: "Agent Crash Terminalization",
+    description:
+      "Agent sessions that disappear without durable completion evidence now fail their run instead of leaving it stuck as running. Completion evidence still wins every race, and the monitor preserves runs that were already completed, cancelled, stopped, blocked, or failed while it was checking the session.",
+    category: "fix",
+    docsHref: "/runs",
+  },
+  {
+    version: "v0.3.45",
+    date: "July 29, 2026",
+    title: "Tenant MCP Bundle Reliability",
+    description:
+      "Tenant images now preserve the Mentiko MCP bridge at its canonical package path, matching the private run-scoped configuration used by Claude agents. Image smoke tests reject a missing or invalid bridge before publication, and typed bootstrap exits a failed startup shell instead of pasting agent instructions into a plain terminal prompt.",
+    category: "fix",
+    docsHref: "/tasks",
+  },
+  {
+    version: "v0.3.44",
+    date: "July 29, 2026",
+    title: "Release Build Reliability",
+    description:
+      "The platform release build now pins an explicit Node heap ceiling. The web build peaks just under Node's implicit default, so the release gate was being decided by garbage-collection timing rather than by the code: two consecutive releases with no route or dependency changes between them produced one success and one out-of-memory failure. Both the CI job and the in-image fallback build now declare the ceiling, so a release either builds or fails for a real reason.",
+    category: "fix",
+  },
+  {
+    version: "v0.3.43",
+    date: "July 29, 2026",
+    title: "Tenant Agent Launch Reliability",
+    description:
+      "Tenant images now include the runtime contracts required by the typed chain runner, preventing generation jobs from stopping before terminal allocation. Claude profiles can run without Mentiko MCP context when none was supplied while still rejecting partial context, run records expose the selected profile and its resolution source, and task generation prevents duplicate submissions while showing the underlying job error.",
+    category: "fix",
+    docsHref: "/tasks",
+  },
+  {
+    version: "v0.3.42",
+    date: "July 28, 2026",
+    title: "Operational Control and Workflow Reliability",
+    description:
+      "The Activity page is now a full operational view of the platform, showing what is running, what is expected next, what is blocked, and what completed with evidence. Chain generation and auto-run delivery recover more safely from invalid or incomplete work, decision work modes carry into follow-up tasks, and MCP diagnostics report clearer runtime status. Task rows gain distinct attention indicators plus configurable layouts through the new visual UI editor, while the original chain and agent event feed remains available under the Feed toggle.",
     category: "new",
     docsHref: "/activity",
   },
@@ -25,7 +114,7 @@ export const releases: Release[] = [
     description:
       "The floating code editor's Git panel now covers the full loop. A branch selector views, creates, switches, and deletes branches with validation and keyboard navigation. Stash apply/drop is keyed to each stash's commit hash, so a shifting stash list can never apply or drop the wrong one. Peer review is built in: assign reviewers from your org, leave file- and line-level comments, and gate the commit button until every assigned reviewer approves. Reviews are org-scoped and tied to the signed-in session, not forgeable headers. Also fixes task-triggered chain runs losing their workspace when started by schedulers or service callers, and internal task APIs now forward service credentials correctly.",
     category: "new",
-    docsHref: "/docs/peer-review",
+    docsHref: "/code",
   },
   {
     version: "v0.3.40",
@@ -618,6 +707,9 @@ export const releases: Release[] = [
   },
 ];
 
+// The build tag is tracked separately from the user-facing update feed.
+// Do not add an update card solely for internal release work.
+export const CURRENT_RELEASE_VERSION = "v0.3.51";
 export const LATEST_VERSION = releases[0].version;
 export const UPDATES_STORAGE_KEY = "mentiko-last-seen-version";
 

@@ -57,12 +57,35 @@ import {
 } from "@/lib/tasks/task-run-locator";
 import { unwrapAgentJsonOutput } from "@/lib/tasks/agent-json-output";
 import { isPayloadCompatibleWithKind } from "@/lib/generation/payload-contract";
-import { pruneInvalidChainBranches } from "@/lib/validators";
+import { sanitizeGeneratedChain } from "@/lib/chains/generated-chain-sanitizer";
 import { MAX_AUTO_RUN_RETRIES } from "@/lib/tasks/auto-run-state";
 import {
   extractGeneratedChainResult,
   INVALID_GENERATED_CHAIN_RESULT_ERROR,
 } from "@/lib/chains/generated-chain-result";
+import { GENERATED_CHAIN_VALIDATOR_REVISION } from "@/lib/chains/generated-chain-delivery-contract";
+import {
+  canonicalGeneratedChainHash,
+  findGeneratedChainRejection,
+  type GeneratedChainRejectionEnvelope,
+} from "@/lib/chains/generated-chain-rejections";
+import { decideGenerationRejection } from "@/lib/tasks/generation-rejection-policy";
+import { appendGenerationAttempt } from "@/lib/tasks/generation-attempt-ledger";
+import {
+  chainCatalogDigest,
+  decideGenerationExhaustionFallback,
+  generationAttentionRequiredMetadata,
+  generationAttentionNotificationKey,
+  FALLBACK_PARK_CATALOG_UNCHANGED,
+  FALLBACK_PARK_FALLBACK_FAILED,
+  readGenerationFallbackState,
+  GENERATION_CATALOG_DIGEST_KEY,
+  GENERATION_FALLBACK_STATE_KEY,
+  type GenerationFallbackParkReason,
+} from "@/lib/tasks/generation-exhaustion-fallback";
+import { getAllChains } from "@/lib/chains/chain-utils";
+import config from "@/lib/config";
+import { createNotification } from "@/lib/notifications/notification-server";
 
 export const dynamic = "force-dynamic";
 
@@ -96,6 +119,256 @@ function generatedChainSaveFailureMessage(payload: unknown, status: number): str
   return validationErrors.length > 0
     ? `${summary}: ${validationErrors.join("; ")}`
     : summary;
+}
+
+/**
+ * Typed rejection-envelope reader for a chain-save 422 payload. Retry logic
+ * branches on this envelope, never on the message string (A3). Stale
+ * validator revisions are ignored so an upgraded validator re-evaluates.
+ */
+function readRejectionEnvelopeFromSavePayload(payload: unknown): GeneratedChainRejectionEnvelope | undefined {
+  const root = asJsonRecord(payload);
+  const error = asJsonRecord(root?.error);
+  const details = asJsonRecord(error?.details) ?? asJsonRecord(root?.details);
+  const rejection = asJsonRecord(details?.rejection);
+  if (
+    rejection
+    && typeof rejection.artifact_hash === "string"
+    && typeof rejection.code === "string"
+    && rejection.deterministic === true
+    && rejection.validator_revision === GENERATED_CHAIN_VALIDATOR_REVISION
+  ) {
+    return rejection as unknown as GeneratedChainRejectionEnvelope;
+  }
+  return undefined;
+}
+
+/**
+ * Typed rejection recorded on the task by the import door
+ * (/api/jobs/[id]/complete). Only trusted when it was written for THIS failed
+ * job and under the current validator revision -- otherwise the failure is
+ * treated as transient and takes the bounded generic retry path.
+ */
+function readTaskGenerationRejection(
+  metadata: Record<string, unknown>,
+  jobId: string,
+): GeneratedChainRejectionEnvelope | undefined {
+  if (metadata.generation_rejection_job_id !== jobId) return undefined;
+  const rejection = asJsonRecord(metadata.generation_rejection);
+  if (
+    rejection
+    && typeof rejection.artifact_hash === "string"
+    && typeof rejection.code === "string"
+    && rejection.deterministic === true
+    && rejection.validator_revision === GENERATED_CHAIN_VALIDATOR_REVISION
+  ) {
+    return rejection as unknown as GeneratedChainRejectionEnvelope;
+  }
+  return undefined;
+}
+
+/**
+ * Deterministic-rejection policy for the save/recovery door (A4): one guided
+ * regeneration for a fresh fingerprint, immediate stop on a repeat or once
+ * the deterministic allowance is spent. Deterministic stops never consume
+ * auto_run_retries -- that budget is for transient failures only.
+ */
+/**
+ * Digest of the chains a recommender could pick from right now (W1).
+ * Failure to read the catalog yields "" — an unknown catalog must never look
+ * like an unchanged one, because that would park a task on a guess.
+ */
+function currentChainCatalogDigest(namespaceId: string, orgId: string): string {
+  try {
+    return chainCatalogDigest(
+      getAllChains(config.chainsDir, config.cliBin, undefined, namespaceId, orgId)
+        .map((chain) => ({ id: chain.id, name: chain.name, agentCount: chain.agentCount })),
+    );
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Park a task whose generation loop is spent, with exactly one notification.
+ *
+ * The notification carries the run-scoped-style stable key from W2 keyed on
+ * the TASK, so the concurrent pollers that all observe the same exhaustion
+ * write one card, not one each.
+ */
+function parkGenerationAttentionRequired(input: {
+  taskId: string;
+  taskTitle?: string;
+  metadata: Record<string, unknown>;
+  namespaceId: string;
+  orgId: string;
+  stopReason: string;
+  reason: GenerationFallbackParkReason;
+  detail?: string;
+  envelope?: GeneratedChainRejectionEnvelope;
+}): void {
+  taskUpdate(input.orgId, input.taskId, {
+    metadata: {
+      ...input.metadata,
+      generation_job_id: undefined,
+      generation_status: "failed",
+      ...(input.envelope ? { generation_rejection: input.envelope } : {}),
+      ...generationAttentionRequiredMetadata({
+        reason: input.reason,
+        stopReason: input.stopReason,
+        detail: input.detail,
+      }),
+    },
+  }, input.namespaceId);
+
+  try {
+    createNotification(input.namespaceId, {
+      idempotencyKey: generationAttentionNotificationKey(input.taskId),
+      type: "warning",
+      title: "Chain generation needs attention",
+      message: input.detail
+        || `${input.taskTitle || input.taskId} could not get a working chain automatically.`,
+      metadata: {
+        taskId: input.taskId,
+        actionUrl: `/tasks?task=${encodeURIComponent(input.taskId)}`,
+        actionLabel: "View Task",
+      },
+    });
+  } catch {
+    /* the park itself is durable; a notification failure must not undo it */
+  }
+}
+
+async function handleDeterministicRejection(input: {
+  taskId: string;
+  taskTitle?: string;
+  metadata: Record<string, unknown>;
+  namespaceId: string;
+  orgId: string;
+  envelope: GeneratedChainRejectionEnvelope;
+  request?: NextRequest;
+  task?: Parameters<typeof startAnalysisJob>[6];
+  workspacePath?: string;
+}): Promise<TriggerResult> {
+  const decision = decideGenerationRejection({
+    envelope: input.envelope,
+    priorFingerprints: input.metadata.generation_rejection_fingerprints,
+  });
+  if (decision.stop) {
+    // generation_status stays the truthful attempt outcome ("failed");
+    // generation_stop_reason is the one flag that marks the loop as
+    // INTENTIONALLY stopped -- the admission gate and the UI both read it.
+    const exhaustedMetadata = {
+      ...input.metadata,
+      generation_job_id: undefined,
+      generation_status: "failed",
+      generation_stop_reason: decision.stopReason,
+      generation_rejection: input.envelope,
+      generation_rejection_fingerprints: decision.fingerprints,
+      ...appendGenerationAttempt(input.metadata, {
+        phase: input.envelope.phase === "run_start" ? "binding" : input.envelope.phase,
+        code: input.envelope.code,
+        class: "deterministic",
+        input_hash: input.envelope.artifact_hash,
+        revision: input.envelope.validator_revision,
+        stop_reason: decision.stopReason,
+      }),
+    };
+    taskUpdate(input.orgId, input.taskId, { metadata: exhaustedMetadata }, input.namespaceId);
+
+    // W1: generation is spent, but an EXISTING chain may now fit. Only ask when
+    // the catalog changed since the first recommendation looked at it — the
+    // first recommender already chose generate_new against the old catalog, so
+    // re-asking it there answers nothing.
+    const fallback = decideGenerationExhaustionFallback({
+      metadata: exhaustedMetadata,
+      currentDigest: currentChainCatalogDigest(input.namespaceId, input.orgId),
+    });
+
+    if (fallback.action === "retry_existing_only" && input.request && input.task) {
+      // Durable single-winner claim: concurrent pollers that reach this same
+      // exhaustion in one tick lose the claim and take no action at all.
+      const claimed = taskClaimMetadataKeyIfUnset(input.orgId, input.taskId, GENERATION_FALLBACK_STATE_KEY, {
+        [GENERATION_FALLBACK_STATE_KEY]: "existing_only_pending",
+        [GENERATION_CATALOG_DIGEST_KEY]: fallback.digest,
+        generation_existing_only: true,
+        // release the analysis slot so the fallback recommendation can start
+        analysis_job_id: undefined,
+        analysis_status: undefined,
+        analysis_job_claimed_at: undefined,
+      }, input.namespaceId);
+      if (!claimed) {
+        return {
+          triggered: false,
+          taskId: input.taskId,
+          action: "generation_stopped",
+          reason: "existing-only fallback already claimed by another scan",
+        };
+      }
+      const refreshed = taskGet(input.orgId, input.taskId, input.namespaceId);
+      const fallbackMetadata = refreshed ? parseTaskMetadata(refreshed) : exhaustedMetadata;
+      const started = await startAnalysisJob(
+        input.taskId,
+        fallbackMetadata,
+        input.namespaceId,
+        input.orgId,
+        input.request,
+        input.workspacePath,
+        input.task,
+      );
+      return { ...started, action: "generation_exhausted_existing_only", reason: decision.stopReason };
+    }
+
+    if (fallback.action === "park" || fallback.action === "retry_existing_only") {
+      // retry_existing_only without a request/task means this call site cannot
+      // dispatch (recovery paths); park rather than silently doing nothing.
+      parkGenerationAttentionRequired({
+        taskId: input.taskId,
+        taskTitle: input.taskTitle,
+        metadata: exhaustedMetadata,
+        namespaceId: input.namespaceId,
+        orgId: input.orgId,
+        stopReason: decision.stopReason as string,
+        reason: fallback.action === "park" ? fallback.reason : FALLBACK_PARK_CATALOG_UNCHANGED,
+        detail: input.envelope.message,
+        envelope: input.envelope,
+      });
+    }
+
+    return {
+      triggered: false,
+      taskId: input.taskId,
+      action: "generation_stopped",
+      reason: decision.stopReason,
+      error: input.envelope.message,
+    };
+  }
+  taskUpdate(input.orgId, input.taskId, {
+    metadata: {
+      ...input.metadata,
+      generation_job_id: undefined,
+      generation_status: "rejected",
+      generation_last_error: input.envelope.message,
+      generation_rejection: input.envelope,
+      generation_rejection_fingerprints: decision.fingerprints,
+      ...appendGenerationAttempt(input.metadata, {
+        phase: input.envelope.phase === "run_start" ? "binding" : input.envelope.phase,
+        code: input.envelope.code,
+        class: "deterministic",
+        input_hash: input.envelope.artifact_hash,
+        revision: input.envelope.validator_revision,
+        guidance: input.envelope.message,
+      }),
+    },
+  }, input.namespaceId);
+  void triggerAutoRunScan(input.namespaceId, input.orgId);
+  return {
+    triggered: false,
+    taskId: input.taskId,
+    action: "generation_rejected_regenerating",
+    error: input.envelope.message,
+    recoveryScheduled: true,
+  };
 }
 
 /** GET — dry-run scan, returns all ready candidates without triggering anything */
@@ -428,77 +701,6 @@ function slugifyChainName(name: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "") || "generated-chain";
-}
-
-function sanitizeGeneratedChain(chain: Record<string, unknown>): Record<string, unknown> {
-  const sanitized: Record<string, unknown> = { ...chain };
-
-  if (typeof sanitized.version === "string" && sanitized.version.trim()) {
-    const parts = sanitized.version.split(".");
-    while (parts.length < 3) parts.push("0");
-    sanitized.version = parts.join(".");
-  } else {
-    sanitized.version = "1.0.0";
-  }
-
-  if (!sanitized.description) {
-    sanitized.description = typeof sanitized.name === "string" ? sanitized.name : "Generated chain";
-  }
-
-  if (!sanitized.config || typeof sanitized.config !== "object" || Array.isArray(sanitized.config)) {
-    sanitized.config = {};
-  }
-
-  if (Array.isArray(sanitized.agents)) {
-    const agents = sanitized.agents as Array<Record<string, unknown>>;
-    sanitized.agents = agents.map((agent, idx) => {
-      if (!agent || typeof agent !== "object") return agent;
-      const fixed: Record<string, unknown> = { ...agent };
-
-      if (typeof fixed.retry === "number") {
-        fixed.retry = { max_retries: fixed.retry };
-      }
-
-      if (!Array.isArray(fixed.triggers) || fixed.triggers.length === 0) {
-        if (idx === 0) {
-          fixed.triggers = ["chain_start"];
-        } else {
-          const prev = agents[idx - 1] || {};
-          const prevEmit = typeof prev.emits === "string"
-            ? prev.emits
-            : `${String(prev.id || prev.name || `agent_${idx - 1}`).toLowerCase().replace(/[^a-z0-9]+/g, "_")}_complete`;
-          fixed.triggers = [prevEmit];
-        }
-      }
-
-      if (!fixed.emits || typeof fixed.emits !== "string") {
-        const agentId = String(fixed.id || fixed.name || `agent_${idx}`).toLowerCase().replace(/[^a-z0-9]+/g, "_");
-        fixed.emits = `${agentId}_complete`;
-      }
-
-      return fixed;
-    });
-  }
-
-  // Repair branches AFTER agents are finalized (emits/triggers are the branch
-  // vocabulary). LLM-generated chains routinely invent branch events/targets that
-  // no agent backs — those dangling branches fail validateChainBranches and make
-  // the whole chain unsaveable, stranding the task at generation-complete. Drop
-  // only the invalid branches (shared rule set with the validator) so the chain
-  // saves and runs its linear flow instead of being rejected outright.
-  if (sanitized.branches !== undefined) {
-    const pruned = pruneInvalidChainBranches(
-      sanitized.branches,
-      Array.isArray(sanitized.agents) ? (sanitized.agents as Array<Record<string, unknown>>) : [],
-    );
-    if (pruned) {
-      sanitized.branches = pruned;
-    } else {
-      delete sanitized.branches;
-    }
-  }
-
-  return sanitized;
 }
 
 function asPlainObject(value: unknown): Record<string, unknown> | null {
@@ -839,6 +1041,12 @@ async function triggerAutoRun(
           generation_status: "missing",
           generation_last_error: message,
           auto_run_retries: nextRetries,
+          ...appendGenerationAttempt(metadata, {
+            phase: "generation",
+            code: "generation_job_missing",
+            class: "transient",
+            guidance: message,
+          }),
         },
       }, namespaceId);
       if (nextRetries < MAX_AUTO_RUN_RETRIES) {
@@ -857,6 +1065,42 @@ async function triggerAutoRun(
     }
 
     if (job.status === "failed") {
+      // Import-door contract rejection (typed, deterministic): the completion
+      // route recorded the envelope + fingerprint decision on the task. Run
+      // the one guided regeneration WITHOUT consuming auto_run_retries --
+      // that budget is reserved for transient failures (A4). A rejection the
+      // policy STOPPED never reaches this branch: generation_stop_reason makes
+      // canAdmitAutoRun refuse admission before the job is inspected.
+      const importRejection = readTaskGenerationRejection(metadata, job.id);
+      if (importRejection) {
+        taskUpdate(orgId, taskId, {
+          metadata: {
+            ...metadata,
+            generation_job_id: undefined,
+            generation_status: "rejected",
+            // Carried into the next generate_new attempt as corrective
+            // guidance (buildGenerationPromptFromTaskRecommendation's
+            // priorError), then cleared once consumed by startGenerationJob.
+            generation_last_error: importRejection.message,
+            ...appendGenerationAttempt(metadata, {
+              phase: "import",
+              code: importRejection.code,
+              class: "deterministic",
+              input_hash: importRejection.artifact_hash,
+              revision: importRejection.validator_revision,
+              guidance: importRejection.message,
+            }),
+          },
+        }, namespaceId);
+        void triggerAutoRunScan(namespaceId, orgId);
+        return {
+          triggered: false,
+          taskId,
+          action: "generation_rejected_regenerating",
+          error: `Generation contract rejected: ${importRejection.message}`,
+        };
+      }
+
       const message = job.error || "Chain generation job failed";
       const nextRetries = Math.min(
         MAX_AUTO_RUN_RETRIES,
@@ -875,6 +1119,12 @@ async function triggerAutoRun(
           // the existing bounded auto_run_retries loop into a GUIDED retry
           // instead of a blind repeat of the same prompt (CHOR-001).
           generation_last_error: message,
+          ...appendGenerationAttempt(metadata, {
+            phase: "generation",
+            code: "generation_job_failed",
+            class: "transient",
+            guidance: message,
+          }),
         },
       }, namespaceId);
       if (nextRetries < MAX_AUTO_RUN_RETRIES) {
@@ -1422,6 +1672,31 @@ async function autoAcceptRecommendation(
     }
   }
 
+  // W1: this recommendation IS the post-exhaustion fallback. Reuse is the only
+  // outcome that can rescue the task — generate_new is the loop that already
+  // failed, and no_action_needed must NOT close the task as complete here
+  // (nothing fit is not the same fact as nothing to do).
+  if (readGenerationFallbackState(metadata) === "existing_only_pending" && action !== "use_existing") {
+    parkGenerationAttentionRequired({
+      taskId,
+      taskTitle,
+      metadata,
+      namespaceId,
+      orgId,
+      stopReason: typeof metadata.generation_stop_reason === "string"
+        ? metadata.generation_stop_reason
+        : "deterministic_budget_exhausted",
+      reason: FALLBACK_PARK_FALLBACK_FAILED,
+      detail: `no existing chain fits after generation was exhausted: ${normalized.reasoning}`,
+    });
+    return {
+      triggered: false,
+      taskId,
+      action: "generation_attention_required",
+      reason: normalized.reasoning,
+    };
+  }
+
   if (action === "use_existing") {
     const chainId = normalized.chain_id;
     if (!chainId)
@@ -1433,6 +1708,10 @@ async function autoAcceptRecommendation(
       chain_id: chainId,
       chain_name: normalized.chain_name,
       analysis_status: "accepted",
+      // The post-exhaustion fallback found a chain: release the claim so the
+      // task lives on the normal bound/running path again.
+      [GENERATION_FALLBACK_STATE_KEY]: undefined,
+      generation_existing_only: undefined,
     };
     try {
       taskUpdate(orgId, taskId, { metadata: updated }, namespaceId);
@@ -1556,6 +1835,12 @@ async function autoAcceptGeneratedChain(
         generation_status: "failed",
         generation_last_error: INVALID_GENERATED_CHAIN_RESULT_ERROR,
         auto_run_retries: nextRetries,
+        ...appendGenerationAttempt(metadata, {
+          phase: "recovery",
+          code: "invalid_generated_chain_result",
+          class: "transient",
+          guidance: INVALID_GENERATED_CHAIN_RESULT_ERROR,
+        }),
       },
     }, namespaceId);
     if (nextRetries < MAX_AUTO_RUN_RETRIES) {
@@ -1568,7 +1853,32 @@ async function autoAcceptGeneratedChain(
     };
   }
 
-  const chain = sanitizeGeneratedChain(generated);
+  // Same shared repair pass acceptance runs at every door (C1), so the ledger
+  // pre-check below and the save door hash the identical candidate.
+  const { chain } = sanitizeGeneratedChain(generated);
+
+  // A4: before resubmitting to save, check the shared rejection ledger for
+  // BOTH candidate forms -- the raw extracted artifact (pre-repair) and the
+  // repaired save candidate (the ledger key). This is what stops the
+  // artifact-recovery loop: a previously rejected generation artifact
+  // recovered from run artifacts would otherwise traverse save and fail
+  // identically on every scan.
+  for (const artifactHash of new Set([
+    canonicalGeneratedChainHash(generated),
+    canonicalGeneratedChainHash(chain),
+  ])) {
+    const prior = findGeneratedChainRejection(namespaceId, orgId, artifactHash);
+    if (prior) {
+      return await handleDeterministicRejection({
+        taskId,
+        metadata,
+        namespaceId,
+        orgId,
+        envelope: { ...prior, phase: "recovery", at: new Date().toISOString() },
+      });
+    }
+  }
+
   const chainName = String(chain.name || "Generated Chain");
   const chainId = slugifyChainName(chainName);
   const saveRes = await fetch(internalApiUrl("/api/chains/save", request.url), {
@@ -1581,6 +1891,21 @@ async function autoAcceptGeneratedChain(
 
   if (!saveRes.ok) {
     const payload = await saveRes.json().catch(() => ({}));
+
+    // Typed deterministic rejection from the save contract gate: apply the
+    // fingerprint policy (one guided regeneration, then stop) instead of the
+    // transient retry budget.
+    const rejection = readRejectionEnvelopeFromSavePayload(payload);
+    if (rejection) {
+      return await handleDeterministicRejection({
+        taskId,
+        metadata,
+        namespaceId,
+        orgId,
+        envelope: rejection,
+      });
+    }
+
     const message = generatedChainSaveFailureMessage(payload, saveRes.status);
     const nextRetries = Math.min(
       MAX_AUTO_RUN_RETRIES,
@@ -1593,6 +1918,12 @@ async function autoAcceptGeneratedChain(
         generation_status: "failed",
         generation_last_error: message,
         auto_run_retries: nextRetries,
+        ...appendGenerationAttempt(metadata, {
+          phase: "save",
+          code: "save_failed",
+          class: "transient",
+          guidance: message,
+        }),
       },
     }, namespaceId);
     if (nextRetries < MAX_AUTO_RUN_RETRIES) {
@@ -1616,6 +1947,21 @@ async function autoAcceptGeneratedChain(
     generation_job_id: undefined,
     generation_status: "accepted",
     analysis_status: "accepted",
+    // A successful acceptance closes this generation loop: clear the
+    // deterministic-rejection attempt state so an unrelated future
+    // regeneration starts with a fresh allowance.
+    generation_rejection: undefined,
+    generation_rejection_job_id: undefined,
+    generation_rejection_fingerprints: undefined,
+    generation_stop_reason: undefined,
+    // The ledger keeps the full attempt history across the cleared retry
+    // state: it is the record of what happened, not a retry counter (B7).
+    ...appendGenerationAttempt(metadata, {
+      phase: "save",
+      code: "accepted",
+      class: "success",
+      input_hash: canonicalGeneratedChainHash(chain),
+    }),
   };
   taskUpdate(orgId, taskId, { metadata: updated }, namespaceId);
 
@@ -1856,7 +2202,23 @@ async function startChainRun(
   if (!runRes.ok) {
     const err = await runRes.json().catch(() => ({}));
     const rawError = (err as { error?: unknown }).error;
-    const message = typeof rawError === "string" ? rawError : "Failed to start run";
+    const errorRecord = rawError && typeof rawError === "object" && !Array.isArray(rawError)
+      ? rawError as Record<string, unknown>
+      : undefined;
+    const errorDetails = errorRecord?.details && typeof errorRecord.details === "object" && !Array.isArray(errorRecord.details)
+      ? errorRecord.details as Record<string, unknown>
+      : undefined;
+    const validationErrors = Array.isArray(errorDetails?.errors)
+      ? errorDetails.errors.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+      : [];
+    const baseMessage = typeof rawError === "string"
+      ? rawError
+      : typeof errorRecord?.message === "string"
+        ? errorRecord.message
+        : "Failed to start run";
+    const message = validationErrors.length > 0
+      ? `${baseMessage}: ${validationErrors.join("; ")}`
+      : baseMessage;
     return recordTaskRunLaunchFailure({
       taskId,
       namespaceId,
@@ -1951,10 +2313,16 @@ async function startAnalysisJob(
   // Claim before dispatch so a persistence failure after /api/jobs creates the
   // real job cannot make a later scan submit a duplicate recommendation run.
   const claimId = newAutoRunClaimId();
+  // W1: record the catalog this recommendation is about to look at. If
+  // generation later exhausts, that digest is what decides whether asking
+  // again could produce a different answer.
+  const catalogDigest = currentChainCatalogDigest(namespaceId, orgId);
+  const existingOnly = metadata.generation_existing_only === true;
   const claimed = taskClaimMetadataKeyIfUnset(orgId, taskId, "analysis_job_id", {
     analysis_job_id: claimId,
     analysis_status: "starting",
     analysis_job_claimed_at: new Date().toISOString(),
+    ...(catalogDigest ? { [GENERATION_CATALOG_DIGEST_KEY]: catalogDigest } : {}),
   }, namespaceId);
   if (!claimed) {
     return { triggered: false, taskId, action: "analysis_pending" };
@@ -1982,6 +2350,10 @@ async function startAnalysisJob(
         namespaceId,
         orgId,
         auto_run_claim_id: claimId,
+        // Post-exhaustion fallback: generation is spent, so the only useful
+        // answer is an existing chain. Asking for generate_new again would
+        // re-enter the loop that just stopped.
+        ...(existingOnly ? { existingOnly: true } : {}),
       },
     }),
   });

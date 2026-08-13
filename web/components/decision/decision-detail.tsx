@@ -75,6 +75,7 @@ export function DecisionDetail({
   const [notes, setNotes] = useState("");
   const [resolving, setResolving] = useState(false);
   const [researching, setResearching] = useState(false);
+  const [repairingResearch, setRepairingResearch] = useState(false);
   const [showSteering, setShowSteering] = useState(false);
   const [steeringPrompt, setSteeringPrompt] = useState("");
   const [retroLoading, setRetroLoading] = useState(false);
@@ -166,7 +167,12 @@ export function DecisionDetail({
 
   const resumeResearchRef = useRef(false);
   useEffect(() => {
-    if (decision?.status === "researching" && decision.researchRunId && !resumeResearchRef.current) {
+    if (
+      decision?.status === "researching"
+      && decision.researchRunId
+      && !decision.researchRecovery
+      && !resumeResearchRef.current
+    ) {
       resumeResearchRef.current = true;
       (async () => {
         setResearching(true);
@@ -221,7 +227,7 @@ export function DecisionDetail({
         }
       })();
     }
-  }, [decision?.activeJobId, decision?.researchRunId, decision?.status, pollDecisionUntil, decisionId, workspacePath, fetchWithNamespace, fetchDecision, setDecision]);
+  }, [decision?.activeJobId, decision?.researchRunId, decision?.researchRecovery, decision?.status, pollDecisionUntil, decisionId, workspacePath, fetchWithNamespace, fetchDecision, setDecision]);
 
   const resumeRetroRef = useRef(false);
   useEffect(() => {
@@ -266,14 +272,17 @@ export function DecisionDetail({
   }, [decisionId]);
 
   const triggerResearch = useCallback(
-    async (steering?: string) => {
+    async (steering?: string, repair = false) => {
       setResearching(true);
       setShowSteering(false);
       try {
         const res = await fetchWithNamespace(wsUrl(`/api/decisions/${decisionId}/research`, workspacePath), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(steering ? { steering } : {}),
+          body: JSON.stringify({
+            ...(steering ? { steering } : {}),
+            ...(repair ? { repair: true } : {}),
+          }),
         });
         if (!res.ok) return;
         const resRaw = await res.json();
@@ -323,6 +332,16 @@ export function DecisionDetail({
     [decisionId, workspacePath, fetchWithNamespace, fetchDecision, pollDecisionUntil, setDecision]
   );
 
+  const handleRepairResearch = useCallback(async () => {
+    if (repairingResearch || researching) return;
+    setRepairingResearch(true);
+    try {
+      await triggerResearch(undefined, true);
+    } finally {
+      setRepairingResearch(false);
+    }
+  }, [repairingResearch, researching, triggerResearch]);
+
   const autoResearchFiredRef = useRef(false);
   useEffect(() => {
     autoResearchFiredRef.current = false;
@@ -334,6 +353,7 @@ export function DecisionDetail({
       decision.status === "intake" &&
       !decision.brief &&
       decision.options.length === 0 &&
+      !decision.researchRecovery &&
       !researching &&
       !autoResearchFiredRef.current
     ) {
@@ -564,6 +584,7 @@ export function DecisionDetail({
     decision.status === "approved" ||
     decision.status === "in_progress" ||
     decision.status === "done";
+  const researchNeedsRepair = decision.researchRecovery === "dead";
 
   const recommendedOption = decision.options.find(
     (option) => option.id === decision.recommendation?.choiceId
@@ -655,6 +676,16 @@ export function DecisionDetail({
               >
                 <RefreshFilled className={cn("h-3 w-3", researching && "animate-spin")} />
                 {decision.status === "intake" ? "Research" : "Refine"}
+              </DetailSecondaryButton>
+            )}
+
+            {researchNeedsRepair && viewMode === "dashboard" && (
+              <DetailSecondaryButton
+                onClick={handleRepairResearch}
+                disabled={repairingResearch || researching}
+              >
+                <RefreshFilled className={cn("h-3 w-3", repairingResearch && "animate-spin")} />
+                {repairingResearch ? "Repairing..." : "Repair research"}
               </DetailSecondaryButton>
             )}
 

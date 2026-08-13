@@ -54,6 +54,36 @@ function seedFailedAttempt(file: string, agentId = "writer") {
   return attempt;
 }
 
+function seedMissingEventMarkerFailure(file: string) {
+  const run = createRunRecord({ chainName: "chain", goal: "goal" });
+  updateRunJson(file, () => ({
+    ...run,
+    id: "run-123",
+    status: "failed",
+    status_message: "agent writer reported AGENT_COMPLETE without declared event 'draft-ready'",
+    agents: [{ id: "writer", name: "Writer", session: "writer-run-123", status: "failed" }],
+    sessions: ["writer-run-123"],
+  }));
+  const attempt = createAgentAttempt({ runJsonPath: file, runId: "run-123", agentId: "writer" });
+  const path: AgentAttemptPhase[] = [
+    "lease_acquired",
+    "pty_allocated",
+    "process_spawned",
+    "ready_for_instructions",
+    "instructions_submitted",
+  ];
+  for (const to of path) {
+    transitionAgentAttempt({ runJsonPath: file, attemptId: attempt.id, to });
+  }
+  transitionAgentAttempt({
+    runJsonPath: file,
+    attemptId: attempt.id,
+    to: "completion_failed",
+    reason: "no_completion_event",
+    detail: "declared completion event 'draft-ready' missing after AGENT_COMPLETE",
+  });
+}
+
 function attempts(file: string) {
   return (readRunJson(file).runnerV2 as { attempts?: Array<Record<string, unknown>> } | undefined)?.attempts || [];
 }
@@ -250,6 +280,62 @@ function readEvent(path: string) {
 }
 
 describe("recoverLateCompletionEvents", () => {
+  it("adopts a real event racing the marker failure exactly once and exposes one downstream delivery", () => {
+    const file = runPath();
+    seedMissingEventMarkerFailure(file);
+    const event = writeLateEvent(file);
+
+    const first = recoverLateCompletionEvents({
+      runJsonPath: file,
+      runId: "run-123",
+      chain: CHAIN_WITH_DOWNSTREAM,
+      events: [event],
+      now: new Date("2026-06-25T10:05:00.000Z"),
+    });
+    const second = recoverLateCompletionEvents({
+      runJsonPath: file,
+      runId: "run-123",
+      chain: CHAIN_WITH_DOWNSTREAM,
+      events: [readEvent(event.path!)],
+      now: new Date("2026-06-25T10:05:01.000Z"),
+    });
+
+    expect(first.recovered).toHaveLength(1);
+    expect(first.deliveries).toHaveLength(1);
+    expect(second.recovered).toHaveLength(0);
+    expect(second.deliveries).toHaveLength(1);
+    expect(second.deliveries[0].deliveryId).toBe(first.deliveries[0].deliveryId);
+    expect(second.deliveries[0].route).toMatchObject({
+      action: "launch",
+      agentIds: ["reviewer"],
+    });
+
+    const deliveryId = first.deliveries[0].deliveryId;
+    expect(claimLateCompletionDelivery({
+      runJsonPath: file,
+      deliveryId,
+      claimId: "late-event-winner",
+    })).toBe(true);
+    expect(claimLateCompletionDelivery({
+      runJsonPath: file,
+      deliveryId,
+      claimId: "late-event-loser",
+    })).toBe(false);
+    expect(acknowledgeLateCompletionDelivery({
+      runJsonPath: file,
+      deliveryId,
+      claimId: "late-event-winner",
+      evidence: "plan-applied",
+    })).toBe(true);
+    expect(recoverLateCompletionEvents({
+      runJsonPath: file,
+      runId: "run-123",
+      chain: CHAIN_WITH_DOWNSTREAM,
+      events: [readEvent(event.path!)],
+      now: new Date("2026-06-25T10:05:02.000Z"),
+    }).deliveries).toHaveLength(0);
+  });
+
   it("adopts a late completion event for a completion_failed attempt, completes the agent, and routes downstream", () => {
     const file = runPath();
     seedFailedRun(file);

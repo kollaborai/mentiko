@@ -202,58 +202,78 @@ export function extractInlineAgents(
   return extracted;
 }
 
+export interface StagedAgentRegistryWrite {
+  /** absolute agent.json path this write would land at */
+  path: string;
+  /** normalized record that would be persisted */
+  record: AgentDefinition;
+  finalId: string;
+  /** true when an identical record already exists — commit skips it */
+  noop: boolean;
+}
+
+/**
+ * Collision-resolve a registry id and RETURN the write as data instead of
+ * performing it (plan-of-record B4: materialization is pure; nothing lands in
+ * the registry until every validation has passed). Handles collisions by
+ * appending -v2 .. -v5, mirroring the historical writeAgentToRegistry.
+ */
+export function planAgentRegistryWrite(
+  agent: AgentDefinition,
+  namespaceId: string,
+  orgId: string,
+  reservedIds: ReadonlySet<string> = new Set(),
+): StagedAgentRegistryWrite {
+  for (let attempt = 0; attempt <= 4; attempt++) {
+    const candidateId = attempt === 0 ? agent.id : `${agent.id}-v${attempt + 1}`;
+    const agentPath = join(orgPath(namespaceId, orgId, "agents"), candidateId, "agent.json");
+
+    if (reservedIds.has(candidateId)) continue;
+
+    if (!existsSync(agentPath)) {
+      return { path: agentPath, record: normalizedAgentForRegistry(agent, candidateId), finalId: candidateId, noop: false };
+    }
+
+    try {
+      const existing = JSON.parse(readFileSync(agentPath, "utf-8")) as AgentDefinition;
+      const incoming = normalizedAgentForRegistry(agent, candidateId);
+      if (JSON.stringify(incoming, null, 2) === JSON.stringify(existing, null, 2)) {
+        return { path: agentPath, record: incoming, finalId: candidateId, noop: true };
+      }
+    } catch {
+      // unreadable existing file — plan an overwrite here
+      return { path: agentPath, record: normalizedAgentForRegistry(agent, candidateId), finalId: candidateId, noop: false };
+    }
+    // different content, try next version suffix
+  }
+
+  const finalId = `${agent.id}-v5`;
+  const agentPath = join(orgPath(namespaceId, orgId, "agents"), finalId, "agent.json");
+  return { path: agentPath, record: normalizedAgentForRegistry(agent, finalId), finalId, noop: false };
+}
+
+/** Apply staged registry writes. Call ONLY after acceptance fully validated. */
+export function commitAgentRegistryWrites(staged: StagedAgentRegistryWrite[]): void {
+  for (const write of staged) {
+    if (write.noop) continue;
+    mkdirSync(dirname(write.path), { recursive: true });
+    writeFileSync(write.path, JSON.stringify(write.record, null, 2), "utf-8");
+  }
+}
+
 /**
  * Write agent to registry. Handles collisions by appending -v2 .. -v5.
- * Returns the final id used.
+ * Returns the final id used. (Plan + immediate commit — used by paths that
+ * validated beforehand; the acceptance service stages instead.)
  */
 export function writeAgentToRegistry(
   agent: AgentDefinition,
   namespaceId: string,
   orgId: string
 ): string {
-  let finalId = agent.id;
-
-  for (let attempt = 0; attempt <= 4; attempt++) {
-    const candidateId = attempt === 0 ? agent.id : `${agent.id}-v${attempt + 1}`;
-    const agentPath = join(orgPath(namespaceId, orgId, "agents"), candidateId, "agent.json");
-
-    if (!existsSync(agentPath)) {
-      // no collision — write here
-      finalId = candidateId;
-      const agentWithId = normalizedAgentForRegistry(agent, finalId);
-      mkdirSync(dirname(agentPath), { recursive: true });
-      writeFileSync(agentPath, JSON.stringify(agentWithId, null, 2), "utf-8");
-      return finalId;
-    }
-
-    // path exists — check if content is identical
-    try {
-      const existing = JSON.parse(readFileSync(agentPath, "utf-8")) as AgentDefinition;
-      const incomingStr = JSON.stringify(normalizedAgentForRegistry(agent, candidateId), null, 2);
-      const existingStr = JSON.stringify(existing, null, 2);
-      if (incomingStr === existingStr) {
-        // identical — no-op
-        return candidateId;
-      }
-    } catch {
-      // unreadable existing file — overwrite
-      finalId = candidateId;
-      const agentWithId = normalizedAgentForRegistry(agent, finalId);
-      mkdirSync(dirname(agentPath), { recursive: true });
-      writeFileSync(agentPath, JSON.stringify(agentWithId, null, 2), "utf-8");
-      return finalId;
-    }
-
-    // different content, try next version suffix
-  }
-
-  // fallback: use -v5 and overwrite
-  finalId = `${agent.id}-v5`;
-  const agentPath = join(orgPath(namespaceId, orgId, "agents"), finalId, "agent.json");
-  const agentWithId = normalizedAgentForRegistry(agent, finalId);
-  mkdirSync(dirname(agentPath), { recursive: true });
-  writeFileSync(agentPath, JSON.stringify(agentWithId, null, 2), "utf-8");
-  return finalId;
+  const staged = planAgentRegistryWrite(agent, namespaceId, orgId);
+  commitAgentRegistryWrites([staged]);
+  return staged.finalId;
 }
 
 /**
@@ -363,15 +383,23 @@ export function rewriteBranchAgentIds(
   return chainJson;
 }
 
+export interface MaterializedChain extends PostProcessResult {
+  /** registry writes to apply AFTER validation succeeds (empty when no inline agents) */
+  stagedWrites: StagedAgentRegistryWrite[];
+}
+
 /**
- * Full post-processing pipeline.
- * Extracts inline agents → writes to registry → rewrites chain with $refs.
+ * PURE materialization (plan-of-record B4): hydrate $ref+prompt hybrids,
+ * extract inline agents, collision-resolve their registry ids, and rewrite
+ * the chain to $refs — returning the registry writes as data. Nothing is
+ * persisted; a chain that later fails validation leaves the registry
+ * untouched. Commit with commitAgentRegistryWrites once acceptance passes.
  */
-export async function postProcessChain(
+export function materializeGeneratedChain(
   chainJson: Record<string, unknown>,
   namespaceId: string,
-  orgId: string
-): Promise<PostProcessResult> {
+  orgId: string,
+): MaterializedChain {
   const hydratedChain = hydrateInlineAgentRefs(
     chainJson,
     (ref) => resolveAgentRef(ref, namespaceId, orgId),
@@ -379,16 +407,20 @@ export async function postProcessChain(
   const extracted = extractInlineAgents(hydratedChain);
 
   if (extracted.length === 0) {
-    return { chain: chainJson, createdAgents: [], extractedCount: 0 };
+    return { chain: chainJson, createdAgents: [], extractedCount: 0, stagedWrites: [] };
   }
 
   const agentIdMap = new Map<string, string>();
   const createdAgents: { id: string; name: string }[] = [];
+  const stagedWrites: StagedAgentRegistryWrite[] = [];
+  const reservedIds = new Set<string>();
 
   for (const item of extracted) {
-    const finalId = writeAgentToRegistry(item.agent, namespaceId, orgId);
-    agentIdMap.set(item.originalId, finalId);
-    createdAgents.push({ id: finalId, name: item.agent.name });
+    const staged = planAgentRegistryWrite(item.agent, namespaceId, orgId, reservedIds);
+    reservedIds.add(staged.finalId);
+    stagedWrites.push(staged);
+    agentIdMap.set(item.originalId, staged.finalId);
+    createdAgents.push({ id: staged.finalId, name: item.agent.name });
   }
 
   const rewrittenChain = rewriteChainInlineToRef(hydratedChain, agentIdMap);
@@ -397,5 +429,26 @@ export async function postProcessChain(
     chain: rewrittenChain,
     createdAgents,
     extractedCount: extracted.length,
+    stagedWrites,
+  };
+}
+
+/**
+ * Full post-processing pipeline.
+ * Extracts inline agents → writes to registry → rewrites chain with $refs.
+ * Prefer acceptGeneratedChain (generated-chain-acceptance.ts), which
+ * validates BEFORE committing these writes.
+ */
+export async function postProcessChain(
+  chainJson: Record<string, unknown>,
+  namespaceId: string,
+  orgId: string
+): Promise<PostProcessResult> {
+  const materialized = materializeGeneratedChain(chainJson, namespaceId, orgId);
+  commitAgentRegistryWrites(materialized.stagedWrites);
+  return {
+    chain: materialized.chain,
+    createdAgents: materialized.createdAgents,
+    extractedCount: materialized.extractedCount,
   };
 }

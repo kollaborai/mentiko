@@ -79,10 +79,20 @@ function resolveScopedTaskRun(
   taskId: string,
   metadata: Record<string, unknown>,
 ): ScopedTaskRunLookup | undefined {
-  if (!(TASK_RUN_SCOPE_METADATA_KEY in metadata)) return undefined;
+  // A cleared scope is ABSENT, not invalid. Writers clear it in three shapes
+  // depending on the path taken: the key removed (taskUpdate JSON-stringifies,
+  // dropping undefined), the key set to undefined (taskMergeMeta), or the key
+  // set to null (the tasks PATCH route merges, so it cannot delete a key).
+  // Treating null as invalid bricked the task permanently with no recovery —
+  // the release path could never produce an admittable record through that
+  // route. A present, NON-EMPTY but malformed scope still fails closed below.
+  const rawScope = metadata[TASK_RUN_SCOPE_METADATA_KEY];
+  if (!(TASK_RUN_SCOPE_METADATA_KEY in metadata) || rawScope === null || rawScope === undefined) {
+    return undefined;
+  }
 
   try {
-    const scope = parseTaskRunScope(metadata[TASK_RUN_SCOPE_METADATA_KEY]);
+    const scope = parseTaskRunScope(rawScope);
     if (scope.taskId !== taskId || metadata.last_run_id !== scope.runId) {
       return { valid: false, activeRun: null };
     }
@@ -561,6 +571,7 @@ export type AutoRunRejectReason =
   | "epic"
   | "auto_run_disabled"
   | "paused"
+  | "generation_stopped"
   | "decision_required"
   | "already_completed"
   | "active_run_exists"
@@ -645,6 +656,7 @@ export function canAdmitAutoRun(
     retries: typeof metadata.auto_run_retries === "number" ? metadata.auto_run_retries : 0,
     userPaused: metadata.auto_run_paused === true,
     pausedReason: typeof metadata.auto_run_paused_reason === "string" ? metadata.auto_run_paused_reason : "",
+    generationStopReason: typeof metadata.generation_stop_reason === "string" ? metadata.generation_stop_reason : "",
     completed: DONE_STATUSES.has(task.status),
   });
 
@@ -653,6 +665,16 @@ export function canAdmitAutoRun(
   }
   if (autoRun.userPaused) {
     return { admit: false, reason: "auto-run is paused for this task", action: "paused" };
+  }
+  if (autoRun.generationStopped) {
+    // Deterministic rejection stop (A4): the same artifact fingerprint failed
+    // repeatedly, so another admission would only re-run a known-failing loop.
+    // Clearing generation_stop_reason (explicit recovery) re-admits.
+    return {
+      admit: false,
+      reason: `chain generation stopped: ${autoRun.generationStopReason}`,
+      action: "generation_stopped",
+    };
   }
   if (metadata.last_run_decision_required === true) {
     return { admit: false, reason: "last run requires review", action: "decision_required" };

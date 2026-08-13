@@ -13,8 +13,10 @@ import {
   reconcileAgentAttempt,
   recordAgentAttemptProcess,
   releaseAgentAttempt,
+  resolveAgentAttemptForCompletion,
   submitAgentAttemptInstructions,
   transitionAgentAttempt,
+  transitionAgentAttemptIfOpen,
 } from "@/lib/runner-v2/agent-attempt";
 import { createRunRecord, updateRunJson } from "@/lib/runner-v2/run-state";
 
@@ -48,6 +50,25 @@ describe("runner-v2 AgentAttempt lifecycle", () => {
     } catch (error) {
       expect(error).toMatchObject({ reason: "invalid_transition", from: "created", to: "instructions_submitted" });
     }
+  });
+
+  it("treats a released-attempt terminalization race as an idempotent no-op", () => {
+    const path = runPath();
+    const attempt = createAgentAttempt({ runJsonPath: path, runId: "run-1", agentId: "writer" });
+    const released = releaseAgentAttempt({ runJsonPath: path, attemptId: attempt.id });
+
+    expect(transitionAgentAttemptIfOpen({
+      runJsonPath: path,
+      attemptId: attempt.id,
+      to: "human_action_required",
+      reason: "agent_capacity_timeout",
+      detail: "capacity waiter resumed after the run was stopped",
+    })).toMatchObject({
+      id: attempt.id,
+      phase: "released",
+      terminalReason: released.terminalReason,
+    });
+    expect(readRun(path).runnerV2.attempts[0].transitions).toHaveLength(1);
   });
 
   it("records process evidence before instructions are submitted", () => {
@@ -311,6 +332,58 @@ describe("runner-v2 AgentAttempt lifecycle", () => {
       now: new Date("2026-07-04T00:04:00.000Z"),
     });
     expect(third.id).toBe("run-1:writer:2");
+  });
+
+  it("resolves the exact completion attempt instead of a newer retry and fails closed without identity", () => {
+    const path = runPath();
+    const first = createAgentAttempt({
+      runJsonPath: path,
+      runId: "run-1",
+      agentId: "writer",
+      leaseId: "writer-run-1",
+    });
+    transitionAgentAttempt({
+      runJsonPath: path,
+      attemptId: first.id,
+      to: "startup_failed",
+      reason: "readiness_deadline_expired",
+    });
+    const second = createAgentAttempt({
+      runJsonPath: path,
+      runId: "run-1",
+      agentId: "writer",
+      leaseId: "writer-run-1",
+    });
+
+    expect(resolveAgentAttemptForCompletion({
+      runJsonPath: path,
+      runId: "run-1",
+      agentId: "writer",
+      attemptId: first.id,
+      sessionName: "writer-run-1",
+    })?.id).toBe(first.id);
+    expect(adoptAgentAttemptForCompletion({
+      runJsonPath: path,
+      runId: "run-1",
+      agentId: "writer",
+      attemptId: first.id,
+      sessionName: "writer-run-1",
+    }).id).toBe(first.id);
+    expect(second.id).toBe("run-1:writer:2");
+
+    expect(() => resolveAgentAttemptForCompletion({
+      runJsonPath: path,
+      runId: "run-1",
+      agentId: "writer",
+      sessionName: "writer-run-1",
+    })).toThrow("exact MENTIKO_AGENT_ATTEMPT_ID required");
+    expect(() => resolveAgentAttemptForCompletion({
+      runJsonPath: path,
+      runId: "run-1",
+      agentId: "writer",
+      attemptId: first.id,
+      sessionName: "another-session",
+    })).toThrow("completion AgentAttempt session mismatch");
   });
 
   it("adopts a routed attempt at completion time with explicit provenance", () => {

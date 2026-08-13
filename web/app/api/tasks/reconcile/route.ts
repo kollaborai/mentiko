@@ -45,6 +45,7 @@ import {
 } from "@/lib/tasks/task-run-locator";
 import { hasLivePendingHandoff } from "@/lib/runner-v2/handoff-liveness";
 import { isConcurrencyCapBlockedReason } from "@/lib/runner-v2/concurrency-admission";
+import { isDecisionGateReleased } from "@/lib/tasks/decision-gate-release";
 
 export const dynamic = "force-dynamic";
 
@@ -211,8 +212,17 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     if (DONE_TASK_STATUSES.has(issue.status)) return false;
     if (activeSweepTaskIds.has(issue.id)) return false;
     const meta = parseMetadata(issue.metadata);
+    if (!meta) return false;
+    // W3: this task's decision already resolved and released THIS audited
+    // run's gate. Re-applying the verdict would re-park a task that has moved
+    // on — the loop that held TASK-003 open-but-unadmittable indefinitely.
+    if (
+      meta.last_audit_verdict === "decision" &&
+      isDecisionGateReleased(meta, meta.completion_audit_run_id)
+    ) {
+      return false;
+    }
     return (
-      !!meta &&
       (meta.last_audit_verdict === "close" || meta.last_audit_verdict === "decision") &&
       meta.completion_audit_apply_status === "applied" &&
       typeof meta.completion_audit_run_id === "string"
@@ -316,6 +326,7 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
 
     let newStatus: string | null = null;
     let reason = "";
+    let holdForLateCompletion = false;
 
     if (!existsSync(runDir) || !existsSync(runJsonPath)) {
       newStatus = "deleted";
@@ -333,6 +344,7 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
         }
 
         const lateRecovery = recoverLateCompletionIfPossible({
+          taskId: issue.id,
           runDir,
           runJsonPath,
           runId,
@@ -346,6 +358,7 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
         } else if (run.status !== "running" && run.status !== "pending") {
           newStatus = run.status;
           reason = terminalRunReason(run);
+          holdForLateCompletion = shouldHoldForLateCompletionRecovery(run);
         } else {
           const agents = run.agents || [];
           if (allDeclaredAgentsComplete(run, runDir)) {
@@ -379,6 +392,7 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
                 // `running:no-terminal-time` and consume retry/audit twice.
                 run.status = "stopped";
                 run.completed = run.completed || new Date().toISOString();
+                run.statusReason = { actor: "reconciler", reason };
                 writeFileSync(runJsonPath, JSON.stringify(run, null, 2));
               }
             }
@@ -406,7 +420,7 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
         taskUpdate(orgId, safeId, { metadata: updatedMeta }, namespaceId);
 
         const autoRun = autoRunEnabledFor(issue, meta);
-        if (autoRun && TERMINAL_RUN_STATUSES.has(newStatus)) {
+        if (autoRun && TERMINAL_RUN_STATUSES.has(newStatus) && !holdForLateCompletion) {
           try {
             const lifecycle = await applyExecutionLifecycle({
               request,
@@ -479,6 +493,7 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
 
       const safeId = validateTaskId(issue.id);
       const lateRecovery = recoverLateCompletionIfPossible({
+        taskId: issue.id,
         runDir,
         runJsonPath,
         runId,
@@ -537,6 +552,17 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
       }
 
       if (!run.status || !TERMINAL_RUN_STATUSES.has(run.status)) {
+        continue;
+      }
+      if (shouldHoldForLateCompletionRecovery(run)) {
+        writeLog(
+          namespaceId,
+          orgId,
+          "info",
+          "task-reconciler",
+          `task ${issue.id} run ${runId}: late completion recovery pending`,
+          "AGENT_COMPLETE was recorded without its declared event; lifecycle retry is held during the typed handoff window",
+        );
         continue;
       }
 
@@ -730,7 +756,7 @@ async function applyExecutionLifecycle(input: {
   // second time after another request already cleared last_run_id for retry.
   const currentTask = taskGet(input.orgId, input.taskId, input.namespaceId);
   const currentMetadata = parseMetadata(currentTask?.metadata) ?? input.metadata;
-  if (currentMetadata.last_run_id !== input.runId) {
+  if (!taskMetadataOwnsRun(currentMetadata, input.taskId, input.namespaceId, input.orgId, input.runId)) {
     return { effects: [] };
   }
   const metadataWithTerminalReason = input.runStatus === "blocked"
@@ -880,6 +906,37 @@ function parseMetadata(
   return raw;
 }
 
+function taskStillOwnsRun(
+  orgId: string,
+  taskId: string,
+  namespaceId: string,
+  runId: string,
+): boolean {
+  const task = taskGet(orgId, taskId, namespaceId);
+  const metadata = parseMetadata(task?.metadata);
+  return !!metadata && taskMetadataOwnsRun(metadata, taskId, namespaceId, orgId, runId);
+}
+
+function taskMetadataOwnsRun(
+  metadata: Record<string, unknown>,
+  taskId: string,
+  namespaceId: string,
+  orgId: string,
+  runId: string,
+): boolean {
+  if (metadata.last_run_id !== runId) return false;
+  if (!(TASK_RUN_SCOPE_METADATA_KEY in metadata)) return true;
+  try {
+    const scope = parseTaskRunScope(metadata[TASK_RUN_SCOPE_METADATA_KEY]);
+    return scope.taskId === taskId
+      && scope.runId === runId
+      && scope.namespaceId === namespaceId
+      && scope.orgId === orgId;
+  } catch {
+    return false;
+  }
+}
+
 function terminalRunReason(run: Record<string, unknown>): string {
   if (run.status !== "blocked") return `run.json status is ${String(run.status || "unknown")}`;
   if (typeof run.blockedReason === "string" && run.blockedReason.trim()) return run.blockedReason.trim();
@@ -977,7 +1034,46 @@ function latestAgentCompletionMs(agents: Array<{ completed?: unknown }>): number
     .sort((a, b) => b - a)[0];
 }
 
+/**
+ * A durable AGENT_COMPLETE marker with no declared event is an explicit
+ * terminal contract failure, but the event writer can still be racing the
+ * completion entrypoint. Keep the run failed and its PTYs cleaned up while
+ * holding task retry/audit for the existing handoff window. This preserves the
+ * task's last_run_id long enough for recoverLateCompletionEvents to adopt a
+ * real same-run event before auto-run can admit a second execution.
+ */
+function shouldHoldForLateCompletionRecovery(
+  run: Record<string, unknown>,
+  nowMs = Date.now(),
+): boolean {
+  if (run.status !== "failed") return false;
+  const completedMs = parseTimeMs(run.completed);
+  if (completedMs === undefined) return false;
+  const ageMs = nowMs - completedMs;
+  if (ageMs < 0 || ageMs >= RUN_HANDOFF_GRACE_MS) return false;
+
+  const runnerV2 = run.runnerV2;
+  if (!runnerV2 || typeof runnerV2 !== "object" || Array.isArray(runnerV2)) return false;
+  const attempts = (runnerV2 as { attempts?: unknown }).attempts;
+  if (!Array.isArray(attempts)) return false;
+
+  const latestByAgent = new Map<string, Record<string, unknown>>();
+  attempts.forEach((attempt, index) => {
+    if (!attempt || typeof attempt !== "object" || Array.isArray(attempt)) return;
+    const record = attempt as Record<string, unknown>;
+    const key = typeof record.agentId === "string" ? record.agentId : `#${index}`;
+    latestByAgent.set(key, record);
+  });
+  return [...latestByAgent.values()].some((attempt) => (
+    attempt.phase === "completion_failed"
+    && attempt.terminalReason === "no_completion_event"
+    && typeof attempt.terminalDetail === "string"
+    && attempt.terminalDetail.includes("after AGENT_COMPLETE")
+  ));
+}
+
 function recoverLateCompletionIfPossible(input: {
+  taskId: string;
   runDir: string;
   runJsonPath: string;
   runId: string;
@@ -985,6 +1081,9 @@ function recoverLateCompletionIfPossible(input: {
   namespaceId: string;
   orgId: string;
 }): { recovered: false } | { recovered: true; status: string; reason: string } {
+  if (!taskStillOwnsRun(input.orgId, input.taskId, input.namespaceId, input.runId)) {
+    return { recovered: false };
+  }
   const chainPath = join(input.runDir, "chain.json");
   if (!existsSync(chainPath)) return { recovered: false };
 
@@ -992,15 +1091,30 @@ function recoverLateCompletionIfPossible(input: {
   if (!chain) return { recovered: false };
 
   const events = readEvents(config.eventsDir);
+  // Active events are the only completion candidates. Archived events are
+  // replay evidence only, but they still prove same-run prerequisites for a
+  // typed all/any/quorum route decision.
+  const firedEvents = [...events, ...readEvents(join(config.eventsDir, "archive"))];
   const recovery = recoverLateCompletionEvents({
     runJsonPath: input.runJsonPath,
     runId: input.runId,
     chain,
     events,
+    firedEvents,
   });
   if (recovery.deliveries.length === 0) return { recovered: false };
+  // The task pointer is the cross-run arbitration owner. If lifecycle already
+  // released this run for retry while the physical event was being adopted,
+  // retain the old run's recovery ledger but never route it or overwrite the
+  // newer task claim.
+  if (!taskStillOwnsRun(input.orgId, input.taskId, input.namespaceId, input.runId)) {
+    return { recovered: false };
+  }
 
   for (const item of recovery.deliveries) {
+    if (!taskStillOwnsRun(input.orgId, input.taskId, input.namespaceId, input.runId)) {
+      return { recovered: false };
+    }
     const latestRun = readRunForDelivery(input.runJsonPath, recovery.run);
     if (deliveryTargetsAlreadyStarted(item, latestRun)) {
       acknowledgeLateCompletionDelivery({
@@ -1060,6 +1174,18 @@ function recoverLateCompletionIfPossible(input: {
           lastAgentId: item.agentId,
         },
       });
+      // The delivery claim serializes this old run, but task_run_scope is the
+      // cross-run owner. Recheck at the last synchronous boundary before any
+      // adapter side effect so a retry that won arbitration cannot receive a
+      // launch from its predecessor.
+      if (!taskStillOwnsRun(input.orgId, input.taskId, input.namespaceId, input.runId)) {
+        releaseLateCompletionDelivery({
+          runJsonPath: input.runJsonPath,
+          deliveryId: item.deliveryId,
+          claimId,
+        });
+        return { recovered: false };
+      }
       applyTypedExecutorPlan(plan, {
         runJsonPath: input.runJsonPath,
         stateDir: config.stateDir,

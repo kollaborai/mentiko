@@ -117,7 +117,7 @@ jest.mock("@/lib/auth/session-token", () => ({
 }));
 
 jest.mock("@/lib/agents/run-agent-profile", () => ({
-  resolveRunAgentProfileId: jest.fn(() => undefined),
+  resolveRunAgentProfile: jest.fn(() => undefined),
 }));
 
 jest.mock("@/lib/runs/run-provenance", () => ({
@@ -134,10 +134,14 @@ declare global {
   var __MENTIKO_CHAIN_RUN_EVENTS_DIR__: string;
 }
 
-async function startMinimalRun(runId: string, metadata?: Record<string, unknown>) {
+async function startMinimalRun(
+  runId: string,
+  metadata?: Record<string, unknown>,
+  requestUrl = "http://localhost:3000/api/chains/run",
+) {
   const { startChainRun } = await import("@/lib/runs/chain-run-service");
   return startChainRun({
-    request: new Request("http://localhost:3000/api/chains/run"),
+    request: new Request(requestUrl),
     namespaceId: "default",
     orgId: "default",
     body: {
@@ -214,6 +218,20 @@ describe("chain-run-service runner-v2 guard", () => {
     }));
     expect(mockIsRunnerV2Enabled).not.toHaveBeenCalled();
     expect(mockSpawn).not.toHaveBeenCalled();
+  });
+
+  it("uses the internal HTTP origin for a run started through the public tenant URL", async () => {
+    await startMinimalRun(
+      "run-public-origin",
+      undefined,
+      "https://0.0.0.0:3000/api/chains/run",
+    );
+
+    expect(mockStartRunnerV2Launch).toHaveBeenCalledWith(expect.objectContaining({
+      env: expect.objectContaining({
+        MENTIKO_WEB_URL: "http://127.0.0.1:3000",
+      }),
+    }));
   });
 
   it("fails closed when runner-v2 reports unsupported before any typed side effects", async () => {

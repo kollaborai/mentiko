@@ -187,12 +187,62 @@ describe("runner-v2 routing decision", () => {
     expect(hasCompletedTrigger(agents[2], agents)).toBe(true);  // fix-verifier
   });
 
-  // Known gap: an OR-merge of mutually-exclusive branches (the diamond above)
-  // still deadlocks in decideNextRoute because the live call site passes a
-  // status-less chain and no fired-event set. Fixing it needs run status + the
-  // actually-fired events threaded into routing (completion-runner/recovery/
-  // reconcile). Enable this once that lands.
-  it.todo("launches an OR-merge diamond once run status + fired events are threaded into routing");
+  it("launches an explicit any-of diamond from the actually fired event", () => {
+    const chain = {
+      agents: [
+        { id: "dead-source-remover", emits: "dead-source-removed", status: "complete" },
+        { id: "source-repointer", emits: "source-repointed", status: "pending" },
+        {
+          id: "fix-verifier",
+          triggers: ["dead-source-removed", "source-repointed"],
+          wait_for_events: {
+            events: ["dead-source-removed", "source-repointed"],
+            wait_for: "any" as const,
+          },
+        },
+      ],
+    };
+
+    expect(decideNextRoute(chain, "dead-source-removed", undefined, {
+      firedEvents: ["dead-source-removed"],
+    })).toEqual({
+      action: "launch",
+      agentIds: ["fix-verifier"],
+      reason: "trigger match",
+    });
+  });
+
+  it("uses actual fired events for explicit all and quorum fan-in", () => {
+    const allChain = {
+      agents: [{
+        id: "publisher",
+        wait_for_events: { events: ["research-ready", "draft-ready"], wait_for: "all" as const },
+      }],
+    };
+    expect(decideNextRoute(allChain, "draft-ready", undefined, {
+      firedEvents: ["draft-ready"],
+    })).toMatchObject({ action: "wait", pending: true });
+    expect(decideNextRoute(allChain, "draft-ready", undefined, {
+      firedEvents: ["research-ready", "draft-ready"],
+    })).toMatchObject({ action: "launch", agentIds: ["publisher"] });
+
+    const quorumChain = {
+      agents: [{
+        id: "aggregator",
+        wait_for_events: {
+          events: ["a-done", "b-done", "c-done"],
+          wait_for: "quorum" as const,
+          quorum: 2,
+        },
+      }],
+    };
+    expect(decideNextRoute(quorumChain, "a-done", undefined, {
+      firedEvents: ["a-done"],
+    })).toMatchObject({ action: "wait", pending: true });
+    expect(decideNextRoute(quorumChain, "b-done", undefined, {
+      firedEvents: ["a-done", "b-done"],
+    })).toMatchObject({ action: "launch", agentIds: ["aggregator"] });
+  });
 
   it("waits for multi-trigger prerequisites when emitters are incomplete", () => {
     const chain = {

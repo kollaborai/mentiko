@@ -212,16 +212,18 @@ write_profile "stub-default" "complete"
 # =====================================================================
 printf '%s[B] run-id collision (#20) — same-second launches mint distinct ids + dirs%s\n' "$C_BLU" "$C_NC"
 
-# B1a: the bash mint UNIT (lib/run-lib.sh _mint_run_id) — mint a large batch back-to-back
-# (the realistic same-instant case: many calls land in the same wall-clock second/ms)
-# and assert every id is DISTINCT and matches SAFE_RUN_ID_RE. This is the exact function
-# create-run uses for the run id, so its uniqueness IS the #20 fix.
+# B1a: the typed run-record mint UNIT — create a large batch back-to-back (the realistic
+# same-instant case: many calls land in the same wall-clock second/ms) and assert every
+# id is DISTINCT and matches SAFE_RUN_ID_RE. The shell `_mint_run_id` owner was retired;
+# this exercises the actual TypeScript create boundary used by create-run.
+B_UNIT_RUNS="$TMP_ROOT/b-unit-runs"; mkdir -p "$B_UNIT_RUNS"
 b_unit="$(
   source "$RUN_LIB" 2>/dev/null
+  export RUNS_DIR="$B_UNIT_RUNS"
   declare -A seen=(); n=500; dups=0; bad=0
   re='^run-[A-Za-z0-9_-]{1,120}$'
   for ((i=0;i<n;i++)); do
-    id="$(_mint_run_id)"
+    id="$(_run_record_cli create --runs-dir "$RUNS_DIR" --chain "caps-unit" --goal "probe" 2>/dev/null)"
     [[ "$id" =~ $re ]] || bad=$((bad+1))
     [[ -n "${seen[$id]:-}" ]] && dups=$((dups+1))
     seen[$id]=1
@@ -229,11 +231,11 @@ b_unit="$(
   echo "$n $dups $bad"
 )"
 read -r bu_n bu_dups bu_bad <<<"$b_unit"
-note "bash _mint_run_id: $bu_n ids back-to-back, $bu_dups duplicate(s), $bu_bad bad-format"
+note "typed run-record create: $bu_n ids back-to-back, $bu_dups duplicate(s), $bu_bad bad-format"
 if [[ "$bu_dups" -eq 0 && "$bu_bad" -eq 0 ]]; then
-  pass "bash mint (#20): $bu_n back-to-back ids all DISTINCT and SAFE_RUN_ID_RE-valid (epoch-millis+random)"
+  pass "typed mint (#20): $bu_n back-to-back ids all DISTINCT and SAFE_RUN_ID_RE-valid (epoch-millis+random)"
 else
-  fail "bash mint (#20): $bu_dups duplicate(s) / $bu_bad bad-format among $bu_n ids"
+  fail "typed mint (#20): $bu_dups duplicate(s) / $bu_bad bad-format among $bu_n ids"
 fi
 
 # B1b: two create-run calls IN THE SAME SECOND mint distinct ids AND distinct dirs on
@@ -334,10 +336,12 @@ fi
 WRITERS=4; BUMPS=8     # 4*8 = 32 expected
 c_ok=1
 for iter in 1 2; do   # two iterations to shake out timing
-  # metrics.sh derives METRICS_DIR from HOME ($HOME/.mentiko-metrics), so give each
-  # iteration a fresh HOME and read the counters file from that derived location.
+  # Keep each iteration isolated with an explicit metrics root. The typed runtime
+  # path contract prioritizes MENTIKO_GLOBAL_ROOT over HOME, so changing HOME alone
+  # would make the harness read a different file from the one the writers update.
   C_HOME="$TMP_ROOT/c-home-$iter"; mkdir -p "$C_HOME"
-  CF="$C_HOME/.mentiko-metrics/counters.json"
+  C_METRICS_DIR="$C_HOME/.mentiko-metrics"
+  CF="$C_METRICS_DIR/counters.json"
   # sampler: count instants where counters.json fails to parse (must stay 0 — integrity).
   parse_fail="$TMP_ROOT/c-parsefail-$iter"; : > "$parse_fail"
   (
@@ -349,6 +353,7 @@ for iter in 1 2; do   # two iterations to shake out timing
   for ((w=0; w<WRITERS; w++)); do
     (
       export HOME="$C_HOME"
+      export METRICS_DIR="$C_METRICS_DIR"
       source "$METRICS_LIB" >/dev/null 2>&1
       for ((b=0; b<BUMPS; b++)); do
         metric-counter "hammer" 1 >/dev/null 2>&1

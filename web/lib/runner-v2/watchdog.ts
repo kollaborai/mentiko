@@ -19,6 +19,11 @@ import type { AdapterOperation } from "@/lib/runner-v2/adapters";
 import { enqueueExternalEffectsOnce } from "@/lib/runner-v2/external-effects";
 import { withExclusiveFileClaim } from "@/lib/runner-v2/file-claim";
 import { shouldRecordTaskExecutionMetadata } from "@/lib/runs/run-provenance";
+import {
+  isTerminalAgentAttemptPhase,
+  readRunnerV2AttemptState,
+  releaseRunAgentCapacitySlots,
+} from "@/lib/runner-v2/agent-attempt";
 
 const RESUME_GRACE_MS = 120_000;
 const MISSING_SESSION_STARTUP_GRACE_MS = 10_000;
@@ -108,6 +113,7 @@ export interface TypedWatchdogScanResult {
   sessionsRemoved: string[];
   sessionRemovalFailures: string[];
   orphanSessionsRemoved: string[];
+  capacitySlotsReleased: number;
   externalEffectsQueued: number;
   hookDispatches: number;
   errors: string[];
@@ -157,6 +163,7 @@ export async function runTypedWatchdogScan(
     sessionsRemoved: [],
     sessionRemovalFailures: [],
     orphanSessionsRemoved: [],
+    capacitySlotsReleased: 0,
     externalEffectsQueued: 0,
     hookDispatches: 0,
     errors: [],
@@ -290,6 +297,25 @@ export async function runTypedWatchdogScan(
     }
   }
 
+  // Capacity is actual live-agent capacity, not a terminal status counter.
+  // Reconcile after cleanup with a fresh daemon snapshot and release only the
+  // slots whose exact agent PTY is proven absent. A transport failure keeps the
+  // slot held and fails closed.
+  try {
+    const currentSessions = await dependencies.transport.list();
+    for (const scopedRun of readScopedRuns(runsDir, result.errors)) {
+      const releasable = releasableCapacityAttemptIds(scopedRun.runJsonPath, scopedRun.run, currentSessions);
+      if (releasable.size === 0) continue;
+      result.capacitySlotsReleased += releaseRunAgentCapacitySlots({
+        runJsonPath: scopedRun.runJsonPath,
+        attemptIds: releasable,
+        now,
+      });
+    }
+  } catch (error) {
+    result.errors.push(`capacity cleanup skipped: ${errorMessage(error)}`);
+  }
+
   return result;
 }
 
@@ -413,7 +439,8 @@ function terminalizeIfStillStalled(
       status: "stopped",
       completed: current.completed || completedAt,
       status_message: `watchdog: ${currentAssessment.reason}`,
-      agents: current.agents.map((agent) => terminalAgentRecord(agent, completedAt)),
+      statusReason: { actor: "reaper", reason: currentAssessment.reason },
+      agents: current.agents.map((agent) => terminalAgentRecord(agent, completedAt, currentAssessment.reason)),
       runnerV2: {
         ...objectValue(current.runnerV2),
         watchdog: {
@@ -471,6 +498,9 @@ function rollbackWatchdogTerminalization(
       status_message: current.status_message === transition.run.status_message
         ? previous.status_message
         : current.status_message,
+      statusReason: JSON.stringify(current.statusReason) === JSON.stringify(transition.run.statusReason)
+        ? previous.statusReason
+        : current.statusReason,
       agents: current.agents.map((agent) => rollbackWatchdogAgent(agent, transition, previous)),
       runnerV2: Object.keys(nextRunnerV2).length > 0 ? nextRunnerV2 : undefined,
     };
@@ -491,6 +521,10 @@ function rollbackWatchdogAgent(
   if (current.completed === terminalized.completed) {
     if (previous.completed === undefined) delete next.completed;
     else next.completed = previous.completed;
+  }
+  if (JSON.stringify(current.statusReason) === JSON.stringify(terminalized.statusReason)) {
+    if (previous.statusReason === undefined) delete next.statusReason;
+    else next.statusReason = previous.statusReason;
   }
   return next;
 }
@@ -612,14 +646,24 @@ function markerAssessment(marker: WatchdogRunMarker): Extract<WatchdogRunAssessm
   };
 }
 
-function terminalAgentRecord(agent: RunAgentRecord, completedAt: string): RunAgentRecord {
+function terminalAgentRecord(agent: RunAgentRecord, completedAt: string, reason: string): RunAgentRecord {
   const status = stringValue(agent.status);
   if (ACTIVE_AGENT_STATUSES.has(status)) {
     const nextStatus = stringValue(agent.session) ? "stopped" : "cancelled";
-    return { ...agent, status: nextStatus, completed: agent.completed || completedAt };
+    return {
+      ...agent,
+      status: nextStatus,
+      completed: agent.completed || completedAt,
+      statusReason: { actor: "reaper", reason },
+    };
   }
   if (status === "pending") {
-    return { ...agent, status: "cancelled", completed: agent.completed || completedAt };
+    return {
+      ...agent,
+      status: "cancelled",
+      completed: agent.completed || completedAt,
+      statusReason: { actor: "reaper", reason },
+    };
   }
   return agent;
 }
@@ -765,6 +809,22 @@ function hasLiveRunSession(run: RunRecord, sessions: WatchdogSession[]): boolean
   }
   names.add(`monitor-${run.id}`);
   return sessions.some((session) => session.alive && names.has(session.name));
+}
+
+function releasableCapacityAttemptIds(
+  runJsonPath: string,
+  run: RunRecord,
+  sessions: WatchdogSession[],
+): Set<string> {
+  const live = new Set(sessions.filter((session) => session.alive).map((session) => session.name));
+  const agentSessionById = new Map((run.agents || []).map((agent) => [agent.id, agent.session]));
+  const runTerminal = TERMINAL_RUN_STATUSES.has(String(run.status)) || run.status === "blocked";
+  return new Set(readRunnerV2AttemptState(runJsonPath).attempts.flatMap((attempt) => {
+    if (!attempt.capacitySlotAcquiredAt || attempt.capacitySlotReleasedAt) return [];
+    if (!runTerminal && !isTerminalAgentAttemptPhase(attempt.phase)) return [];
+    const sessionName = attempt.processEvidence?.ptySessionId || agentSessionById.get(attempt.agentId) || "";
+    return !sessionName || !live.has(sessionName) ? [attempt.id] : [];
+  }));
 }
 
 async function reapProvableScopedOrphans(

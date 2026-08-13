@@ -94,14 +94,16 @@ create-run() {
 # -------------------------------------------------------------------
 # update-run-status: update run status
 # -------------------------------------------------------------------
-# args: <run-id> <status> [status_message]
+# args: <run-id> <status> [status_message] [reason]
 update-run-status() {
     local run_id="$1"
     local status="$2"
     local status_message="${3:-}"
+    local reason="${4:-}"
 
     local args=(set-status --runs-dir "$RUNS_DIR" --run-id "$run_id" --status "$status")
     [[ -n "$status_message" ]] && args+=(--message "$status_message")
+    [[ -n "$reason" ]] && args+=(--reason "$reason")
     _run_record_cli "${args[@]}" >/dev/null
 }
 
@@ -126,17 +128,16 @@ add-run-session() {
 # -------------------------------------------------------------------
 # update-run-agent: update agent status within run
 # -------------------------------------------------------------------
-# args: <run-id> <agent-id> <status>
+# args: <run-id> <agent-id> <status> [reason]
 update-run-agent() {
     local run_id="$1"
     local agent_id="$2"
     local status="$3"
+    local reason="${4:-}"
 
-    _run_record_cli set-agent-status \
-        --runs-dir "$RUNS_DIR" \
-        --run-id "$run_id" \
-        --agent-id "$agent_id" \
-        --status "$status" >/dev/null
+    local args=(set-agent-status --runs-dir "$RUNS_DIR" --run-id "$run_id" --agent-id "$agent_id" --status "$status")
+    [[ -n "$reason" ]] && args+=(--reason "$reason")
+    _run_record_cli "${args[@]}" >/dev/null
 }
 
 # -------------------------------------------------------------------

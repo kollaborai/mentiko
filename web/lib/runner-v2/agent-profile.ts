@@ -96,13 +96,35 @@ export function loadAgentProfile(profilePath: string): Omit<ResolvedAgentProfile
 
 export function buildAgentProfileCommand(input: ProfileCommandInput): string {
   const { profile } = loadAgentProfile(input.profilePath);
-  const envFile = writeProfileEnvFile(profile, input.namespaceId, input.orgId);
   const model = input.modelOverride ?? (input.purpose === "relay" ? profile.relay_model ?? profile.model : profile.model);
+  const codex = profile.cli === "codex";
+  // Validate every configured argv fragment before creating private env or MCP
+  // files. Invalid profile syntax must fail without leaving launch artifacts.
+  const configuredPipeArgs = input.interactive || !profile.pipe_flag
+    ? []
+    : splitProfileArgumentString(profile.pipe_flag, "pipe_flag");
+  // `exec` is a subcommand, not a pipe-mode flag. Older Codex profiles stored
+  // it in pipe_flag, which is omitted for PTY launches and would also be
+  // duplicated once the Codex automation command is generated here.
+  const pipeArgs = codex
+    ? configuredPipeArgs.filter((argument) => argument !== "exec")
+    : configuredPipeArgs;
+  const permissionArgs = resolveProfilePermissionArgs(profile.cli, profile.permission_flag);
+  const envFile = writeProfileEnvFile(profile, input.namespaceId, input.orgId);
   const mentikoMcp = profile.cli === "claude" ? createClaudeMentikoMcpConfig(process.env) : undefined;
+  const codexArgs = codex
+    ? [
+        "exec",
+        "-c",
+        "check_for_update_on_startup=false",
+        "--dangerously-bypass-hook-trust",
+      ]
+    : [];
   const args = [
     profile.cli,
-    ...(input.interactive || !profile.pipe_flag ? [] : splitProfileArgumentString(profile.pipe_flag, "pipe_flag")),
-    ...resolveProfilePermissionArgs(profile.cli, profile.permission_flag),
+    ...codexArgs,
+    ...pipeArgs,
+    ...permissionArgs,
     ...(model ? ["--model", model] : []),
     ...(profile.extra_args ?? []),
     // `--strict-mcp-config` prevents an old user-level `mentiko` entry from
@@ -114,9 +136,32 @@ export function buildAgentProfileCommand(input: ProfileCommandInput): string {
     envFile ? `source ${shellQuote(envFile)}; rm -f ${shellQuote(envFile)}; rmdir ${shellQuote(dirname(envFile))} 2>/dev/null || true` : "",
     envFile && !Object.hasOwn(profile.env ?? {}, "ANTHROPIC_API_KEY") ? "unset ANTHROPIC_API_KEY" : "",
     profile.pre_exec ?? "",
+    ...(codex ? [buildCodexSetup()] : []),
     command,
   ].filter(Boolean);
   return setup.join("; ");
+}
+
+/**
+ * Give each Codex invocation a disposable config home. Codex reads trust and
+ * update settings before `exec` can consume the runner's stdin, while auth is
+ * still needed for OAuth-backed profiles. Copying only auth.json preserves the
+ * credential without allowing a user's config/plugins to affect this run.
+ */
+function buildCodexSetup(): string {
+  return [
+    // Capture the caller's auth location before replacing CODEX_HOME.
+    `MENTIKO_CODEX_AUTH_HOME="\${CODEX_HOME:-\$HOME/.codex}"`,
+    `CODEX_HOME="$(mktemp -d "\${TMPDIR:-/tmp}/mentiko-codex-home.XXXXXX")"`,
+    "export CODEX_HOME",
+    `if [ -f "$MENTIKO_CODEX_AUTH_HOME/auth.json" ]; then cp "$MENTIKO_CODEX_AUTH_HOME/auth.json" "$CODEX_HOME/auth.json"; chmod 600 "$CODEX_HOME/auth.json"; fi`,
+    // Codex uses the absolute project path as the TOML table key. Escape
+    // backslashes and double quotes before writing a basic-string key.
+    String.raw`MENTIKO_CODEX_PROJECT="$(pwd -P)"`,
+    String.raw`MENTIKO_CODEX_PROJECT_KEY="$(printf '%s' "$MENTIKO_CODEX_PROJECT" | sed 's/\\/\\\\/g; s/"/\\"/g')"`,
+    `printf 'check_for_update_on_startup = false\\n[projects."%s"]\\ntrust_level = "trusted"\\n' "$MENTIKO_CODEX_PROJECT_KEY" > "$CODEX_HOME/config.toml"`,
+    `trap 'rm -rf "$CODEX_HOME"' EXIT`,
+  ].join("; ");
 }
 
 export function profileTranscriptConfig(profilePath: string): { cli: string; logPath?: string } {

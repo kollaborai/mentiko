@@ -68,6 +68,20 @@ describe("monitor-io — verifiable adapter core", () => {
       expect(findCompletionEventFile({ eventsDir: dir, runId: "run-1", agentId: "writer", expectedEvent: "draft", sessionName: "writer-run-1" })).toBe("run-1-writer-draft.event");
     });
 
+    it("matches when the declared emits carries incidental whitespace (the parser trims field values, so we must too)", () => {
+      const dir = tempDir();
+      seedEvent(dir, "run-1-writer-draft.event", { event: "draft", source: "writer-run-1", run_id: "run-1", processed: "false" });
+      // A chain.json `emits` of "draft " used to silently never match the parsed
+      // event name "draft", hanging the run forever with no error surfaced.
+      expect(findCompletionEventFile({ eventsDir: dir, runId: "run-1", agentId: "writer", expectedEvent: "  draft  ", sessionName: "writer-run-1" })).toBe("run-1-writer-draft.event");
+    });
+
+    it("treats a whitespace-only emits as no declared event rather than matching nothing forever", () => {
+      const dir = tempDir();
+      seedEvent(dir, "run-1-writer-draft.event", { event: "draft", source: "writer-run-1", run_id: "run-1", processed: "false" });
+      expect(findCompletionEventFile({ eventsDir: dir, runId: "run-1", agentId: "writer", expectedEvent: "   ", sessionName: "writer-run-1" })).toBe("");
+    });
+
     it("does NOT match on the bare agent id alone when the event source is session-name-shaped and no sessionName is supplied (fail-closed, not a substring fallback)", () => {
       const dir = tempDir();
       seedEvent(dir, "e.event", { event: "draft", source: "writer-run-1", run_id: "run-1", processed: "false" });

@@ -129,7 +129,8 @@ export async function runTypedDirect(options: DirectRunOptions): Promise<DirectR
     chainName, workspacePath, taskId: options.taskId, debug: options.debug, logFd: 2, cwd: workspacePath || process.cwd(), env: { ...env, ...taskEnv },
   });
   if (launch.support === "unsupported") {
-    updateRunStatus(join(runDir, "run.json"), "failed", `typed direct launch failed: ${launch.reason}`);
+    updateRunStatus(join(runDir, "run.json"), "failed", `typed direct launch failed: ${launch.reason}`, undefined, undefined, undefined,
+      { actor: "system", reason: `typed direct launch failed: ${launch.reason}` });
     throw new Error(launch.reason);
   }
   return { runId: run.id, runDir, agentId: selected.id, launch };
@@ -144,5 +145,10 @@ async function loadTypedTaskContext(taskId: string, env: NodeJS.ProcessEnv): Pro
     namespaceId: env.NAMESPACE_ID || "default",
     orgId: env.ORG_ID || "default",
   });
-  return taskContextEnvironment(context);
+  return taskContextEnvironment(context, {
+    namespaceId: env.NAMESPACE_ID || "default",
+    orgId: env.ORG_ID || "default",
+    sourceRunId: env.MENTIKO_RUN_ID || undefined,
+    chainId: env.MENTIKO_CHAIN_ID || undefined,
+  });
 }

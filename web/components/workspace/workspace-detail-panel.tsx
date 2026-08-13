@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { unwrapApiData } from "@/lib/api/api-client";
 import { DetailHeader } from "@/components/ui/detail-header";
 import { WorkspaceOverview } from "@/components/workspace/workspace-overview";
 import { WorkspaceTerminal } from "@/components/workspace/workspace-terminal";
@@ -39,18 +40,27 @@ export function WorkspaceDetailPanel({
   const { fetchWithNamespace } = useNamespaceFetch();
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<"missing" | "failed" | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>("overview");
 
   const loadWorkspace = useCallback(async () => {
     setLoading(true);
+    setWorkspace(null);
+    setLoadError(null);
     try {
       const res = await fetchWithNamespace(`/api/workspaces/${encodeURIComponent(workspaceId)}`);
-      if (res.ok) {
-        const data = await res.json() as { workspace?: Workspace };
-        setWorkspace(data.workspace ?? null);
+      if (!res.ok) {
+        setLoadError(res.status === 404 ? "missing" : "failed");
+        return;
+      }
+      const data = unwrapApiData<{ workspace?: Workspace }>(await res.json());
+      if (data.workspace) {
+        setWorkspace(data.workspace);
+      } else {
+        setLoadError("missing");
       }
     } catch {
-      // ignore
+      setLoadError("failed");
     } finally {
       setLoading(false);
     }
@@ -69,15 +79,31 @@ export function WorkspaceDetailPanel({
   }
 
   if (!workspace) {
+    const missing = loadError === "missing";
     return (
       <div className="flex flex-col items-center justify-center h-full gap-3">
-        <p className="text-sm text-foreground/40">workspace not found</p>
+        <p className="text-sm text-foreground/60">
+          {missing ? "Workspace not found" : "Could not load workspace"}
+        </p>
+        <p className="max-w-sm text-center text-xs text-foreground/40">
+          {missing
+            ? "It may have been removed. Choose another workspace or create a new one."
+            : "The workspace could not be loaded. Try again or choose another workspace."}
+        </p>
+        {!missing && (
+          <button
+            onClick={loadWorkspace}
+            className="text-xs text-foreground/50 hover:text-foreground transition-colors"
+          >
+            retry
+          </button>
+        )}
         {onBack && (
           <button
             onClick={onBack}
             className="text-xs text-foreground/50 hover:text-foreground transition-colors"
           >
-            back to list
+            back to workspaces
           </button>
         )}
       </div>

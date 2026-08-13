@@ -245,4 +245,6 @@ export interface Decision {
   parentTaskId?: string;
   /** workspace path that scopes this decision (undefined = legacy namespace-level) */
   workspacePath?: string;
+  /** transient API marker for a dead research pointer; never persisted */
+  researchRecovery?: "dead";
 }

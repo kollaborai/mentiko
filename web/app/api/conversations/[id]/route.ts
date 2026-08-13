@@ -1,9 +1,13 @@
 import { NextRequest } from "next/server";
-import { createReadStream, writeFileSync, unlinkSync, existsSync } from "fs";
+import { createReadStream, writeFileSync, unlinkSync, existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { createInterface } from "readline";
 import { checkAuth } from "@/lib/auth/api-auth";
 import { resolveLogDir } from "@/lib/runs/session-log-resolver";
+import { resolveAgentWorkspacePaths } from "@/lib/runs/agent-workspace-resolver";
+import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
+import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
+import { checkRunAccess } from "@/lib/auth/run-acl";
 import { NotFound, BadRequest, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 
@@ -28,8 +32,8 @@ function parseProviderList(raw: string | null): string[] {
   return providers.length ? providers : ["codex", "claude-code"];
 }
 
-function resolveLogDirs(cwd: string, cli: string | null): string[] {
-  const rawInputs = uniqueArray([cwd || process.cwd(), process.cwd()]);
+function resolveLogDirs(cwds: string[], cli: string | null): string[] {
+  const rawInputs = uniqueArray([...cwds, process.cwd()]);
   const providers = uniqueArray(parseProviderList(cli));
   const dirs: string[] = [];
   for (const input of rawInputs) {
@@ -42,13 +46,52 @@ function resolveLogDirs(cwd: string, cli: string | null): string[] {
   return dirs;
 }
 
-function resolveConversationPath(cwd: string, id: string, cli: string | null): string | null {
-  const logDirs = resolveLogDirs(cwd, cli);
+function resolveConversationPath(cwds: string[], id: string, cli: string | null): string | null {
+  const logDirs = resolveLogDirs(cwds, cli);
   for (const dir of logDirs) {
     const candidate = join(dir, `${id}.jsonl`);
     if (existsSync(candidate)) return candidate;
   }
   return null;
+}
+
+type ConversationRunContext = {
+  workspacePath?: string;
+};
+
+function readRunContext(path: string): ConversationRunContext | null {
+  try {
+    return JSON.parse(readFileSync(path, "utf8")) as ConversationRunContext;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveConversationWorkspacePaths(
+  request: NextRequest,
+  cwd: string,
+): Promise<string[]> {
+  const searchParams = new URL(request.url).searchParams;
+  const runId = searchParams.get("runId");
+  const agentId = searchParams.get("agentId");
+  if (!runId || !agentId) return [cwd];
+
+  const namespaceId = await getNamespaceIdFromRequest(request);
+  const orgId = await getOrgIdFromRequest(request);
+  const runsDir = resolveLinkRunsDir(namespaceId, orgId);
+  const acl = await checkRunAccess(request, runId, runsDir);
+  if (!acl.ok) {
+    if (acl.reason === "run-not-found") throw new NotFound("Run", runId);
+    throw new Unauthorized();
+  }
+
+  const runDir = join(runsDir, runId);
+  const runContext = readRunContext(join(runDir, "run.json"));
+  return resolveAgentWorkspacePaths(
+    join(runDir, "artifacts"),
+    agentId,
+    runContext?.workspacePath || cwd,
+  );
 }
 
 function extractConversationContent(entry: Record<string, unknown>): unknown {
@@ -278,7 +321,8 @@ export const GET = withErrorHandling(async (
   const offset = parseInt(searchParams.get("offset") || "0", 10);
   const limit = parseInt(searchParams.get("limit") || "50", 10);
 
-  const filePath = resolveConversationPath(cwd, id, cli);
+  const workspacePaths = await resolveConversationWorkspacePaths(request, cwd);
+  const filePath = resolveConversationPath(workspacePaths, id, cli);
   if (!filePath) {
     throw new NotFound("Conversation", id);
   }
@@ -312,7 +356,8 @@ export const PUT = withErrorHandling(async (
     throw new BadRequest("slug is required", { field: "slug" });
   }
 
-  const filePath = resolveConversationPath(cwd, id, cli);
+  const workspacePaths = await resolveConversationWorkspacePaths(request, cwd);
+  const filePath = resolveConversationPath(workspacePaths, id, cli);
 
   if (!filePath || !existsSync(filePath)) {
     throw new NotFound("Conversation", id);
@@ -375,7 +420,8 @@ export const DELETE = withErrorHandling(async (
   const cwd = searchParams.get("cwd") || process.cwd();
   const cli = searchParams.get("cli");
 
-  const filePath = resolveConversationPath(cwd, id, cli);
+  const workspacePaths = await resolveConversationWorkspacePaths(request, cwd);
+  const filePath = resolveConversationPath(workspacePaths, id, cli);
 
   if (!filePath || !existsSync(filePath)) {
     throw new NotFound("Conversation", id);

@@ -32,6 +32,12 @@ export function stoppedBackgroundWorkerStatus(
     watchdog: statusFile?.watchdog
       ? { ...statusFile.watchdog, status: "stopped" }
       : undefined,
+    launchJobs: statusFile?.launchJobs
+      ? { ...statusFile.launchJobs, status: "stopped" }
+      : undefined,
+    workspaceCleanups: statusFile?.workspaceCleanups
+      ? { ...statusFile.workspaceCleanups, status: "stopped" }
+      : undefined,
     note: note || statusFile?.note,
   };
 }

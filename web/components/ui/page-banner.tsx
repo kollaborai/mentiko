@@ -19,6 +19,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { EntityHoverCard, hasRouteMeta } from "@/components/ui/entity-hover-card";
+import { PageBannerMist } from "@/components/ui/page-banner-mist";
 
 const VECTORS: ComponentType<{ size?: number }>[] = [
   Abstract106Shapes,
@@ -202,24 +203,39 @@ export function PageBanner({
   // if icon provided, use it as watermark; otherwise fall back to abstract vectors
   const WatermarkIcon = icon ?? VECTORS[hashString(title, 7) % VECTORS.length];
 
+  // Standard banners get the restrained electric effect automatically. Custom
+  // backgrounds remain the page's single featured visual and can still opt in
+  // explicitly through watermarkFill when needed.
+  const resolvedWatermarkFill =
+    watermarkFill ??
+    (!background ? <PageBannerMist sectionColor={sectionColor} /> : undefined);
+  const hasWatermarkFill = !!resolvedWatermarkFill;
+  const watermarkFrameClass =
+    "relative h-[125%] aspect-square translate-x-[2%] overflow-visible";
+
   // watermarkFill mode: serialize the rendered icon to a data-URI mask so the
   // provided node (a shader, etc.) shows only through the icon's silhouette.
   const iconMeasureRef = useRef<HTMLDivElement>(null);
   const [iconMask, setIconMask] = useState<string>();
   useEffect(() => {
-    if (!watermarkFill) return;
-    const svg = iconMeasureRef.current?.querySelector("svg");
-    if (!svg) return;
-    const clone = svg.cloneNode(true) as SVGElement;
-    clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
-    clone.setAttribute("fill", "#000"); // opaque silhouette → clean alpha mask
-    const serialized = new XMLSerializer().serializeToString(clone);
-    setIconMask(`url("data:image/svg+xml,${encodeURIComponent(serialized)}")`);
-  }, [watermarkFill, title]);
+    if (!hasWatermarkFill) return;
+
+    const frameId = window.requestAnimationFrame(() => {
+      const svg = iconMeasureRef.current?.querySelector("svg");
+      if (!svg) return;
+      const clone = svg.cloneNode(true) as SVGElement;
+      clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+      clone.setAttribute("fill", "#000"); // opaque silhouette → clean alpha mask
+      const serialized = new XMLSerializer().serializeToString(clone);
+      setIconMask(`url("data:image/svg+xml,${encodeURIComponent(serialized)}")`);
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [hasWatermarkFill, title]);
 
   return (
     <div className={`shrink-0 ${background ? "" : "px-3 pt-3 pb-2 sm:px-4 sm:pt-4 sm:pb-3"}`}>
-      <div className={`relative bg-transparent overflow-hidden p-4 sm:p-6 ${background ? "min-h-[224px] flex flex-col justify-center" : "rounded-xl"}`}>
+      <div className={`relative bg-transparent overflow-visible p-4 sm:p-6 ${background ? "min-h-[224px] flex flex-col justify-center" : "rounded-xl"}`}>
         {/* custom full-bleed background — replaces default pattern + watermark when provided */}
         {background ? (
           <div className="absolute inset-0 pointer-events-none overflow-hidden">{background}</div>
@@ -258,7 +274,7 @@ export function PageBanner({
         )}
 
         {/* hidden measurer: renders the icon once so we can serialize it into a mask */}
-        {watermarkFill && (
+        {hasWatermarkFill && (
           <div ref={iconMeasureRef} className="absolute -z-10 opacity-0 pointer-events-none" aria-hidden>
             <WatermarkIcon size={400} />
           </div>
@@ -266,36 +282,41 @@ export function PageBanner({
 
         {/* watermark - right side, large and pushed to edge */}
         <div
-          className="absolute -right-4 top-0 bottom-0 w-2/5 hidden sm:flex items-center justify-end pointer-events-none"
-          style={{
-            mask: "linear-gradient(to right, transparent 10%, black 50%)",
-            WebkitMask: "linear-gradient(to right, transparent 10%, black 50%)",
-          }}
+          className="absolute right-0 top-0 bottom-0 w-2/5 hidden sm:flex items-center justify-end pointer-events-none overflow-visible"
         >
-          {watermarkFill && iconMask ? (
-            // the provided node shows only through the icon silhouette
-            <div
-              className="relative -mr-6 h-64 w-64"
-              style={{
-                maskImage: iconMask,
-                WebkitMaskImage: iconMask,
-                maskSize: "contain",
-                WebkitMaskSize: "contain",
-                maskRepeat: "no-repeat",
-                WebkitMaskRepeat: "no-repeat",
-                maskPosition: "center",
-                WebkitMaskPosition: "center",
-              }}
-            >
-              {watermarkFill}
+          {hasWatermarkFill && iconMask ? (
+            <div className={watermarkFrameClass}>
+              {/* The icon is its own overflow-visible layer. */}
+              <div
+                className="absolute inset-0 overflow-visible"
+                style={{ color: sectionColor || "#5b9ef5", opacity: 0.15 }}
+              >
+                <WatermarkIcon size={400} className="h-full w-full" />
+              </div>
+
+              {/* Only the mist is masked to the icon silhouette. */}
+              <div
+                className="absolute inset-0 overflow-visible"
+                style={{
+                  maskImage: iconMask,
+                  WebkitMaskImage: iconMask,
+                  maskSize: "contain",
+                  WebkitMaskSize: "contain",
+                  maskRepeat: "no-repeat",
+                  WebkitMaskRepeat: "no-repeat",
+                  maskPosition: "center",
+                  WebkitMaskPosition: "center",
+                }}
+              >
+                {resolvedWatermarkFill}
+              </div>
             </div>
           ) : (
-            <div className="-mr-6" style={{ color: sectionColor || "#5b9ef5", opacity: background ? 0.22 : 0.15 }}>
-              {isCustomIcon ? (
-                <WatermarkIcon size={400} className="h-64 w-64" />
-              ) : (
-                <WatermarkIcon size={400} />
-              )}
+            <div
+              className={watermarkFrameClass}
+              style={{ color: sectionColor || "#5b9ef5", opacity: background ? 0.22 : 0.15 }}
+            >
+              <WatermarkIcon size={400} className="h-full w-full" />
             </div>
           )}
         </div>

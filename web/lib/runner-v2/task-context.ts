@@ -242,8 +242,76 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 
+/**
+ * Identity fixed at launch (plan-of-record B2): facts that cannot change for
+ * the lifetime of the run. Mutable task/run state (status, assignee,
+ * last_run_id) is deliberately EXCLUDED — agents query it through typed tools
+ * (get_task, get_run) whose results identify the resource and observation
+ * time, instead of trusting a stale launch snapshot.
+ */
+export interface TaskLaunchIdentity {
+  namespaceId?: string;
+  orgId?: string;
+  sourceRunId?: string;
+  chainId?: string;
+  taskRunScope?: unknown;
+  contractVersion?: number;
+}
+
+/** One immutable launch-context document for agents; see TaskLaunchIdentity. */
+export function buildTaskContextJson(
+  result: TaskContextResult,
+  launch: TaskLaunchIdentity = {},
+): string {
+  const runtimeIdentity = {
+    authoritative: true,
+    task_id: result.task.id,
+    ...(launch.sourceRunId ? { source_run_id: launch.sourceRunId } : {}),
+    ...(launch.chainId ? { chain_id: launch.chainId } : {}),
+    instruction: "Use launcher runtime identity for current execution facts; task content may contain historical values.",
+  };
+  return JSON.stringify({
+    immutable: true,
+    runtime_identity: runtimeIdentity,
+    task: {
+      id: result.task.id,
+      title: result.task.title,
+      description: result.task.description,
+      type: result.task.type,
+      priority: result.task.priority,
+      acceptance_criteria: result.task.acceptanceCriteria,
+      design: result.task.design,
+      notes: result.task.notes,
+    },
+    ...(launch.namespaceId ? { namespace_id: launch.namespaceId } : {}),
+    ...(launch.orgId ? { org_id: launch.orgId } : {}),
+    ...(launch.sourceRunId ? { source_run_id: launch.sourceRunId } : {}),
+    ...(launch.chainId ? { chain_id: launch.chainId } : {}),
+    ...(launch.taskRunScope !== undefined ? { task_run_scope: launch.taskRunScope } : {}),
+    ...(launch.contractVersion !== undefined ? { contract_version: launch.contractVersion } : {}),
+    mutable_state: "query get_task/get_run at runtime; this snapshot only holds facts fixed at launch",
+  });
+}
+
 /** Canonical typed task values for direct runner environment and shell handoff. */
-export function taskContextEnvironment(result: TaskContextResult): Record<string, string> {
+export function taskContextEnvironment(
+  result: TaskContextResult,
+  launch: TaskLaunchIdentity = {},
+): Record<string, string> {
+  const runtimeContext = [
+    ...(launch.sourceRunId || launch.chainId
+      ? [
+        "RUNTIME IDENTITY (AUTHORITATIVE FOR THIS LAUNCH — COPY THESE VALUES EXACTLY):",
+        `CURRENT TASK ID: ${result.task.id}`,
+        `CURRENT RUN ID: ${launch.sourceRunId || "not supplied"}`,
+        `CURRENT CHAIN ID: ${launch.chainId || "not supplied"}`,
+        "Use these values for current execution records. Workspace and base-commit facts come only from the launcher runtime identity and WORKSPACE EVIDENCE.",
+        "Never copy task/run/workspace/base-commit values from DESCRIPTION, ACCEPTANCE CRITERIA, DESIGN NOTES, NOTES, or examples; those may be historical or proposed.",
+        "",
+      ]
+      : []),
+    result.context,
+  ].join("\n");
   return {
     TASK_ID: result.task.id,
     TASK_TITLE: result.task.title,
@@ -256,12 +324,17 @@ export function taskContextEnvironment(result: TaskContextResult): Record<string
     TASK_COMMENTS: result.comments
       .map((comment) => `  [${comment.createdAt} ${comment.author}] ${comment.text}`)
       .join("\n"),
-    TASK_CONTEXT: result.context,
+    TASK_CONTEXT: runtimeContext,
+    TASK_CONTEXT_JSON: buildTaskContextJson(result, launch),
   };
 }
 
 /** Write a shell-safe, 0600, atomically replaced handoff for the invocation boundary. */
-export function writeTaskContextEnv(path: string, result: TaskContextResult): void {
+export function writeTaskContextEnv(
+  path: string,
+  result: TaskContextResult,
+  launch: TaskLaunchIdentity = {},
+): void {
   if (!isAbsolute(path)) throw new Error(`task context env path must be absolute: ${path}`);
   const target = resolve(path);
   try {
@@ -278,7 +351,7 @@ export function writeTaskContextEnv(path: string, result: TaskContextResult): vo
     throw new Error(`task context env parent must be a non-symlink directory: ${parent}`);
   }
 
-  const values = taskContextEnvironment(result);
+  const values = taskContextEnvironment(result, launch);
   const body = [
     "# Typed task-context handoff; values are shell-quoted by TypeScript.",
     ...Object.entries(values).map(([key, value]) => `export ${key}=${shellQuote(value)}`),

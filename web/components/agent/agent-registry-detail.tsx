@@ -53,7 +53,7 @@ function BentoCard({
   rowSpan = 1,
 }: {
   title: string;
-  icon: React.ElementType;
+  icon: React.ComponentType<{ className?: string }>;
   children: React.ReactNode;
   className?: string;
   colSpan?: 1 | 2;
@@ -87,7 +87,7 @@ function StatCard({
 }: {
   label: string;
   value: React.ReactNode;
-  icon: React.ElementType;
+  icon: React.ComponentType<{ className?: string }>;
   color?: string;
 }) {
   return (

@@ -3,6 +3,16 @@
  * Verifies that workspace_id is passed to taskCreate when workspacePath
  * is provided in the request body. This prevents MCP-created tasks from
  * being invisible in the /tasks UI (which filters by workspace_id).
+ *
+ * As of chain-contract Track C, POST is a thin adapter over
+ * lib/tasks/task-creation-service.ts (the same service the UI producer
+ * uses). These tests still mock the SERVICE's dependencies (task-store,
+ * task-decision-link, workspace-auth), not the service itself -- Jest's
+ * module-path mocking is transitive, so every assertion below proves the
+ * exact same end-to-end behavior (what taskCreate/createTaskDecision are
+ * actually called with) as before the refactor. New tests cover what
+ * Track C added: auto_run/chain_id parity with the UI producer, and
+ * idempotency-key / agent-context passthrough.
  */
 
 // mock next/server BEFORE importing route (jsdom has no Request global)
@@ -50,6 +60,9 @@ jest.mock("@/lib/tasks/task-store", () => ({
     issue_type: "decision",
     metadata: { decision_id: "dec-uuid-1" },
   }),
+  _getDb: jest.fn().mockReturnValue({
+    prepare: () => ({ get: () => undefined }),
+  }),
 }));
 
 // decision creation is delegated to this helper (same path as generate mode:decision)
@@ -68,10 +81,25 @@ jest.mock("@/lib/auth/workspace-auth", () => ({
   )),
 }));
 
+// Explicit (previously-implicit-via-real-fallback) mocks for auto-run policy
+// and chain validation -- deterministic and hermetic instead of relying on
+// resolveTaskAutoRunPolicy's real fs-backed fallback degrading to "unscoped".
+jest.mock("@/lib/tasks/task-auto-run-default", () => ({
+  resolveTaskAutoRunPolicy: jest.fn().mockReturnValue({ enabled: false, source: "unscoped" }),
+}));
+jest.mock("@/lib/chains/chain-validation", () => ({
+  validateChainId: jest.fn().mockReturnValue({ valid: true, chainName: "Build Chain" }),
+  buildChainMetadata: jest.fn((chainId: string, chainName: string, autoRun: boolean) => ({
+    chainBinding: { chain_id: chainId, chain_name: chainName, auto_run: autoRun },
+  })),
+}));
+
 import { POST } from "./route";
-import { taskCreate, taskUpdate } from "@/lib/tasks/task-store";
+import { taskCreate, taskUpdate, taskGet, _getDb } from "@/lib/tasks/task-store";
 import { createTaskDecision } from "@/lib/tasks/task-decision-link";
 import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
+import { resolveTaskAutoRunPolicy } from "@/lib/tasks/task-auto-run-default";
+import { validateChainId, buildChainMetadata } from "@/lib/chains/chain-validation";
 
 function makeRequest(body: Record<string, unknown>): Request {
   return {
@@ -95,6 +123,14 @@ describe("POST /api/mentiko-mcp/ops/tasks", () => {
       workspace_id: null,
       status: "open",
     });
+    (resolveAuthorizedWorkspacePath as jest.Mock).mockImplementation((_ns, _org, workspacePath) => (
+      workspacePath === "/workspace/path" || workspacePath === "/home/user/my-project"
+        ? workspacePath
+        : undefined
+    ));
+    (resolveTaskAutoRunPolicy as jest.Mock).mockReturnValue({ enabled: false, source: "unscoped" });
+    (validateChainId as jest.Mock).mockReturnValue({ valid: true, chainName: "Build Chain" });
+    (_getDb as jest.Mock).mockReturnValue({ prepare: () => ({ get: () => undefined }) });
   });
 
   test("creates task WITHOUT workspace_id when workspacePath is not provided", async () => {
@@ -210,8 +246,105 @@ describe("POST /api/mentiko-mcp/ops/tasks", () => {
       priority: 2,
     });
 
-    // response surfaces the decision link
+    // response surfaces the decision link (top-level, back-compat) and creation.decision
     const body = await res.json();
     expect(body).toMatchObject({ routedTo: "decision", decisionId: "dec-uuid-1" });
+    expect(body.creation).toMatchObject({ decision: { decisionId: "dec-uuid-1", routedTo: "decision" } });
+  });
+
+  // --- Track C additions: producer parity with the UI's chainAssignment ---
+
+  test("accepts auto_run and reports the effective policy in creation.effectiveAutoRun (C3 parity)", async () => {
+    (resolveTaskAutoRunPolicy as jest.Mock).mockReturnValue({ enabled: true, source: "explicit" });
+    const req = makeRequest({ subject: "auto-run me", autoRun: true });
+    const res = await POST(req);
+
+    expect(resolveTaskAutoRunPolicy).toHaveBeenCalledWith({
+      namespaceId: "default",
+      orgId: "default",
+      workspacePath: undefined,
+      explicitAutoRun: true,
+    });
+    const callArgs = (taskCreate as jest.Mock).mock.calls[0];
+    expect(callArgs[1].metadata).toMatchObject({ auto_run: true });
+
+    const body = await res.json();
+    expect(body.creation).toMatchObject({ effectiveAutoRun: { enabled: true, source: "explicit" } });
+  });
+
+  test("accepts chain_id/chain_name and stamps chain-binding metadata (C5 parity: chain binding metadata)", async () => {
+    (resolveTaskAutoRunPolicy as jest.Mock).mockReturnValue({ enabled: true, source: "explicit" });
+    const req = makeRequest({ subject: "bind me", chainId: "build-chain", chainName: "Build Chain", autoRun: true });
+    const res = await POST(req);
+
+    expect(validateChainId).toHaveBeenCalledWith("build-chain", "default", "default");
+    expect(buildChainMetadata).toHaveBeenCalledWith("build-chain", "Build Chain", true);
+    const callArgs = (taskCreate as jest.Mock).mock.calls[0];
+    expect(callArgs[1].metadata).toMatchObject({
+      chainBinding: { chain_id: "build-chain", chain_name: "Build Chain", auto_run: true },
+    });
+
+    const body = await res.json();
+    expect(body.creation.chainBinding).toEqual({ chainId: "build-chain", chainName: "Build Chain" });
+  });
+
+  test("assignee stays a plain human/user string end to end (C4/C5: user assignee)", async () => {
+    const req = makeRequest({ subject: "assign me", assignee: "marco" });
+    await POST(req);
+    const callArgs = (taskCreate as jest.Mock).mock.calls[0];
+    expect(callArgs[1].assignee).toBe("marco");
+  });
+
+  test("idempotencyKey replay returns the existing task instead of creating a duplicate (C5: same idempotency key replay)", async () => {
+    let queued: { id: string } | undefined;
+    (_getDb as jest.Mock).mockReturnValue({ prepare: () => ({ get: () => queued }) });
+
+    queued = undefined;
+    const first = await POST(makeRequest({ subject: "double submit", idempotencyKey: "req-abc" }));
+    expect((first as unknown as { status: number }).status).toBe(200);
+    expect(taskCreate).toHaveBeenCalledTimes(1);
+    const firstBody = await first.json();
+    expect(firstBody.creation.outcome).toBe("created");
+
+    queued = { id: "task-created-1" };
+    (taskGet as jest.Mock).mockReturnValueOnce({ id: "task-created-1", title: "double submit", status: "open" });
+    const second = await POST(makeRequest({ subject: "double submit", idempotencyKey: "req-abc" }));
+    expect(taskCreate).toHaveBeenCalledTimes(1); // no second insert
+    const secondBody = await second.json();
+    expect(secondBody.creation.outcome).toBe("existing");
+    expect(secondBody.task.id).toBe("task-created-1");
+  });
+
+  test("derives a stable key from sourceRunId+creatingAgent+logicalKey+parentId for agent-created children", async () => {
+    const req = makeRequest({
+      subject: "child of a run",
+      parentId: "parent-task-123",
+      workspacePath: "/workspace/path",
+      logicalKey: "smoke-test-child",
+      sourceRunId: "run-42",
+      creatingAgent: "agent-3",
+    });
+    await POST(req);
+    const callArgs = (taskCreate as jest.Mock).mock.calls[0];
+    expect(typeof callArgs[1].metadata?.idempotency_key).toBe("string");
+  });
+
+  test("the same logicalKey from a different sourceRunId is NOT treated as a replay (C5: different source run)", async () => {
+    (_getDb as jest.Mock).mockReturnValue({ prepare: () => ({ get: () => undefined }) });
+
+    await POST(makeRequest({
+      subject: "child A", parentId: "parent-task-123", logicalKey: "smoke-test-child",
+      sourceRunId: "run-1", creatingAgent: "agent-3",
+    }));
+    const firstKey = (taskCreate as jest.Mock).mock.calls[0][1].metadata.idempotency_key;
+
+    await POST(makeRequest({
+      subject: "child B", parentId: "parent-task-123", logicalKey: "smoke-test-child",
+      sourceRunId: "run-2", creatingAgent: "agent-3",
+    }));
+    const secondKey = (taskCreate as jest.Mock).mock.calls[1][1].metadata.idempotency_key;
+
+    expect(firstKey).not.toBe(secondKey);
+    expect(taskCreate).toHaveBeenCalledTimes(2);
   });
 });

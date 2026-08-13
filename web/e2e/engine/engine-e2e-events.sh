@@ -482,29 +482,36 @@ JSON
 # events dir is empty of any 'worker' event — this is the no-event precondition.
 # Run the REAL completion handler with the run-scoped env the engine exports.
 C_LOG="$TMP_ROOT/c-complete.log"
-C_CONTEXT="$({
-  cd "$REPO_ROOT/web"
-  MENTIKO_RUN_ID="$C_RUN_ID" RUN_ID="$C_RUN_ID" MENTIKO_RUN_DIR="$C_RUN_DIR" \
-    EVENTS_DIR="$EVENTS_DIR_LIVE" STATE_DIR="$STATE_DIR_LIVE" MENTIKO_CODE_ROOT="$REPO_ROOT" \
-    MENTIKO_RUNNER_V2=1 MENTIKO_RUNNER_V2_COMPLETION=1 \
-    node - <<'NODE'
-const { resolve } = require("path");
-process.env.TS_NODE_COMPILER_OPTIONS = JSON.stringify({
-  module: "commonjs",
-  moduleResolution: "node",
-  baseUrl: ".",
-});
-require("ts-node/register/transpile-only");
-require("tsconfig-paths").register({ baseUrl: resolve(process.cwd()), paths: { "@/*": ["*"] } });
-const { createCompletionLaunchContext } = require("./lib/runner-v2/completion-launch-context");
-process.stdout.write(createCompletionLaunchContext(process.env).path);
-NODE
-})"
+REAL_TMP_DIR="$(node -e 'process.stdout.write(require("fs").realpathSync(require("os").tmpdir()))')"
+C_CONTEXT_DIR="$(mktemp -d "$REAL_TMP_DIR/mentiko-completion-context-XXXXXX")"
+chmod 700 "$C_CONTEXT_DIR"
+C_CONTEXT="$C_CONTEXT_DIR/context.json"
+jq -n \
+  --arg run_id "$C_RUN_ID" \
+  --arg run_dir "$C_RUN_DIR" \
+  --arg events_dir "$EVENTS_DIR_LIVE" \
+  --arg state_dir "$STATE_DIR_LIVE" \
+  --arg code_root "$REPO_ROOT" \
+  '{
+    version: 1,
+    env: {
+      MENTIKO_RUN_ID: $run_id,
+      RUN_ID: $run_id,
+      MENTIKO_RUN_DIR: $run_dir,
+      EVENTS_DIR: $events_dir,
+      STATE_DIR: $state_dir,
+      MENTIKO_CODE_ROOT: $code_root,
+      MENTIKO_RUNNER_V2: "1",
+      MENTIKO_RUNNER_V2_COMPLETION: "1"
+    }
+  }' >"$C_CONTEXT"
+chmod 600 "$C_CONTEXT"
 if [[ -n "$TIMEOUT_BIN" ]]; then
   "$TIMEOUT_BIN" 60 node "$REPO_ROOT/lib/runner-v2-complete.js" "$C_SESSION" "$C_CHAIN" "$C_CONTEXT" >"$C_LOG" 2>&1 || true
 else
   node "$REPO_ROOT/lib/runner-v2-complete.js" "$C_SESSION" "$C_CHAIN" "$C_CONTEXT" >"$C_LOG" 2>&1 || true
 fi
+rmdir "$C_CONTEXT_DIR" 2>/dev/null || true
 
 C_RUN_STATUS="$(jq -r '.status // "unknown"' "$C_RUN_DIR/run.json" 2>/dev/null)"
 C_AGENT_STATUS="$(agent_status "$C_RUN_DIR" worker)"

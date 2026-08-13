@@ -3,7 +3,7 @@
  */
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { TaskGenerateDialog } from "../task-generate-dialog";
+import { TaskGenerateDialog, unwrapGeneratedTaskResult } from "../task-generate-dialog";
 
 const mockFetchWithNamespace = jest.fn();
 const mockPush = jest.fn();
@@ -23,6 +23,50 @@ jest.mock("next/navigation", () => ({
 describe("TaskGenerateDialog", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+
+  it("unwraps the generation job output envelope into a task preview", () => {
+    expect(unwrapGeneratedTaskResult({
+      output: JSON.stringify({
+        route: "task",
+        task: { title: "Write the proof", type: "task", priority: 2 },
+      }),
+    })).toEqual({
+      task: { title: "Write the proof", type: "task", priority: 2 },
+    });
+  });
+
+  it("preserves the explicit decision-routing toggle value", async () => {
+    mockFetchWithNamespace.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        routedTo: "decision",
+        decisionId: "decision-disabled-toggle",
+      }),
+    });
+
+    render(
+      <TaskGenerateDialog
+        open
+        onClose={jest.fn()}
+        onCreate={jest.fn()}
+        workspacePath="/repo"
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /decision if warranted/i }));
+    fireEvent.change(screen.getByPlaceholderText(/describe what needs/i), {
+      target: { value: "create a concrete task" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /generate task/i }));
+
+    await waitFor(() => {
+      expect(mockFetchWithNamespace).toHaveBeenCalledWith(
+        "/api/tasks/generate",
+        expect.objectContaining({
+          body: expect.stringContaining('"sendToDecisionIfWarranted":false'),
+        }),
+      );
+    });
   });
 
   it("prefills a starter prompt without submitting it", () => {

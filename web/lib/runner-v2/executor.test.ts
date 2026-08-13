@@ -527,12 +527,16 @@ describe("runner-v2 typed executor plan", () => {
             fanInAgent: "merge",
             waitFor: "all",
             onError: "recover",
+            workspacePath: "/workspace",
           },
         },
       ],
       launches: [
-        { kind: "fan-out", env: { AGENT_FAN_GROUP_ID: "draft-ready-fixed", AGENT_FAN_GROUP_AGENT_ID: "designer" } },
-        { kind: "fan-out", env: { AGENT_FAN_GROUP_ID: "draft-ready-fixed", AGENT_FAN_GROUP_AGENT_ID: "editor" } },
+        {
+          kind: "fan-out",
+          agentIds: ["designer", "editor"],
+          env: { AGENT_FAN_GROUP_ID: "draft-ready-fixed" },
+        },
       ],
     });
   });

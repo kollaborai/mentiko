@@ -9,6 +9,7 @@ import type { NextRequest } from "next/server";
 import { GET } from "@/app/api/conversations/find-by-agent/route";
 
 const mockResolveLogDir = jest.fn();
+let mockRunsRoot = "";
 
 jest.mock("@/lib/runs/session-log-resolver", () => ({
   resolveLogDir: (...args: string[]) => mockResolveLogDir(...args),
@@ -16,6 +17,19 @@ jest.mock("@/lib/runs/session-log-resolver", () => ({
 
 jest.mock("@/lib/auth/api-auth", () => ({
   checkAuth: jest.fn().mockResolvedValue(true),
+}));
+
+jest.mock("@/lib/namespace-config", () => ({
+  getNamespaceIdFromRequest: jest.fn().mockResolvedValue("default"),
+  getOrgIdFromRequest: jest.fn().mockResolvedValue("default"),
+}));
+
+jest.mock("@/lib/links/link-run-runtime", () => ({
+  resolveLinkRunsDir: () => mockRunsRoot,
+}));
+
+jest.mock("@/lib/auth/run-acl", () => ({
+  checkRunAccess: jest.fn().mockResolvedValue({ ok: true }),
 }));
 
 function makeRequest(urlPath: string, search: Record<string, string>) {
@@ -28,6 +42,8 @@ describe("GET /api/conversations/find-by-agent", () => {
 
   beforeEach(() => {
     workspaceRoot = mkdtempSync(join(tmpdir(), "find-by-agent-tests-"));
+    mockRunsRoot = join(workspaceRoot, "runs");
+    mkdirSync(mockRunsRoot, { recursive: true });
     mockResolveLogDir.mockImplementation((provider: string, cwd: string) => {
       if (provider === "codex") return join(cwd, "codex");
       if (provider === "claude-code") return join(cwd, "claude-code");
@@ -37,6 +53,7 @@ describe("GET /api/conversations/find-by-agent", () => {
 
   afterEach(() => {
     jest.clearAllMocks();
+    mockRunsRoot = "";
     if (workspaceRoot) {
       rmSync(workspaceRoot, { recursive: true, force: true });
     }
@@ -139,5 +156,66 @@ describe("GET /api/conversations/find-by-agent", () => {
     }));
 
     expect((await response.json()).data).toEqual({ conversationId: null });
+  });
+
+  it("finds an agent conversation in its isolated worktree log directory", async () => {
+    const runId = "run-worktree";
+    const agentId = "agent-worktree";
+    const sourceWorkspace = join(workspaceRoot, "source");
+    const runDir = join(mockRunsRoot, runId);
+    const artifactsDir = join(runDir, "artifacts");
+    const nodeWorkspace = join(
+      runDir,
+      ".internal",
+      "workspace-isolation",
+      "worktrees",
+      "node-1",
+    );
+    const claudeDir = join(nodeWorkspace, "claude-code");
+    const started = new Date(Date.now() - 1000).toISOString();
+
+    mkdirSync(sourceWorkspace, { recursive: true });
+    mkdirSync(artifactsDir, { recursive: true });
+    mkdirSync(claudeDir, { recursive: true });
+    writeFileSync(
+      join(runDir, "run.json"),
+      JSON.stringify({
+        started,
+        workspacePath: sourceWorkspace,
+        agents: [{ id: agentId, started }],
+      }),
+    );
+    writeFileSync(
+      join(artifactsDir, `${agentId}-workspace-start-run-worktree-${agentId}-1.json`),
+      JSON.stringify({ agentId, workspacePath: nodeWorkspace }),
+    );
+    writeFileSync(
+      join(claudeDir, "isolated-session.jsonl"),
+      JSON.stringify({
+        payload: {
+          type: "message",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: `runId=${runId} agentId=${agentId}` }],
+          },
+        },
+      }) + "\n",
+      "utf8",
+    );
+
+    const response = await GET(makeRequest("/api/conversations/find-by-agent", {
+      runId,
+      agentId,
+      cwd: sourceWorkspace,
+      cli: "claude-code",
+      since: started,
+    }));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      success: true,
+      data: { conversationId: "isolated-session" },
+      requestId: expect.any(String),
+    });
   });
 });

@@ -16,6 +16,7 @@ import {
   validateExecutionPlan,
   type VerifiableExecutionPlan,
 } from "@/lib/decisions/decision-plan-contract";
+import { releaseDecisionGateMetadata } from "@/lib/tasks/decision-gate-release";
 
 type ResolvedDecisionOption = Pick<
   Option | TailoredOption,
@@ -198,15 +199,21 @@ async function applyResolutionLifecycle(input: {
   });
   const status = transition.state.phase === "followup_blocked" ? "blocked" : "open";
   const current = taskMetadata(parentTask);
-  taskUpdate(
-    orgId,
-    parentTask.id,
-    {
-      status,
-      metadata: lifecycleMetadata(transition.state, current),
-    },
-    namespaceId,
-  );
+  const resolved = lifecycleMetadata(transition.state, current);
+
+  // W3: the task is resuming, so the finished run's bookkeeping is spent.
+  // Clearing the gate flag alone is not durable — the reconciler's provenance
+  // repair re-applies the audited "decision" verdict and re-raises it. Release
+  // the scope, the run pointers, and the gate together, and record WHICH run's
+  // gate is spent so the repair knows not to re-apply it.
+  const retiredRunId = typeof current.last_run_id === "string" && current.last_run_id
+    ? current.last_run_id
+    : typeof current.completion_audit_run_id === "string" ? current.completion_audit_run_id : "";
+  const metadata = transition.state.phase === "resuming" && retiredRunId
+    ? releaseDecisionGateMetadata(resolved, { taskId: parentTask.id, sourceRunId: retiredRunId })
+    : resolved;
+
+  taskUpdate(orgId, parentTask.id, { status, metadata }, namespaceId);
 }
 
 export async function resolveDecisionToTasks(input: ResolveDecisionToTasksInput): Promise<ResolveDecisionToTasksResult> {

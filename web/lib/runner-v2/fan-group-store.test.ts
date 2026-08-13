@@ -31,6 +31,7 @@ describe("runner-v2 fan group store", () => {
       fanOutAgents: ["a", "b"],
       fanInAgent: "merge",
       runId: "run-123",
+      workspacePath: "/workspace/repo",
     });
 
     const first = completeFanGroupMemberLocked(dir, {
@@ -43,16 +44,36 @@ describe("runner-v2 fan group store", () => {
       group: { completed: 1, failed: 0, status: "running" },
     });
 
+    let acceptedBase: string | undefined;
     const second = completeFanGroupMemberLocked(dir, {
       groupId: "group-1",
       agentId: "b",
       status: "complete",
-    });
+    }, (plan) => {
+      acceptedBase = plan.launch?.env.MENTIKO_WORKSPACE_BASE_COMMIT;
+    }, () => ({
+      workspacePath: "/workspace/repo",
+      workspaceBaseCommit: "0123456789abcdef",
+    }));
     expect(second).toMatchObject({
       claimed: true,
-      launch: { agentId: "merge", env: { AGENT_FAN_GROUP_ID: "group-1" } },
-      group: { completed: 2, failed: 0, status: "complete" },
+      launch: {
+        agentId: "merge",
+        env: {
+          AGENT_FAN_GROUP_ID: "group-1",
+          MENTIKO_WORKSPACE_PATH: "/workspace/repo",
+          MENTIKO_WORKSPACE_BASE_COMMIT: "0123456789abcdef",
+        },
+      },
+      group: {
+        completed: 2,
+        failed: 0,
+        status: "complete",
+        workspacePath: "/workspace/repo",
+        workspaceBaseCommit: "0123456789abcdef",
+      },
     });
+    expect(acceptedBase).toBe("0123456789abcdef");
 
     const third = completeFanGroupMemberLocked(dir, {
       groupId: "group-1",
@@ -67,6 +88,8 @@ describe("runner-v2 fan group store", () => {
       status: "complete",
       completed: 2,
       failed: 0,
+      workspacePath: "/workspace/repo",
+      workspaceBaseCommit: "0123456789abcdef",
     });
   });
 

@@ -8,12 +8,14 @@ import { pty } from "@/lib/pty/pty-client";
 import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
 import { checkRunAccessForUser, normalizeRunId } from "@/lib/auth/run-acl";
 import { isNonExecutionRun } from "@/lib/runs/run-provenance";
+import type { RunStatusReason } from "@/lib/runs/run-record";
 
 export const dynamic = "force-dynamic";
 
 interface RunAgent {
   status?: string;
   session?: string;
+  statusReason?: RunStatusReason;
 }
 
 interface RunObject {
@@ -23,6 +25,7 @@ interface RunObject {
   completed?: string;
   taskId?: string;
   agents?: RunAgent[];
+  statusReason?: RunStatusReason;
 }
 
 /** POST /api/mentiko-mcp/ops/context/runs/cancel — cancel a run by ID */
@@ -65,9 +68,11 @@ export async function POST(req: Request) {
 
   run.status = "cancelled";
   run.completed = new Date().toISOString();
+  run.statusReason = { actor: "user", reason: "cancelled via mentiko MCP ops" };
   for (const agent of run.agents || []) {
     if (agent.status === "running" || agent.status === "pending") {
       agent.status = "cancelled";
+      agent.statusReason = { actor: "user", reason: "run cancelled via mentiko MCP ops" };
     }
   }
 

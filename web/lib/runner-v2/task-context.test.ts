@@ -7,6 +7,7 @@ import {
   normalizeTaskComments,
   normalizeTaskRecord,
   parseRawTaskJson,
+  taskContextEnvironment,
   validateRawTaskEnvelope,
   writeTaskContextEnv,
 } from "./task-context";
@@ -113,5 +114,38 @@ describe("typed task context contract", () => {
     writeFileSync(target, body, { mode: 0o644 });
     writeTaskContextEnv(target, result);
     expect(statSync(target).mode & 0o777).toBe(0o600);
+  });
+
+  it("makes launch identity authoritative over stale task design literals", () => {
+    const task = normalizeTaskRecord({
+      id: "CHOR-001",
+      title: "Record current runtime proof",
+      description: "Document the execution facts.",
+      design: "A prior example mentioned TASK-024 and an older run.",
+    });
+    const result = {
+      task,
+      comments: [],
+      context: buildTaskContext(task, []),
+    };
+
+    const env = taskContextEnvironment(result, {
+      sourceRunId: "run-live",
+      chainId: "chain-live",
+    });
+
+    expect(env.TASK_CONTEXT).toContain("RUNTIME IDENTITY (AUTHORITATIVE FOR THIS LAUNCH — COPY THESE VALUES EXACTLY):");
+    expect(env.TASK_CONTEXT).toContain("CURRENT TASK ID: CHOR-001");
+    expect(env.TASK_CONTEXT).toContain("CURRENT RUN ID: run-live");
+    expect(env.TASK_CONTEXT).toContain("Never copy task/run/workspace/base-commit values from DESCRIPTION, ACCEPTANCE CRITERIA, DESIGN NOTES, NOTES, or examples; those may be historical or proposed.");
+    expect(env.TASK_CONTEXT.indexOf("CURRENT TASK ID: CHOR-001")).toBeLessThan(env.TASK_CONTEXT.indexOf("TASK ID: CHOR-001"));
+    expect(JSON.parse(env.TASK_CONTEXT_JSON)).toMatchObject({
+      runtime_identity: {
+        authoritative: true,
+        task_id: "CHOR-001",
+        source_run_id: "run-live",
+        chain_id: "chain-live",
+      },
+    });
   });
 });

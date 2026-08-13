@@ -69,7 +69,9 @@ Runner events are physical `.event` files containing line-oriented `key: value` 
 
 ## Run and runner-v2 contract
 
-`lib/schemas/run.schema.json` covers the current `run.json` envelope plus runner-v2 attempt history, process evidence, instruction ledgers, transition history, stuck events, and pending routed handoffs.
+`lib/schemas/run.schema.json` covers the current `run.json` envelope plus runner-v2 attempt history, process evidence, instruction ledgers, transition history, stuck events, pending routed handoffs, and run-scoped workspace baseline/handoff pointers.
+
+Workspace execution evidence is split between that durable pointer and immutable run artifacts. `workspace-baseline.json` is claimed before the first agent attempt; Git-backed runs anchor that exact state under private run refs and each agent occurrence receives a write-once baseline-to-worktree handoff change set. Such runs report `isolation=git-worktree` and `concurrentWritesIsolated=true`; missing or non-Git workspaces remain explicit shared, unavailable evidence.
 
 Runner-facing shapes also carry explicit lineage from `web/lib/data-shapes/runner-lineage.ts`:
 
@@ -84,11 +86,11 @@ No registered shape names a `.sh` file as a writer, reader, type source, or vali
 
 The ledger separately reports live shell execution. `dataShapeShellSources()` combines a direct shell contract owner with any mapped lifecycle surface whose owner is explicitly `legacy-shell`; it excludes historical equivalents and invocation-only shell adapters. At this source revision it returns **0 live shell paths**: `bin/mentiko run`, `bin/mentiko graph`, batch, chained, retry, monitor, completion, watchdog, and reconciliation all enter typed owners. `lib/chain-runner.sh` remains only as a compatibility filename that `exec`s the compiled typed direct-run CLI; it owns no shape, parser, lifecycle transition, or process fan-out. `--parallel` is retired: callers use typed batch launches for independent chains or declared typed fan-out branches within a chain. `lib/scheduler.sh` remains a sourceable compatibility boundary over the typed schedule contract; it is not the background scheduler daemon.
 
-`runner-v2-pending-handoff` shows how a retired contract is recorded. It maps two surfaces, both runner-v2-owned — `typed-handoff-cleanup` reads and clears pre-cutover evidence, `typed-handoff-reconciliation` retires live legacy records. Its predecessor was not shell: earlier typed completion code in `web/lib/runner-v2/adapters.ts` wrote these receipts around detached routed launches. Routed launch now proves delivery synchronously, verifying run agent, session, and AgentAttempt state before consuming the parent event, so no new pending handoff receipt is ever written. The shape persists only so reconciliation can clear pre-cutover records.
+`runner-v2-pending-handoff` records the one detached coordinator responsible for a routed fan-out while capacity-delayed targets wait without PTYs. `typed-launch-coordinator-liveness` registers and heartbeats that process; `typed-handoff-reconciliation` removes each target when its session starts and stops treating a dead or stale coordinator as liveness. Durable queued AgentAttempt state remains the launch-acceptance authority, so a 30-node fan-out needs one waiting coordinator process instead of one process per target.
 
 Catalog tests require every direct `web/lib/runner-v2/*` or runner shell source reference to have lineage, verify the ownership label against current readers and writers, and existence-check every lineage evidence path.
 
-`GET /api/data-shapes` and `web/lib/data-shapes/catalog.ts` are the count of record; this source revision registers **114 shapes**. The live UI reads the same API, so inspect it rather than relying on documentation counts after future changes.
+`GET /api/data-shapes` and `web/lib/data-shapes/catalog.ts` are the count of record; this source revision registers **119 shapes**. The live UI reads the same API, so inspect it rather than relying on documentation counts after future changes.
 
 A one-time drift repair ran on 2026-07-14 against one developer's local default namespace. Those figures are a dated observation of that machine, not a standing property of the system, and the local namespace has since grown well past the run count sampled below:
 

@@ -151,6 +151,7 @@ describe("POST /api/jobs chain dispatch migration", () => {
     const recommendPrompt = mockStartGenerationChainRun.mock.calls[0][0].prompt as string;
     expect(recommendPrompt).toContain("agent-catalog-entry");
     expect(recommendPrompt).toContain("profile-catalog-entry");
+    expect(recommendPrompt).toContain("TASK_LINKED_CHAIN_RUNTIME");
   });
 
   test("type generate keeps job type and dispatches chain_generation", async () => {
@@ -185,5 +186,6 @@ describe("POST /api/jobs chain dispatch migration", () => {
       prompt: expect.stringContaining("create a pipeline chain"),
       workspacePath: "/repo/ws",
     }));
+    expect(mockStartGenerationChainRun.mock.calls[0][0].prompt).toContain("TASK_LINKED_CHAIN_RUNTIME");
   });
 });

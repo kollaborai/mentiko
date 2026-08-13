@@ -504,7 +504,9 @@ export default function AgentProfilesPage() {
         extra_args: editExtraArgs.trim() ? editExtraArgs.trim().split(/\s+/).filter(Boolean) : [],
         disallowed_tools: editDisallowedTools.trim() || undefined,
         env: editEnv,
-        pre_exec: editPreExec.trim() || undefined,
+        // Send an explicit empty string so clearing this field replaces a
+        // previously saved command instead of being treated as no update.
+        pre_exec: editPreExec.trim(),
         readiness,
         log_path: editLogPath.trim() || undefined,
         log_format: editLogFormat.trim() || undefined,

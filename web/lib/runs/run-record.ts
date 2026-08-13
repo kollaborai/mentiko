@@ -17,6 +17,7 @@ import {
   writeRunJsonAtomic,
   writeRunJsonExclusive,
 } from "@/lib/runs/run-json-lock";
+import type { WorkspaceExecutionRecord } from "@/lib/runner-v2/workspace-evidence-types";
 
 export const RUN_ID_PATTERN = /^run-[A-Za-z0-9_-]{1,120}$/;
 
@@ -45,6 +46,20 @@ export const RUN_AGENT_STATUSES = [
 export type RunStatus = (typeof RUN_STATUSES)[number];
 export type AgentStatus = (typeof RUN_AGENT_STATUSES)[number];
 
+/**
+ * Who/what moved a run or agent to a terminal stop/cancel state, and why.
+ * Persisted at run level (run.json `statusReason`) and per-agent
+ * (`agents[].statusReason`) so a stopped run never reads as an unexplained
+ * silence — see docs/analysis/recovery-spec-2026-08-10.md.
+ */
+export const STOP_ACTORS = ["user", "reaper", "reconciler", "admission", "system"] as const;
+export type StopActor = (typeof STOP_ACTORS)[number];
+
+export interface RunStatusReason {
+  actor: StopActor;
+  reason: string;
+}
+
 export interface RunAgentRecord {
   id: string;
   name: string;
@@ -52,6 +67,7 @@ export interface RunAgentRecord {
   status: AgentStatus;
   started?: string;
   completed?: string;
+  statusReason?: RunStatusReason;
   [key: string]: unknown;
 }
 
@@ -68,8 +84,10 @@ export interface RunRecord {
   workspaceId?: string;
   workspacePath?: string;
   taskId?: string;
+  workspaceExecution?: WorkspaceExecutionRecord;
   completed?: string;
   status_message?: string;
+  statusReason?: RunStatusReason;
   metadata?: Record<string, unknown>;
   type?: string;
   linkId?: string;
@@ -86,7 +104,8 @@ export interface RunListRecord {
   completed?: string;
   status: RunStatus;
   status_message?: string;
-  agents: Array<Pick<RunAgentRecord, "id" | "name" | "session" | "status" | "started" | "completed">>;
+  statusReason?: RunStatusReason;
+  agents: Array<Pick<RunAgentRecord, "id" | "name" | "session" | "status" | "started" | "completed" | "statusReason">>;
   sessions?: string[];
   parent_run_id?: string;
   workspaceId?: string;
@@ -166,6 +185,7 @@ export class RunRecordAlreadyExistsError extends Error {
 }
 
 let compiledRunRecordValidator: ValidateFunction | undefined;
+let compiledRunRecordSchemaFingerprint: string | undefined;
 
 // lib/schemas/ lives at the code root, outside web/ — which next.config pins as both
 // the turbopack root and outputFileTracingRoot, so the schema cannot be a static
@@ -180,8 +200,7 @@ function runRecordSchemaPath(): string {
   return join(libDir, "schemas", "run.schema.json");
 }
 
-function loadRunRecordSchema(): object {
-  const schemaPath = runRecordSchemaPath();
+function loadRunRecordSchema(schemaPath = runRecordSchemaPath()): object {
   try {
     return JSON.parse(readFileSync(schemaPath, "utf-8"));
   } catch (error) {
@@ -190,15 +209,30 @@ function loadRunRecordSchema(): object {
   }
 }
 
+function runRecordSchemaFingerprint(schemaPath: string): string {
+  try {
+    const stat = statSync(schemaPath);
+    // Include inode so an atomic replace is observed even when a filesystem
+    // preserves the previous file's size and timestamp granularity.
+    return `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}`;
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to inspect run record schema at ${schemaPath}: ${reason}`);
+  }
+}
+
 function runRecordValidator(): ValidateFunction {
-  if (!compiledRunRecordValidator) {
+  const schemaPath = runRecordSchemaPath();
+  const schemaFingerprint = runRecordSchemaFingerprint(schemaPath);
+  if (!compiledRunRecordValidator || compiledRunRecordSchemaFingerprint !== schemaFingerprint) {
     const ajv = new Ajv({ allErrors: true, strict: false });
     addFormats(ajv);
     const fullDateTime = addFormats.get("date-time", "full") as { validate: (value: string) => boolean };
     ajv.addFormat("date-time", {
       validate: (value: string) => /^\d{4}-\d{2}-\d{2}[Tt]/.test(value) && fullDateTime.validate(value),
     });
-    compiledRunRecordValidator = ajv.compile(loadRunRecordSchema());
+    compiledRunRecordValidator = ajv.compile(loadRunRecordSchema(schemaPath));
+    compiledRunRecordSchemaFingerprint = schemaFingerprint;
   }
   return compiledRunRecordValidator;
 }
@@ -398,6 +432,7 @@ export function projectRunRecordForList(
     ...(record.completed !== undefined ? { completed: record.completed } : {}),
     status: record.status,
     ...(record.status_message !== undefined ? { status_message: record.status_message } : {}),
+    ...(record.statusReason !== undefined ? { statusReason: record.statusReason } : {}),
     agents: record.agents.map((agent) => ({
       id: agent.id,
       name: agent.name,
@@ -405,6 +440,7 @@ export function projectRunRecordForList(
       status: agent.status,
       ...(agent.started !== undefined ? { started: agent.started } : {}),
       ...(agent.completed !== undefined ? { completed: agent.completed } : {}),
+      ...(agent.statusReason !== undefined ? { statusReason: agent.statusReason } : {}),
     })),
     ...(record.sessions !== undefined ? { sessions: [...record.sessions] } : {}),
     ...(record.parent_run_id !== undefined ? { parent_run_id: record.parent_run_id } : {}),

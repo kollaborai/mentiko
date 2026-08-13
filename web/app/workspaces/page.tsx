@@ -16,6 +16,7 @@ import {
 } from "@aliimam/icons";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { useWorkspace } from "@/lib/ui-context/workspace-context";
+import { unwrapApiData } from "@/lib/api/api-client";
 import type { Workspace } from "@/lib/workspaces/workspace-storage";
 import { PageBanner } from "@/components/ui/page-banner";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
@@ -73,6 +74,8 @@ function WorkspacesPageContent() {
 
   const [projects, setProjects] = useState<Workspace[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [selectionMessage, setSelectionMessage] = useState<string | null>(null);
   const [selected, setSelected] = useState<Workspace | null>(null);
   const selectedRef = useRef<Workspace | null>(null);
   const [mobileView, setMobileView] = useState<"list" | "detail">("list");
@@ -131,25 +134,49 @@ function WorkspacesPageContent() {
     [sidebarWidth]
   );
 
+  const clearSelectedWorkspace = useCallback(() => {
+    selectedRef.current = null;
+    setSelected(null);
+    setMobileView("list");
+  }, []);
+
   const loadAll = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const res = await fetchWithNamespace("/api/workspaces");
-      const data = await res.json() as { workspaces?: Workspace[] };
-      const items: Workspace[] = data.workspaces || [];
+      if (!res.ok) {
+        throw new Error(`Workspace request failed with status ${res.status}`);
+      }
+      const data = unwrapApiData<{ workspaces?: Workspace[] }>(await res.json());
+      if (!Array.isArray(data.workspaces)) {
+        throw new Error("Workspace response did not contain a workspace list");
+      }
+      const items = data.workspaces;
       setProjects(items);
       // auto-select first if nothing selected
       if (items.length && !selectedRef.current) {
+        selectedRef.current = items[0];
         setSelected(items[0]);
+        setSelectionMessage(null);
       }
       // update selected if still in list
       if (selectedRef.current) {
         const updated = items.find((w) => w.id === selectedRef.current!.id);
-        if (updated) setSelected(updated);
+        if (updated) {
+          selectedRef.current = updated;
+          setSelected(updated);
+          setSelectionMessage(null);
+        } else {
+          clearSelectedWorkspace();
+          setSelectionMessage("That workspace is no longer available. Select another workspace or create a new one.");
+        }
       }
-    } catch { /* ignore */ }
+    } catch {
+      setLoadError("Could not load workspaces. Check the connection and try again.");
+    }
     finally { setLoading(false); }
-  }, [fetchWithNamespace]);
+  }, [clearSelectedWorkspace, fetchWithNamespace]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
@@ -167,6 +194,7 @@ function WorkspacesPageContent() {
   }, [fetchWithNamespace]);
 
   const openNewWorkspaceForm = () => {
+    setSelectionMessage(null);
     setShowNewForm(true);
     setMobileView("detail");
   };
@@ -190,10 +218,13 @@ function WorkspacesPageContent() {
     // find the created workspace and select it
     try {
       const res = await fetchWithNamespace("/api/workspaces");
-      const wsData = await res.json() as { workspaces?: Workspace[] };
+      if (!res.ok) throw new Error(`Workspace request failed with status ${res.status}`);
+      const wsData = unwrapApiData<{ workspaces?: Workspace[] }>(await res.json());
       const created = wsData.workspaces?.find((w: Workspace) => w.id === data.workspaceId);
       if (created) {
+        selectedRef.current = created;
         setSelected(created);
+        setSelectionMessage(null);
         setMobileView("detail");
       }
     } catch { /* ignore */ }
@@ -205,8 +236,7 @@ function WorkspacesPageContent() {
     try {
       await fetchWithNamespace(`/api/workspaces/${id}`, { method: "DELETE" });
       if (selected?.id === id) {
-        setSelected(null);
-        selectedRef.current = null;
+        clearSelectedWorkspace();
       }
       await loadAll();
       await refetchNav();
@@ -214,7 +244,9 @@ function WorkspacesPageContent() {
   };
 
   const handleSelectWorkspace = (w: Workspace) => {
+    selectedRef.current = w;
     setSelected(w);
+    setSelectionMessage(null);
     setMobileView("detail");
   };
 
@@ -279,6 +311,14 @@ function WorkspacesPageContent() {
               <div className="flex items-center justify-center py-12">
                 <WaveSpinner size="sm" color="primary" animation="ripple" />
               </div>
+            ) : loadError && projects.length === 0 ? (
+              <EmptyState
+                icon={<Server className="h-8 w-8" />}
+                title="Workspaces unavailable"
+                description={loadError}
+                action={{ label: "Retry", onClick: loadAll }}
+                secondaryAction={{ label: "Create workspace", onClick: openNewWorkspaceForm }}
+              />
             ) : filtered.length === 0 ? (
               searchQuery ? (
                 <div className="text-center py-12 text-xs text-foreground/40">
@@ -387,18 +427,45 @@ function WorkspacesPageContent() {
             <WorkspaceDetailPanel
               key={selected.id}
               workspaceId={selected.id}
-              onBack={mobileView === "detail" ? () => setMobileView("list") : undefined}
+              onBack={clearSelectedWorkspace}
               onDelete={() => {
-                setSelected(null);
-                selectedRef.current = null;
+                clearSelectedWorkspace();
                 loadAll();
                 refetchNav();
               }}
             />
           ) : (
-            <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-              Select a workspace
-            </div>
+            <EmptyState
+              className="h-full"
+              icon={<Server className="h-8 w-8" />}
+              title={
+                loadError
+                  ? "Workspaces unavailable"
+                  : selectionMessage
+                    ? "Workspace unavailable"
+                    : projects.length > 0
+                      ? "Choose a workspace"
+                      : "Set up your first workspace"
+              }
+              description={
+                loadError
+                  ?? selectionMessage
+                  ?? (projects.length > 0
+                    ? "Select a workspace from the list, or create a new one."
+                    : "Create a workspace to give your agents an execution environment.")
+              }
+              action={{
+                label: loadError ? "Retry" : "Create workspace",
+                onClick: loadError ? loadAll : openNewWorkspaceForm,
+              }}
+              secondaryAction={
+                loadError
+                  ? { label: "Create workspace", onClick: openNewWorkspaceForm, variant: "outline" as const }
+                  : projects.length > 0
+                    ? { label: "Refresh", onClick: loadAll, variant: "outline" as const }
+                    : undefined
+              }
+            />
           )}
         </div>
       </div>

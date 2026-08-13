@@ -1,6 +1,8 @@
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { TaskListItem } from "../task-list-item";
 import type { Task } from "@/lib/tasks/task-types";
+import { makeEditorState } from "@/app/docs/ui-editor/editor-model";
+import { TASK_SIDEBAR_STORAGE_KEY } from "@/lib/task-sidebar-editor";
 
 jest.mock("@/components/ui/workflow-sidebar", () => ({
   WorkflowSidebarItem: ({
@@ -83,6 +85,10 @@ const baseTask: Task = {
 };
 
 describe("TaskListItem", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
   it("renders task title", () => {
     render(
       <TaskListItem
@@ -92,10 +98,20 @@ describe("TaskListItem", () => {
         onToggleComplete={jest.fn()}
       />,
     );
-    expect(screen.getByText("Fix the bug")).toBeInTheDocument();
+    const title = screen.getByText("Fix the bug");
+    const updatedAt = screen.getByText("2h ago");
+    expect(title).toHaveClass("line-clamp-2");
+    expect(updatedAt).toHaveClass("shrink-0", "whitespace-nowrap");
+    expect(updatedAt.parentElement).toBe(title.parentElement);
+    expect(updatedAt.parentElement).toHaveClass("items-end");
   });
 
-  it("renders type and priority badges", () => {
+  it("uses the saved UI editor layout when one is published", async () => {
+    const editorState = makeEditorState();
+    editorState.rows[0].columns[0].cells[0].fields.push("description");
+    editorState.fieldStyles.description.visible = true;
+    localStorage.setItem(TASK_SIDEBAR_STORAGE_KEY, JSON.stringify(editorState));
+
     render(
       <TaskListItem
         task={baseTask}
@@ -104,8 +120,40 @@ describe("TaskListItem", () => {
         onToggleComplete={jest.fn()}
       />,
     );
-    expect(screen.getByTestId("type-badge")).toHaveTextContent("bug");
+
+    await waitFor(() =>
+      expect(screen.getByTestId("task-sidebar-configured-layout")).toBeInTheDocument(),
+    );
+    expect(screen.getByText("Something is broken")).toBeInTheDocument();
+    expect(screen.getByText("2h ago")).toBeInTheDocument();
+  });
+
+  it("renders the typed task ID and priority without a redundant type badge", () => {
+    render(
+      <TaskListItem
+        task={baseTask}
+        selected={false}
+        onSelect={jest.fn()}
+        onToggleComplete={jest.fn()}
+      />,
+    );
     expect(screen.getByTestId("priority-badge")).toHaveTextContent("high");
+    expect(screen.getByText("task-1")).toHaveClass("whitespace-nowrap");
+    expect(screen.queryByTestId("type-badge")).not.toBeInTheDocument();
+  });
+
+  it("strikes completed titles without striking the update time", () => {
+    render(
+      <TaskListItem
+        task={{ ...baseTask, completed: true, status: "closed" }}
+        selected={false}
+        onSelect={jest.fn()}
+        onToggleComplete={jest.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Fix the bug")).toHaveClass("line-through");
+    expect(screen.getByText("2h ago")).not.toHaveClass("line-through");
   });
 
   it("calls onSelect when clicked", () => {
@@ -183,22 +231,8 @@ describe("TaskListItem", () => {
     expect(screen.queryByTitle("Blocked by 1 task")).not.toBeInTheDocument();
   });
 
-  it("uses the sidebar rail for execution state, not priority", () => {
-    const { rerender } = render(
-      <TaskListItem
-        task={baseTask}
-        selected={false}
-        onSelect={jest.fn()}
-        onToggleComplete={jest.fn()}
-      />,
-    );
-
-    expect(screen.getByTestId("workflow-sidebar-item")).toHaveAttribute(
-      "data-accent",
-      "bg-muted-foreground/40",
-    );
-
-    rerender(
+  it("does not render a sidebar accent rail", () => {
+    render(
       <TaskListItem
         task={{
           ...baseTask,
@@ -215,9 +249,8 @@ describe("TaskListItem", () => {
       />,
     );
 
-    expect(screen.getByTestId("workflow-sidebar-item")).toHaveAttribute(
+    expect(screen.getByTestId("workflow-sidebar-item")).not.toHaveAttribute(
       "data-accent",
-      "bg-sky-400",
     );
   });
 });

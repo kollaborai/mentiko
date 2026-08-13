@@ -56,6 +56,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
         run.status = "stopped";
         run.completed = new Date().toISOString();
         run.stop_reason = "emergency_stop";
+        run.statusReason = { actor: "user", reason: "emergency stop-all" };
         writeFileSync(runJsonPath, JSON.stringify(run, null, 2));
         stopped.push(dir);
       } catch (e) {

@@ -10,6 +10,7 @@ import {
   getEngineProviderDefault,
   getTerminalAuthCommand,
 } from "@/lib/agents/agent-provider-catalog";
+import { getModelPricing } from "@/lib/system/token-store";
 
 describe("agent provider catalog", () => {
   it("keeps cli tools free of raw model ownership", () => {
@@ -22,8 +23,15 @@ describe("agent provider catalog", () => {
   it("serves bundled profile options from the catalog instead of stale ui lists", () => {
     expect(getDefaultAgentConfigIdForTool("codex")).toBe("codex-default");
     expect(getAgentConfigOptionsForTool("codex")).toEqual([
-      { id: "codex-default", name: "Codex / GPT-5.5" },
-      { id: "codex-fast", name: "Codex / GPT-5.4 mini" },
+      { id: "codex-default", name: "Codex / GPT-5.6 Sol" },
+      { id: "codex-terra", name: "Codex / GPT-5.6 Terra" },
+      { id: "codex-fast", name: "Codex / GPT-5.6 Luna" },
+    ]);
+    expect(getAgentConfigOptionsForTool("opencode")).toEqual([
+      { id: "opencode-sonnet", name: "OpenCode / Sonnet 4.6" },
+      { id: "opencode-gpt", name: "OpenCode / GPT-5.6 Sol" },
+      { id: "opencode-gpt-terra", name: "OpenCode / GPT-5.6 Terra" },
+      { id: "opencode-gpt-luna", name: "OpenCode / GPT-5.6 Luna" },
     ]);
   });
 
@@ -63,26 +71,41 @@ describe("agent provider catalog", () => {
   });
 
   it("uses current engine defaults and avoids stale OpenAI/Gemini fallbacks", () => {
-    expect(getEngineProviderDefault("openai")?.model).toBe("gpt-5.5");
+    expect(getEngineProviderDefault("openai")?.model).toBe("gpt-5.6-sol");
     expect(getEngineProviderDefault("gemini")?.model).toBe("gemini-3.5-flash");
     expect(getEngineProviderDefault("openrouter")?.model).toBe("deepseek/deepseek-v4-flash");
     expect(DEFAULT_MARKETPLACE_AGENT_MODEL).toBe("claude-sonnet-4-6");
   });
 
-  it("keeps codex profiles unpinned and profile-driven for startup recovery", () => {
+  it("prices every GPT-5.6 bundle model at its published rate", () => {
+    expect(getModelPricing("gpt-5.6-sol")).toMatchObject({
+      inputCentsPerMillion: 500,
+      outputCentsPerMillion: 3000,
+    });
+    expect(getModelPricing("gpt-5.6-terra")).toMatchObject({
+      inputCentsPerMillion: 250,
+      outputCentsPerMillion: 1500,
+    });
+    expect(getModelPricing("gpt-5.6-luna")).toMatchObject({
+      inputCentsPerMillion: 100,
+      outputCentsPerMillion: 600,
+    });
+  });
+
+  it("keeps Codex profiles automation-safe and free of invented readiness signals", () => {
     const codexProfiles = getAllBundleProfiles().filter((profile) => profile.cli === "codex");
 
     expect(codexProfiles.length).toBeGreaterThan(0);
+    const codexDefault = codexProfiles.find((profile) => profile.id === "codex-default");
+    expect(codexDefault?.readiness).toEqual({ enabled: false, ready_patterns: [] });
+    expect(codexDefault?.readiness?.ready_patterns).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ value: "OpenAI Codex (v" }),
+        expect.objectContaining({ value: "Find and fix a bug" }),
+      ]),
+    );
     for (const profile of codexProfiles) {
       expect(profile.extra_args || []).not.toContain("--skip-git-repo-check");
-      expect(profile.readiness).toMatchObject({ enabled: true });
-      expect(profile.readiness?.blocked_patterns || []).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            value: "unexpected argument '--skip-git-repo-check'",
-          }),
-        ]),
-      );
     }
   });
 });

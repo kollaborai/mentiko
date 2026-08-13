@@ -503,22 +503,26 @@ describe("runner-v2 routed launch durable acceptance", () => {
     mockSpawnSync.mockImplementation((...args) => {
       if (!isRoutedLaunch(args)) return nonLaunchResult;
       const cliArgs = args[1] as string[];
-      const target = cliArgs[cliArgs.length - 1];
+      const targets = cliArgs.slice(2);
       const options = args[2] as { env?: Record<string, string> };
-      targetCalls.push(target);
+      targetCalls.push(...targets);
       if (options.env?.AGENT_FAN_GROUP_ID) groupIds.push(options.env.AGENT_FAN_GROUP_ID);
-      if (target === "editor" && rejectEditor) {
+      if (targets.includes("designer")) {
+        recordAcceptedTarget(input.runJsonPath, 1, "designer");
+      }
+      if (targets.includes("editor") && rejectEditor) {
         rejectEditor = false;
         return { status: 17, pid: 4243, stdout: "", stderr: "editor rejected" } as ReturnType<typeof spawnSync>;
       }
-      recordAcceptedTarget(input.runJsonPath, 1, target);
-      return { status: 0, pid: 4242, stdout: `${target} accepted`, stderr: "" } as ReturnType<typeof spawnSync>;
+      for (const target of targets.filter((candidate) => candidate !== "designer")) {
+        recordAcceptedTarget(input.runJsonPath, 1, target);
+      }
+      return { status: 0, pid: 4242, stdout: `${targets.join(",")} accepted`, stderr: "" } as ReturnType<typeof spawnSync>;
     });
 
     expect(() => complete(input)).toThrow(/nonzero_exit/);
     expect(targetCalls).toEqual(["designer", "editor"]);
-    expect(groupIds).toHaveLength(2);
-    expect(new Set(groupIds).size).toBe(1);
+    expect(groupIds).toHaveLength(1);
     const groupId = groupIds[0];
     expect(readFanGroup(input.stateDir, groupId)).toMatchObject({
       id: groupId,
@@ -543,6 +547,7 @@ describe("runner-v2 routed launch durable acceptance", () => {
     expect(complete(input, "writer-run-123", "2026-07-15T12:02:00.000Z")).toMatchObject({ decision: "route" });
     expect(targetCalls.filter((target) => target === "designer")).toHaveLength(1);
     expect(targetCalls.filter((target) => target === "editor")).toHaveLength(2);
+    expect(groupIds).toHaveLength(2);
     expect(groupIds.every((candidate) => candidate === groupId)).toBe(true);
     expect(readFanGroup(input.stateDir, groupId)).toMatchObject({
       completed: 1,

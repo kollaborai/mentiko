@@ -5,7 +5,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { nsPath } from "@/lib/config";
 import { PATCH as PATCH_ONE } from "./[id]/route";
-import { POST } from "./route";
+import { GET, POST } from "./route";
 
 jest.mock("next/server", () => ({
   NextResponse: {
@@ -120,5 +120,32 @@ describe("notification API persistence errors", () => {
     );
 
     expect(response.status).toBe(404);
+  });
+
+  it("repairs legacy decision notification links to the embedded task surface", async () => {
+    writeFileSync(file, JSON.stringify([{
+      id: "notif-decision-1",
+      type: "decision_required",
+      title: "Decision needed: DEC-004",
+      message: "A decision needs attention.",
+      timestamp: "2026-08-11T03:43:52.097Z",
+      read: true,
+      metadata: {
+        taskId: "DEC-004",
+        decisionId: "decision-1",
+        actionUrl: "/decisions?id=decision-1",
+      },
+    }]));
+
+    const response = await GET(request("GET"));
+    const body = await response.json() as {
+      data?: { notifications?: Array<{ metadata?: { actionUrl?: string } }> };
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.data?.notifications?.[0]?.metadata?.actionUrl)
+      .toBe("/tasks?type=decision&task=DEC-004");
+    expect(JSON.parse(readFileSync(file, "utf8"))[0].metadata.actionUrl)
+      .toBe("/tasks?type=decision&task=DEC-004");
   });
 });

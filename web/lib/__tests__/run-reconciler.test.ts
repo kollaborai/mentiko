@@ -56,6 +56,27 @@ describe("run reconciler", () => {
     jest.clearAllMocks();
   });
 
+  it("uses run.started for the startup grace window on randomized run ids", async () => {
+    const runId = `run-${Date.now()}-randomized`;
+    const runDir = join(mockRunsDir, runId);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(join(runDir, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
+    writeFileSync(join(runDir, "run.json"), JSON.stringify({
+      id: runId,
+      status: "running",
+      started: new Date(Date.now() - 10_000).toISOString(),
+      agents: [{ id: "writer", name: "Writer", status: "pending", session: "" }],
+    }));
+
+    const result = await reconcileOrphanedRuns();
+    const run = JSON.parse(readFileSync(join(runDir, "run.json"), "utf8"));
+
+    expect(result.orphaned).toBe(0);
+    expect(result.cleaned).not.toContain(runId);
+    expect(run.status).toBe("running");
+    expect(run.agents[0].status).toBe("pending");
+  });
+
   it("recovers a completed current agent from its emitted event without accepting downstream out-of-scope events", async () => {
     const runDir = join(mockRunsDir, "run-1777862548347");
     mkdirSync(runDir, { recursive: true });
@@ -421,5 +442,34 @@ describe("run reconciler", () => {
     expect(run.status).toBe("completed");
     expect(run.completed).toBeTruthy();
     expect(run.agents[0].status).toBe("complete");
+  });
+
+  it("records actor \"reaper\" and a reason on a run and its agents when it reaps an orphaned run", async () => {
+    const runId = `run-${Date.now()}-reaper-test`;
+    const runDir = join(mockRunsDir, runId);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(join(runDir, "run.json"), JSON.stringify({
+      id: runId,
+      status: "running",
+      started: new Date(Date.now() - 10 * 60_000).toISOString(),
+      agents: [
+        { id: "writer", name: "Writer", status: "running", session: "dead-session" },
+        { id: "reviewer", name: "Reviewer", status: "pending", session: "" },
+      ],
+    }));
+
+    const result = await reconcileOrphanedRuns();
+    const run = JSON.parse(readFileSync(join(runDir, "run.json"), "utf8"));
+
+    expect(result.orphaned).toBe(1);
+    expect(result.cleaned).toContain(runId);
+    expect(run.status).toBe("stopped");
+    expect(run.statusReason.actor).toBe("reaper");
+    expect(typeof run.statusReason.reason).toBe("string");
+    expect(run.statusReason.reason.length).toBeGreaterThan(0);
+
+    // the same pass fixes stale agent statuses — no agent should go silent
+    expect(run.agents[0]).toMatchObject({ status: "stopped", statusReason: { actor: "reaper" } });
+    expect(run.agents[1]).toMatchObject({ status: "cancelled", statusReason: { actor: "reaper" } });
   });
 });

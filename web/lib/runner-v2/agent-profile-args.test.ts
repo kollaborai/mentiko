@@ -5,37 +5,31 @@ import {
 } from "@/lib/runner-v2/agent-profile-args";
 
 /**
- * The combined permission fragment below is what the shipped claude profiles
- * actually store. Passing it to the CLI as a single argv token produced
- * "error: unknown option '--allow-dangerously-skip-permissions --permission-mode
- * bypassPermissions'" and failed the agent at startup. Every launcher resolves
- * permission flags through this module so that cannot recur in one launcher
- * while the other stays correct.
+ * Existing tenants may still store this legacy two-flag fragment. Claude
+ * 2.1.129 accepts the argv but blocks autonomous startup on a consent modal, so
+ * every launcher must normalize it to the direct non-interactive flag.
  */
 const COMBINED_PERMISSION_FLAG = "--allow-dangerously-skip-permissions --permission-mode bypassPermissions";
 
 describe("agent profile argv contract", () => {
-  it("splits an already-combined permission fragment into separate argv tokens", () => {
+  it("normalizes the legacy two-flag fragment to the direct non-interactive flag", () => {
     expect(resolveProfilePermissionArgs("claude", COMBINED_PERMISSION_FLAG)).toEqual([
-      "--allow-dangerously-skip-permissions",
-      "--permission-mode",
-      "bypassPermissions",
+      "--dangerously-skip-permissions",
     ]);
   });
 
-  it("expands the claude shorthand into the same separate argv tokens", () => {
+  it("preserves the direct claude permission bypass flag", () => {
     expect(resolveProfilePermissionArgs("claude", "--dangerously-skip-permissions")).toEqual([
-      "--allow-dangerously-skip-permissions",
-      "--permission-mode",
-      "bypassPermissions",
+      "--dangerously-skip-permissions",
     ]);
   });
 
-  it("never yields a token containing the whole combined fragment", () => {
+  it("never yields the consent-gated claude flags", () => {
     for (const flag of [COMBINED_PERMISSION_FLAG, "--dangerously-skip-permissions"]) {
-      for (const token of resolveProfilePermissionArgs("claude", flag)) {
-        expect(token).not.toContain(" ");
-      }
+      const args = resolveProfilePermissionArgs("claude", flag);
+      expect(args).toEqual(["--dangerously-skip-permissions"]);
+      expect(args).not.toContain("--allow-dangerously-skip-permissions");
+      expect(args).not.toContain("--permission-mode");
     }
   });
 

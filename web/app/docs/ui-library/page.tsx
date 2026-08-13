@@ -10,6 +10,7 @@ const statusClasses = {
   approved: "bg-emerald-500/10 text-emerald-300",
   provisional: "bg-amber-500/10 text-amber-300",
   planned: "bg-muted text-muted-foreground",
+  "not-used": "bg-red-500/10 text-red-300",
 } as const;
 
 const sourceClasses = {

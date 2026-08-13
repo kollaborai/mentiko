@@ -43,8 +43,8 @@ export async function runStandaloneMonitorCli(
     await pty.sendRaw(sessionName, "\r");
   } catch (error) {
     const reason = `standalone monitor could not deliver its typed completion contract: ${error instanceof Error ? error.message : String(error)}`;
-    updateRunAgent(standalone.runJsonPath, standalone.agent.sessionPrefix, "blocked");
-    updateRunStatus(standalone.runJsonPath, "blocked", reason);
+    updateRunAgent(standalone.runJsonPath, standalone.agent.sessionPrefix, "blocked", undefined, undefined, undefined, { actor: "system", reason });
+    updateRunStatus(standalone.runJsonPath, "blocked", reason, undefined, undefined, undefined, { actor: "system", reason });
     throw new Error(reason);
   }
   const io = createLiveMonitorIO({

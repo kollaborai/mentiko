@@ -179,8 +179,13 @@ const ALL_TOOLS: Tool[] = [
   // ③ Chain Operations
   {
     name: "list_chains",
-    description: "List all chains in the current namespace.",
-    inputSchema: { type: "object", properties: {} }
+    description: "List chains in the current namespace as SUMMARIES (id/name/description/agentCount) — the agents[] array is omitted. Pass id to get one chain's full definition including its agents.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Chain id. Returns that chain's full definition instead of the summary list." }
+      }
+    }
   },
   {
     name: "open_chain",
@@ -283,11 +288,11 @@ const ALL_TOOLS: Tool[] = [
   // ④ Agent Ops
   {
     name: "list_agents",
-    description: "List all agents.",
+    description: "List agents as SUMMARIES — prompt is truncated to promptPreview. Pass id to get one agent's full record including its complete prompt.",
     inputSchema: {
       type: "object",
       properties: {
-        scope: { type: "string", enum: ["global", "namespace", "org"] }
+        id: { type: "string", description: "Agent id. Returns that agent's full record instead of the summary list." }
       }
     }
   },
@@ -541,7 +546,7 @@ const ALL_TOOLS: Tool[] = [
   },
   {
     name: "create_task",
-    description: "Create a task, or an epic/feature/bug/chore via issue_type. Owner defaults to the authenticated MCP user unless you pass owner. Use issue_type:'epic' to mint an EPIC, then add_task_dependency to wire prerequisites. assignee is a free field — a user id/name OR a chain id/name.",
+    description: "Create a task, or an epic/feature/bug/chore via issue_type. Owner defaults to the authenticated MCP user unless you pass owner. Use issue_type:'epic' to mint an EPIC, then add_task_dependency to wire prerequisites. assignee is a human/user id or name ONLY -- never a chain id or name; use chain_id/chain_name to bind a chain. Pass idempotency_key (or logical_key, for a child task created from a chain run) to make repeated calls safe -- a replay returns the existing task instead of creating a duplicate.",
     inputSchema: {
       type: "object",
       properties: {
@@ -559,13 +564,27 @@ const ALL_TOOLS: Tool[] = [
         },
         priority: { type: "number", description: "1 = highest. Defaults to 2." },
         owner: { type: "string", description: "Responsible identity. Defaults to the authenticated MCP user." },
-        assignee: { type: "string", description: "Who/what works it — a user id/name or a chain id/name." },
+        assignee: { type: "string", description: "The human/user who works it -- a user id or name. Never a chain id or name; use chain_id/chain_name to bind a chain." },
         labels: { type: "array", items: { type: "string" }, description: "Label strings, e.g. [\"backend\",\"notifications\"]." },
         notes: { type: "string", description: "Free-form notes." },
         acceptance_criteria: { type: "string", description: "Given/when/then acceptance criteria." },
         design: { type: "string", description: "Design / approach notes." },
         estimated_minutes: { type: "number", description: "Estimate in minutes." },
-        due_at: { type: "string", description: "Due date, ISO 8601." }
+        due_at: { type: "string", description: "Due date, ISO 8601." },
+        auto_run: {
+          type: "boolean",
+          description: "Explicit auto-run intent for this task. Omit to inherit the workspace's (then system's) auto-run default -- the response's creation.effectiveAutoRun reports which one actually applied."
+        },
+        chain_id: { type: "string", description: "Bind this task to a chain (chain-binding metadata, not assignee). Must reference an existing chain in this namespace." },
+        chain_name: { type: "string", description: "Display name for chain_id. Resolved from the chain definition if omitted." },
+        idempotency_key: {
+          type: "string",
+          description: "Opaque caller-chosen key. Calling create_task again with the same key returns the existing task instead of creating a duplicate."
+        },
+        logical_key: {
+          type: "string",
+          description: "For a child task created from within a chain run: a stable label (e.g. \"smoke-test-child\") combined with the run and parent task to derive a replay-safe key automatically -- use this instead of idempotency_key when calling from an agent."
+        }
       },
       required: ["subject"]
     }
@@ -596,7 +615,7 @@ const ALL_TOOLS: Tool[] = [
           description: "Lifecycle status."
         },
         priority: { type: "number", description: "1 = highest." },
-        assignee: { type: "string", description: "User id/name or chain id/name." },
+        assignee: { type: "string", description: "The human/user who works it -- a user id or name. Never a chain id or name; chain binding is set via create_task's chain_id, not assignee." },
         acceptance_criteria: { type: "string" },
         design: { type: "string" },
         notes: { type: "string" },

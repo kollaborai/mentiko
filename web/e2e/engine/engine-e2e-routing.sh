@@ -18,7 +18,7 @@ fail() { printf '  fail %s\n' "$1"; FAIL=$((FAIL + 1)); }
 rcd() { # <args...> -> value|stderr|exit
   local out err rc
   err="$TMP_ROOT/rcd.err"
-  out="$(bash -c '
+  out="$(MENTIKO_CODE_ROOT="$REPO_ROOT" bash -c '
     set -uo pipefail
     source "'"$ROUTING_LIB"'"
     retry-calculate-delay "$@"

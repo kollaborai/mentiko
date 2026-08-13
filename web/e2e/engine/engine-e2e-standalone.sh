@@ -241,7 +241,7 @@ SNIP
 chmod +x "$SNIPPET"
 
 # build a trigger profile: cli = the stub path (unrecognized), NO log_path.
-TRIGGER_PROFILE="$TMP_ROOT/trigger-profile.json"
+TRIGGER_PROFILE="$TMP_ROOT/trigger.json"
 cat > "$TRIGGER_PROFILE" <<JSON
 { "id": "trigger", "name": "unrecognized cli, no log_path", "cli": "${STUB_CLI}" }
 JSON

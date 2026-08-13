@@ -63,7 +63,7 @@ describe("runner-v2 completion runner", () => {
     });
   });
 
-  it("imports core generation payload instead of failing a missing emit", () => {
+  it("allows an importable core generation artifact as the typed exception to marker-without-event failure", () => {
     const file = runPath();
     seedRun(file);
 
@@ -80,6 +80,7 @@ describe("runner-v2 completion runner", () => {
         artifactsDir: "/tmp/run-123/artifacts",
         importablePayload: true,
       },
+      completionRecoveryEvidence: "durable-marker",
       now: new Date("2026-06-25T10:00:00.000Z"),
     });
 
@@ -259,7 +260,7 @@ describe("runner-v2 completion runner", () => {
     });
   });
 
-  it("routes from a monitor-latched AGENT_COMPLETE marker when the declared event is missing", () => {
+  it("fails immediately from a monitor-latched AGENT_COMPLETE marker when the declared event is missing", () => {
     const file = runPath();
     seedRun(file);
     seedSubmittedAttempt(file);
@@ -285,24 +286,18 @@ describe("runner-v2 completion runner", () => {
     const decision = completeAgent(input);
 
     expect(decision).toMatchObject({
-      action: "route",
-      event: {
-        event: "draft-ready",
-        source: "writer",
-        data: "salvaged-from-agent-complete-marker",
-      },
-      route: {
-        action: "launch",
-        agentIds: ["reviewer"],
-      },
+      action: "fail",
+      reason: "agent writer reported AGENT_COMPLETE without declared event 'draft-ready'",
     });
     expect(readRunJson(file)).toMatchObject({
-      status: "running",
-      agents: [{ id: "writer", status: "complete" }],
+      status: "failed",
+      status_message: "agent writer reported AGENT_COMPLETE without declared event 'draft-ready'",
+      agents: [{ id: "writer", status: "failed" }],
     });
     expect(runnerV2Attempts(file)[0]).toMatchObject({
-      phase: "completed",
-      terminalReason: "completed_from_durable_marker",
+      phase: "completion_failed",
+      terminalReason: "no_completion_event",
+      terminalDetail: "declared completion event 'draft-ready' missing after AGENT_COMPLETE",
     });
   });
 
@@ -654,6 +649,37 @@ describe("runner-v2 completion runner", () => {
           terminalDetail: "empty emits last agent accepted as terminal completion",
         }],
       },
+    });
+  });
+
+  it("uses a durable marker to complete an empty-emits last agent even while its PTY is still alive", () => {
+    const file = runPath();
+    seedRun(file);
+    seedSubmittedAttempt(file);
+
+    const decision = completeAgent({
+      runJsonPath: file,
+      runId: "run-123",
+      agent: { id: "writer" },
+      chain: { name: "Build Chain", agents: [{ id: "writer" }] },
+      events: [],
+      completionRecoveryEvidence: "durable-marker",
+      liveness: { sessionAlive: true, processAlive: true, outputChanged: true },
+      terminal: {
+        runId: "run-123",
+        chainName: "Build Chain",
+        lastAgentId: "writer",
+      },
+      now: new Date("2026-06-25T10:00:00.000Z"),
+    });
+
+    expect(decision).toMatchObject({
+      action: "terminal",
+      reason: "empty-emits-last-agent",
+    });
+    expect(readRunJson(file)).toMatchObject({
+      status: "completed",
+      agents: [{ id: "writer", status: "complete" }],
     });
   });
 

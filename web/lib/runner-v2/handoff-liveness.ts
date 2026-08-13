@@ -1,11 +1,13 @@
 export interface PendingHandoff {
+  id?: string;
   pid: number;
   targetAgentIds: string[];
   startedAt: string;
+  heartbeatAt?: string;
 }
 
 type ProcessAlive = (pid: number) => boolean;
-const MAX_PENDING_HANDOFF_AGE_MS = 10 * 60 * 1000;
+const MAX_PENDING_HANDOFF_HEARTBEAT_AGE_MS = 2 * 60 * 1000;
 
 function objectValue(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -23,9 +25,11 @@ export function pendingHandoffs(run: Record<string, unknown>): PendingHandoff[] 
       : [];
     return Number.isInteger(item?.pid) && Number(item?.pid) > 0 && targetAgentIds.length > 0
       ? [{
+          ...(typeof item?.id === "string" && item.id ? { id: item.id } : {}),
           pid: Number(item?.pid),
           targetAgentIds,
           startedAt: typeof item?.startedAt === "string" ? item.startedAt : "",
+          ...(typeof item?.heartbeatAt === "string" ? { heartbeatAt: item.heartbeatAt } : {}),
         }]
       : [];
   });
@@ -56,8 +60,12 @@ export function livePendingHandoffAgentIds(
 
   const targets = new Set<string>();
   for (const handoff of pendingHandoffs(run)) {
-    const startedAt = new Date(handoff.startedAt).getTime();
-    if (!Number.isFinite(startedAt) || now - startedAt > MAX_PENDING_HANDOFF_AGE_MS || !isAlive(handoff.pid)) {
+    const heartbeatAt = new Date(handoff.heartbeatAt || handoff.startedAt).getTime();
+    if (
+      !Number.isFinite(heartbeatAt)
+      || now - heartbeatAt > MAX_PENDING_HANDOFF_HEARTBEAT_AGE_MS
+      || !isAlive(handoff.pid)
+    ) {
       continue;
     }
     for (const agentId of handoff.targetAgentIds) {

@@ -1,4 +1,4 @@
-import { readFileSync } from "fs";
+import { readFileSync, writeFileSync } from "fs";
 import { basename, dirname, join } from "path";
 import { buildLocalAiGatewayProxyEnv } from "@/lib/ai-gateway/local-proxy-env";
 import config, { ptyDaemonEnv } from "@/lib/config";
@@ -50,10 +50,20 @@ export interface AgentBootstrapPlanInput {
   runId: string;
   agentId?: string;
   workspacePath?: string;
+  /** Stable registered workspace used for profile and PTY identity lookup. */
+  sourceWorkspacePath?: string;
   namespaceId?: string;
   orgId?: string;
   env?: Record<string, string | undefined>;
   now?: Date;
+}
+
+export interface AgentBootstrapMonitorSpec {
+  chainPath: string;
+  emits: string;
+  interval: string;
+  maxStale: string;
+  runId: string;
 }
 
 export interface AgentBootstrapPlan {
@@ -66,6 +76,7 @@ export interface AgentBootstrapPlan {
   artifactsDir: string;
   eventsDir: string;
   projectRoot: string;
+  sourceWorkspacePath: string;
   /** Core generation chains may treat generation-result.json as the handoff. */
   coreGenerationChain?: boolean;
   profileId?: string;
@@ -75,6 +86,7 @@ export interface AgentBootstrapPlan {
   instructionPath: string;
   instructionPointer: string;
   localStartCommand: string;
+  monitorSpec: AgentBootstrapMonitorSpec;
   monitorCommand: string;
 }
 
@@ -82,6 +94,7 @@ export function buildAgentBootstrapPlan(input: AgentBootstrapPlanInput): AgentBo
   const chain = readChain(input.chainPath);
   const agent = resolveAgent(chain, input.agentId);
   const projectRoot = input.workspacePath || chain.config?.project_root || input.env?.MENTIKO_PROJECT_ROOT || input.runDir;
+  const sourceWorkspacePath = input.sourceWorkspacePath || projectRoot;
   const artifactsDir = join(input.runDir, "artifacts");
   // One configured project event root. Runner children may receive the same
   // root through EVENTS_DIR; there is no run-local compatibility directory.
@@ -90,17 +103,16 @@ export function buildAgentBootstrapPlan(input: AgentBootstrapPlanInput): AgentBo
   // record made mixed shell/typed runs invisible to the live stream reader.
   const stateDir = input.env?.STATE_DIR || config.stateDir;
   const sessionPrefix = resolveSessionPrefix(chain, agent);
-  const projectName = basename(projectRoot) || "workspace";
+  const projectName = basename(sourceWorkspacePath) || "workspace";
   const sessionName = `${projectName}-${sessionPrefix}-${input.runId}`;
   const statePath = runnerAgentStatePath(stateDir, sessionPrefix, input.runId);
   const instructionPath = join(artifactsDir, `${agent.id}-instructions.md`);
-  const profile = resolveAgentProfile(input.chainPath, agent.id || "", projectRoot, input.env);
+  const profile = resolveAgentProfile(input.chainPath, agent.id || "", sourceWorkspacePath, input.env);
   const gatewayEnv = resolveLocalAiGatewayProxyEnv(input.env);
   // One taskId for both TASK_ID and the TASK_CONTEXT blob. The bundle-only version
   // resolved them separately and disagreed: the export consulted agent.taskId, the
   // blob did not, so an agent-level taskId showed up in one and not the other.
   const taskId = input.env?.TASK_ID || metaString(chain.metadata, "taskId") || agent.taskId || "";
-  const chainId = chain.id || basename(dirname(input.chainPath));
   const runContextExports = {
     PATH: `${join(config.codeRoot, "bin")}:${input.env?.PATH || process.env.PATH || ""}`,
     MENTIKO_BIN: join(config.codeRoot, "bin", "mentiko"),
@@ -112,7 +124,10 @@ export function buildAgentBootstrapPlan(input: AgentBootstrapPlanInput): AgentBo
     MENTIKO_AGENT_EMITS: agent.emits || "",
     MENTIKO_AGENT_PROFILE_PATH: profile.path || "",
     MENTIKO_CODE_ROOT: config.codeRoot,
-    MENTIKO_PROJECT_ROOT: input.env?.MENTIKO_PROJECT_ROOT || projectRoot,
+    // Every process-facing workspace value must point at the node worktree.
+    // The registered source path remains plan metadata only and is never
+    // exported to an agent process that could mutate it.
+    MENTIKO_PROJECT_ROOT: projectRoot,
     MENTIKO_ORG_ROOT: input.env?.MENTIKO_ORG_ROOT || "",
     MENTIKO_NAMESPACE_ROOT: input.env?.MENTIKO_NAMESPACE_ROOT || "",
     // Completion copies this typed launch context into routed launches. Keep a
@@ -139,27 +154,32 @@ export function buildAgentBootstrapPlan(input: AgentBootstrapPlanInput): AgentBo
     TASK_DESIGN: input.env?.TASK_DESIGN || "",
     TASK_NOTES: input.env?.TASK_NOTES || "",
     TASK_COMMENTS: input.env?.TASK_COMMENTS || "",
-    TASK_CONTEXT: input.env?.TASK_CONTEXT || buildTaskContextJson({
-      runId: input.runId,
-      agentId: agent.id || "",
-      chainId,
-      taskId,
-      chain,
-      agent,
-      eventsDir,
-      artifactsDir,
-      projectRoot,
-    }),
+    TASK_CONTEXT: input.env?.TASK_CONTEXT || "",
+    TASK_CONTEXT_JSON: input.env?.TASK_CONTEXT_JSON || "",
     ...gatewayEnv,
     ...ptyDaemonEnv(),
     MENTIKO_READINESS_FAIL_CLOSED: input.env?.MENTIKO_READINESS_FAIL_CLOSED || "",
     MENTIKO_CLI_READY_TIMEOUT: input.env?.MENTIKO_CLI_READY_TIMEOUT || "",
     MENTIKO_CLI_READY_POLL: input.env?.MENTIKO_CLI_READY_POLL || "",
+    MENTIKO_STARTUP_RECOVERY: input.env?.MENTIKO_STARTUP_RECOVERY || "",
+    MENTIKO_STARTUP_RECOVERY_MAX: input.env?.MENTIKO_STARTUP_RECOVERY_MAX || "",
+    MENTIKO_ADVISOR_STALE_COUNT: input.env?.MENTIKO_ADVISOR_STALE_COUNT || "",
+    MENTIKO_MONITOR_MAX_NUDGES: input.env?.MENTIKO_MONITOR_MAX_NUDGES || "",
+    MENTIKO_MONITOR_NEVER_ARMED_GRACE: input.env?.MENTIKO_MONITOR_NEVER_ARMED_GRACE || "",
     // The monitor inherits these exports and hands them to typed completion.
     MENTIKO_RUNNER_V2: input.env?.MENTIKO_RUNNER_V2 || "",
     MENTIKO_RUNNER_V2_COMPLETION: input.env?.MENTIKO_RUNNER_V2_COMPLETION || "",
   };
   const instructionPointer = buildInstructionPointer(agent.id || "", instructionPath);
+  const monitorSpec: AgentBootstrapMonitorSpec = {
+    chainPath: input.chainPath,
+    emits: agent.emits || "",
+    interval: input.env?.MENTIKO_MONITOR_INTERVAL
+      || String(agent.monitor_interval || chain.config?.monitor_interval || 5),
+    maxStale: input.env?.MENTIKO_MONITOR_MAX_STALE
+      || String(agent.max_stale_count || 5),
+    runId: input.runId,
+  };
 
   return {
     agentId: agent.id || "",
@@ -171,6 +191,7 @@ export function buildAgentBootstrapPlan(input: AgentBootstrapPlanInput): AgentBo
     artifactsDir,
     eventsDir,
     projectRoot,
+    sourceWorkspacePath,
     ...(chain.metadata?.coreGenerationChain === true ? { coreGenerationChain: true } : {}),
     ...(profile.id ? { profileId: profile.id } : {}),
     ...(profile.path ? { profilePath: profile.path } : {}),
@@ -179,18 +200,107 @@ export function buildAgentBootstrapPlan(input: AgentBootstrapPlanInput): AgentBo
     instructionPath,
     instructionPointer,
     localStartCommand: buildLocalStartCommand(projectRoot, runContextExports, profile.path, input.env),
+    monitorSpec,
     monitorCommand: buildMonitorCommand({
       sessionName,
-      chainPath: input.chainPath,
+      chainPath: monitorSpec.chainPath,
       agentId: agent.id || "",
       agentName: agent.name || agent.id || "",
-      emits: agent.emits || "",
-      interval: String(agent.monitor_interval || chain.config?.monitor_interval || 5),
-      maxStale: String(agent.max_stale_count || 5),
-      runId: input.runId,
+      emits: monitorSpec.emits,
+      interval: monitorSpec.interval,
+      maxStale: monitorSpec.maxStale,
+      runId: monitorSpec.runId,
       env: runContextExports,
     }),
   };
+}
+
+/** Retarget process-facing plan fields while preserving registered-workspace identity and profile selection. */
+export function retargetAgentBootstrapPlan(
+  plan: AgentBootstrapPlan,
+  projectRoot: string,
+  env?: Record<string, string | undefined>,
+  chainPath?: string,
+): AgentBootstrapPlan {
+  const runContextExports = {
+    ...plan.runContextExports,
+    MENTIKO_PROJECT_ROOT: projectRoot,
+  };
+  const monitorSpec = {
+    ...plan.monitorSpec,
+    ...(chainPath ? { chainPath } : {}),
+  };
+  return {
+    ...plan,
+    projectRoot,
+    runContextExports,
+    monitorSpec,
+    localStartCommand: buildLocalStartCommand(
+      projectRoot,
+      runContextExports,
+      plan.profilePath,
+      env,
+    ),
+    monitorCommand: buildMonitorCommand({
+      sessionName: plan.sessionName,
+      chainPath: monitorSpec.chainPath,
+      agentId: plan.agentId,
+      agentName: plan.agentName,
+      emits: monitorSpec.emits,
+      interval: monitorSpec.interval,
+      maxStale: monitorSpec.maxStale,
+      runId: monitorSpec.runId,
+      env: runContextExports,
+    }),
+  };
+}
+
+/**
+ * Give the model and monitor a chain snapshot whose workspace references point
+ * at this node's worktree. The run-level chain remains the immutable source
+ * snapshot; exposing its registered source path to a coding agent defeats Git
+ * isolation even when the PTY cwd and MENTIKO_PROJECT_ROOT are correct.
+ */
+export function writeAgentNodeChainSnapshot(input: {
+  chainPath: string;
+  sourceWorkspacePath: string;
+  nodeWorkspacePath: string;
+  targetPath: string;
+}): string {
+  const rawChain = JSON.parse(readFileSync(input.chainPath, "utf8")) as unknown;
+  const rewritten = rewriteWorkspacePaths(
+    rawChain,
+    input.sourceWorkspacePath,
+    input.nodeWorkspacePath,
+  );
+  const chain = isRecord(rewritten) ? { ...rewritten } : {};
+  const config = isRecord(chain.config) ? { ...chain.config } : {};
+  config.project_root = input.nodeWorkspacePath;
+  chain.config = config;
+  writeFileSync(
+    input.targetPath,
+    `${JSON.stringify(chain, null, 2)}\n`,
+    { encoding: "utf8", mode: 0o600, flag: "wx" },
+  );
+  return input.targetPath;
+}
+
+function rewriteWorkspacePaths(value: unknown, source: string, node: string): unknown {
+  if (typeof value === "string") {
+    return value.includes(source) ? value.split(source).join(node) : value;
+  }
+  if (Array.isArray(value)) return value.map((item) => rewriteWorkspacePaths(item, source, node));
+  if (!isRecord(value)) return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [
+      key,
+      rewriteWorkspacePaths(item, source, node),
+    ]),
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 /**
@@ -253,47 +363,6 @@ export function extractAcceptanceCriteria(chain: BootstrapChainFile, agent: Boot
     || metaString(chain.metadata, "acceptanceCriteria")
     || (typeof fromContract === "string" ? fromContract : "")
     || "";
-}
-
-export interface TaskContextInput {
-  runId: string;
-  agentId: string;
-  chainId: string;
-  taskId: string;
-  chain: BootstrapChainFile;
-  agent: BootstrapChainAgent;
-  eventsDir: string;
-  artifactsDir: string;
-  projectRoot: string;
-}
-
-/**
- * The TASK_CONTEXT export: the run/chain/agent identity an agent needs to describe
- * its own position in the chain. Also ported from a bundle-only hand-edit.
- *
- * Deliberate change from that version: it read process.env.EVENTS_DIR /
- * ARTIFACTS_DIR / MENTIKO_PROJECT_ROOT, which are empty on a direct CLI launch —
- * the very path this branch fixes. Here the resolved values are already in scope,
- * so the caller passes them and the blob is never half-empty.
- */
-export function buildTaskContextJson(input: TaskContextInput): string {
-  const { chain, agent } = input;
-  return JSON.stringify({
-    RUN_ID: input.runId,
-    AGENT_ID: input.agentId,
-    EVENTS_DIR: input.eventsDir,
-    ARTIFACTS_DIR: input.artifactsDir,
-    WORKSPACE_PATH: input.projectRoot,
-    CHAIN_ID: input.chainId,
-    TASK_ID: input.taskId,
-    CHAIN_NAME: chain.name || "",
-    CHAIN_DESCRIPTION: chain.description || "",
-    AGENT_NAME: agent.name || agent.id || "",
-    AGENT_ROLE: agent.role || "",
-    CHAIN_OBJECTIVE: metaString(chain.metadata, "chainObjective") || chain.description || "",
-    IMPLEMENTATION_FOCUS: metaString(chain.metadata, "implementationFocus"),
-    SESSION_PREFIX: chain.config?.session_prefix || "",
-  }, null, 2);
 }
 
 function resolveSessionPrefix(chain: BootstrapChainFile, agent: BootstrapChainAgent): string {

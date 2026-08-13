@@ -1,7 +1,13 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "fs";
+import { execFileSync } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { assertTypedMonitorRuntimeAvailable, buildTypedCompletionContract, executeLocalBootstrap } from "@/lib/runner-v2/bootstrap-executor";
+import {
+  assertTypedMonitorRuntimeAvailable,
+  buildTypedCompletionContract,
+  executeLocalBootstrap,
+  resolveRunnerV2LaunchEnv,
+} from "@/lib/runner-v2/bootstrap-executor";
 import { startLaunch } from "@/lib/runner-v2/adapters";
 import { createRunRecord, updateRunJson, type RunStatus } from "@/lib/runner-v2/run-state";
 import { createRunRecordFile } from "@/lib/runs/run-record";
@@ -37,6 +43,7 @@ function plan(root: string): AgentBootstrapPlan {
     artifactsDir: join(root, "artifacts"),
     eventsDir: join(root, "events"),
     projectRoot: join(root, "workspace"),
+    sourceWorkspacePath: join(root, "workspace"),
     profileId: "default",
     profilePath: join(root, "profiles", "default.json"),
     runContextExports: {
@@ -62,6 +69,13 @@ function plan(root: string): AgentBootstrapPlan {
     instructionPath: join(root, "artifacts", "writer-instructions.md"),
     instructionPointer: `Read ${join(root, "artifacts", "writer-instructions.md")}`,
     localStartCommand: "eval \"$(node '/repo/lib/runner-agent-profile.js' command --profile-path '/tmp/profile.json' --interactive true --namespace-id 'default' --org-id 'default')\"",
+    monitorSpec: {
+      chainPath: join(root, "chain.json"),
+      emits: "done",
+      interval: "5",
+      maxStale: "5",
+      runId: "run-1",
+    },
     monitorCommand: "monitor-chain-agent workspace-writer-run-1",
   };
 }
@@ -116,6 +130,103 @@ describe("runner-v2 bootstrap executor", () => {
     expect(() => assertTypedMonitorRuntimeAvailable(root)).not.toThrow();
   });
 
+  it("loads task context once at the typed bootstrap boundary and carries the JSON snapshot", async () => {
+    const previousFetch = globalThis.fetch;
+    const fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      expect((init?.headers as Record<string, string>).Authorization).toBe("Bearer service-token");
+      const body = JSON.stringify(url.endsWith("/comments")
+        ? { data: { comments: [{ created_at: "2026-08-10T15:00:00.000Z", author: "marco", text: "Keep the target path exact." }] } }
+        : { data: { issue: {
+          id: "TASK-12",
+          title: "Propagate task context",
+          description: "Carry the task snapshot into the agent launch.",
+          issue_type: "task",
+          priority: 1,
+          acceptance_criteria: "The agent sees TASK_CONTEXT_JSON.",
+          design: "Load it at typed bootstrap.",
+          notes: "Do not launch with blank task variables.",
+        } } });
+      return { ok: true, status: 200, text: async () => body } as Response;
+    });
+    globalThis.fetch = fetch as typeof globalThis.fetch;
+
+    try {
+      const env = await resolveRunnerV2LaunchEnv({
+        taskId: "TASK-12",
+        runId: "run-1",
+        chainId: "task-context-chain",
+        env: {
+          NODE_ENV: "test",
+          MENTIKO_WEB_URL: "http://mentiko.test",
+          MENTIKO_SESSION_TOKEN: "run-token",
+          BETTER_AUTH_SECRET: "service-token",
+          NAMESPACE_ID: "default",
+          ORG_ID: "default",
+        },
+      });
+
+      expect(env).toMatchObject({
+        TASK_ID: "TASK-12",
+        TASK_TITLE: "Propagate task context",
+        TASK_PRIORITY: "1",
+        TASK_COMMENTS: "  [2026-08-10T15:00:00.000Z marco] Keep the target path exact.",
+      });
+      expect(env.TASK_CONTEXT).toContain("TITLE: Propagate task context");
+      expect(JSON.parse(env.TASK_CONTEXT_JSON || "{}")).toMatchObject({
+        task: { id: "TASK-12", title: "Propagate task context" },
+        source_run_id: "run-1",
+        chain_id: "task-context-chain",
+      });
+
+      await resolveRunnerV2LaunchEnv({
+        taskId: "TASK-12",
+        runId: "run-1",
+        chainId: "task-context-chain",
+        env,
+      });
+      expect(fetch).toHaveBeenCalledTimes(2);
+    } finally {
+      if (previousFetch) globalThis.fetch = previousFetch;
+      else delete (globalThis as { fetch?: typeof globalThis.fetch }).fetch;
+    }
+  });
+
+  it("uses the launcher process credential when the child env omits the service secret", async () => {
+    const previousFetch = globalThis.fetch;
+    const previousSecret = process.env.BETTER_AUTH_SECRET;
+    const fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect((init?.headers as Record<string, string>).Authorization).toBe("Bearer process-token");
+      const url = String(input);
+      const body = url.endsWith("/comments")
+        ? { data: { comments: [] } }
+        : { data: { issue: { id: "TASK-13", title: "Process credential fallback" } } };
+      return { ok: true, status: 200, text: async () => JSON.stringify(body) } as Response;
+    });
+    globalThis.fetch = fetch as typeof globalThis.fetch;
+    process.env.BETTER_AUTH_SECRET = "process-token";
+
+    try {
+      await resolveRunnerV2LaunchEnv({
+        taskId: "TASK-13",
+        runId: "run-13",
+        chainId: "task-context-chain",
+        env: {
+          NODE_ENV: "test",
+          MENTIKO_WEB_URL: "http://mentiko.test",
+          NAMESPACE_ID: "default",
+          ORG_ID: "default",
+        },
+      });
+      expect(fetch).toHaveBeenCalledTimes(2);
+    } finally {
+      if (previousSecret === undefined) delete process.env.BETTER_AUTH_SECRET;
+      else process.env.BETTER_AUTH_SECRET = previousSecret;
+      if (previousFetch) globalThis.fetch = previousFetch;
+      else delete (globalThis as { fetch?: typeof globalThis.fetch }).fetch;
+    }
+  });
+
   it("builds an exact typed completion contract for declared emits", () => {
     const root = tempDir();
     const contract = buildTypedCompletionContract({
@@ -167,6 +278,7 @@ describe("runner-v2 bootstrap executor", () => {
     const calls: Array<{ op: string; args: unknown[] }> = [];
     const executor = {
       remove: jest.fn(async (...args: unknown[]) => { calls.push({ op: "remove", args }); }),
+      list: jest.fn(async () => []),
       spawn: jest.fn(async (...args: unknown[]) => {
         calls.push({ op: "spawn", args });
         return { name: String(args[0]), pid: 123 };
@@ -190,6 +302,7 @@ describe("runner-v2 bootstrap executor", () => {
       env: {
         NODE_ENV: "test",
         RUNS_DIR: root,
+        MENTIKO_ORG_ROOT: root,
         PATH: "/bin",
         SECRET_THAT_MUST_NOT_BE_IN_SCRIPT: "nope",
       },
@@ -207,6 +320,12 @@ describe("runner-v2 bootstrap executor", () => {
     expect(instructions).toContain("Do NOT hand-write any .event file.");
     expect(instructions).toContain("Typed task context:");
     expect(instructions).toContain("TASK ID: TASK-12\nTITLE: Typed task");
+    expect(instructions).toContain("CURRENT EXECUTION FACTS (AUTHORITATIVE — COPY THESE VALUES EXACTLY WHEN RECORDING THIS RUN):");
+    expect(instructions).toContain("TASK_ID=TASK-12");
+    expect(instructions).toContain("RUN_ID=run-1");
+    expect(instructions).toContain("NODE_WORKSPACE=");
+    expect(instructions).toContain("NODE_BASE_COMMIT=");
+    expect(instructions).toContain("Never source current task/run/workspace/base-commit facts from DESCRIPTION, ACCEPTANCE CRITERIA, DESIGN NOTES, NOTES, or examples.");
     expect(instructions).not.toContain("ensure-event-file");
     expect(instructions).not.toContain("monitor-chain-agent");
     const startScript = readFileSync(join(root, "artifacts", "writer-start.sh"), "utf8");
@@ -214,6 +333,12 @@ describe("runner-v2 bootstrap executor", () => {
     expect(startScript).not.toContain("SECRET_THAT_MUST_NOT_BE_IN_SCRIPT");
     expect(startScript).not.toContain("chain-runner.sh");
     expect(calls.map((call) => call.op)).toEqual(["remove", "spawn", "sendKeys", "sendKeys", "remove", "spawn"]);
+    expect(executor.sendKeys).toHaveBeenNthCalledWith(
+      1,
+      "workspace-writer-run-1",
+      // no trailing \r: the daemon appends the return itself (sendKeys sets enter:true)
+      `cd '${join(root, "workspace")}' && bash '${join(root, "artifacts", "writer-start.sh")}' || exit $?`,
+    );
     expect(executor.spawn).toHaveBeenCalledWith(
       "workspace-writer-run-1",
       "zsh",
@@ -224,6 +349,7 @@ describe("runner-v2 bootstrap executor", () => {
           MENTIKO_RUNNER_V2_ACTIVE: "1",
           MENTIKO_RUNNER_V2_MODE: "typed-plan",
           MENTIKO_AGENT_ID: "writer",
+          MENTIKO_AGENT_ATTEMPT_ID: "run-1:writer:1",
         }),
       }),
     );
@@ -253,8 +379,205 @@ describe("runner-v2 bootstrap executor", () => {
       "monitor-workspace-writer-run-1",
       "bash",
       ["-lc", "monitor-chain-agent workspace-writer-run-1"],
-      expect.objectContaining({ cwd: join(root, "workspace") }),
+      expect.objectContaining({
+        cwd: join(root, "workspace"),
+        env: expect.objectContaining({ MENTIKO_AGENT_ATTEMPT_ID: "run-1:writer:1" }),
+      }),
     );
+  });
+
+  it("launches a Git-backed agent in its run-owned worktree with baseline evidence", async () => {
+    const root = tempDir();
+    const workspace = initializeGitWorkspace(root);
+    writeFileSync(join(workspace, "component.ts"), "export const value = 'preexisting-dirty';\n");
+    writeFileSync(join(root, "chain.json"), JSON.stringify({
+      config: { project_root: workspace },
+      agents: [{ id: "writer" }],
+    }));
+    const runJsonPath = seedRunJson(root);
+    const executor = executorWithCapture("claude ready >");
+
+    await executeLocalBootstrap(plan(root), {
+      ...context(root),
+      workspacePath: workspace,
+    }, executor);
+
+    const run = JSON.parse(readFileSync(runJsonPath, "utf8"));
+    expect(run.workspaceExecution).toMatchObject({
+      tracking: "git",
+      isolation: "git-worktree",
+      concurrentWritesIsolated: true,
+      baseline: { dirtyFromHead: true },
+      baselineRef: expect.stringContaining("refs/mentiko/runs/"),
+      integrationRef: expect.stringContaining("refs/mentiko/runs/"),
+      handoffs: [{
+        agentId: "writer",
+        tracking: "git",
+        nodeWorkspaceRecordPath: expect.any(String),
+      }],
+    });
+    const handoffPath = run.workspaceExecution.handoffs[0].artifactPath as string;
+    const handoff = JSON.parse(readFileSync(handoffPath, "utf8"));
+    expect(handoff).toMatchObject({
+      kind: "workspace-handoff",
+      tracking: "git",
+      isolation: "git-worktree",
+      concurrentWritesIsolated: true,
+      workspacePath: expect.stringContaining(".internal/workspace-isolation/worktrees/"),
+      nodeBaseCommit: run.workspaceExecution.baseline.snapshotCommit,
+      changeSet: { summary: { filesChanged: 0 } },
+    });
+    const agentSpawn = executor.spawn.mock.calls.find((call) => call[0] === "workspace-writer-run-1");
+    expect(agentSpawn?.[3]).toMatchObject({
+      cwd: handoff.workspacePath,
+      env: expect.objectContaining({ MENTIKO_PROJECT_ROOT: handoff.workspacePath }),
+    });
+    expect(handoff.workspacePath).not.toBe(workspace);
+    expect(readFileSync(join(workspace, "component.ts"), "utf8")).toContain("preexisting-dirty");
+    const instructions = readFileSync(join(root, "artifacts", "writer-instructions.md"), "utf8");
+    expect(instructions).toContain("WORKSPACE EVIDENCE:");
+    expect(instructions).toContain(`Run baseline artifact: ${run.workspaceExecution.baselineArtifactPath}`);
+    expect(instructions).toContain(`Agent handoff artifact: ${handoffPath}`);
+    expect(instructions).toContain("HEAD is not the run baseline.");
+    expect(instructions).toContain("the handoff artifact changeSet is the authoritative task delta");
+    expect(instructions).toContain("Isolation: dedicated Git worktree (concurrent node writes are isolated).");
+    expect(instructions).toContain(`Node workspace: ${handoff.workspacePath}`);
+    const nodeChainName = readdirSync(join(root, "artifacts")).find((name) => name.endsWith("-chain.json"));
+    expect(nodeChainName).toBeDefined();
+    const nodeChainPath = join(root, "artifacts", nodeChainName!);
+    const nodeChain = JSON.parse(readFileSync(nodeChainPath, "utf8")) as { config?: { project_root?: string } };
+    expect(nodeChain.config?.project_root).toBe(handoff.workspacePath);
+    expect(instructions).toContain(nodeChainPath);
+    expect(instructions).not.toContain(`project_root\": \"${workspace}`);
+  });
+
+  it("retains capacity and the worktree when failed startup cannot prove the agent PTY stopped", async () => {
+    const root = tempDir();
+    const workspace = initializeGitWorkspace(root);
+    writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
+    const runJsonPath = seedRunJson(root);
+    const liveSessions = new Set<string>();
+    const executor = {
+      remove: jest.fn(async () => {}),
+      list: jest.fn(async () => [...liveSessions].map((name) => ({ name }))),
+      spawn: jest.fn(async (name: string) => {
+        liveSessions.add(name);
+        return { name, pid: 123 };
+      }),
+      sendKeys: jest.fn(async () => {
+        throw new Error("start command transport failed");
+      }),
+      capture: jest.fn(async () => ""),
+    };
+
+    await expect(executeLocalBootstrap(plan(root), {
+      ...context(root),
+      workspacePath: workspace,
+    }, executor)).rejects.toThrow(
+      "capacity retained because startup cleanup was not proven: PTY removal could not be proven",
+    );
+
+    const run = JSON.parse(readFileSync(runJsonPath, "utf8"));
+    const attempt = run.runnerV2.attempts[0];
+    const handoff = JSON.parse(readFileSync(run.workspaceExecution.handoffs[0].artifactPath, "utf8"));
+    const nodeWorkspacePath = handoff.workspacePath as string;
+    expect(attempt).toMatchObject({
+      phase: "process_spawned",
+      capacitySlotAcquiredAt: expect.any(String),
+    });
+    expect(attempt.capacitySlotReleasedAt).toBeUndefined();
+    expect(liveSessions.has("workspace-writer-run-1")).toBe(true);
+    expect(existsSync(nodeWorkspacePath)).toBe(true);
+  });
+
+  it("retains capacity when PTYs stop but durable startup worktree cleanup fails", async () => {
+    const root = tempDir();
+    const workspace = initializeGitWorkspace(root);
+    writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
+    const runJsonPath = seedRunJson(root);
+    const liveSessions = new Set<string>();
+    const executor = {
+      remove: jest.fn(async (name: string) => {
+        liveSessions.delete(name);
+      }),
+      list: jest.fn(async () => [...liveSessions].map((name) => ({ name }))),
+      spawn: jest.fn(async (name: string) => {
+        liveSessions.add(name);
+        return { name, pid: 123 };
+      }),
+      sendKeys: jest.fn(async () => {
+        const run = JSON.parse(readFileSync(runJsonPath, "utf8"));
+        writeFileSync(run.workspaceExecution.handoffs[0].nodeWorkspaceRecordPath, "{invalid-json");
+        throw new Error("start command transport failed");
+      }),
+      capture: jest.fn(async () => ""),
+    };
+
+    await expect(executeLocalBootstrap(plan(root), {
+      ...context(root),
+      workspacePath: workspace,
+    }, executor)).rejects.toThrow(
+      "capacity retained because startup cleanup was not proven",
+    );
+
+    const run = JSON.parse(readFileSync(runJsonPath, "utf8"));
+    const attempt = run.runnerV2.attempts[0];
+    const handoff = JSON.parse(readFileSync(run.workspaceExecution.handoffs[0].artifactPath, "utf8"));
+    const nodeWorkspacePath = handoff.workspacePath as string;
+    expect(attempt).toMatchObject({
+      phase: "process_spawned",
+      capacitySlotAcquiredAt: expect.any(String),
+    });
+    expect(attempt.capacitySlotReleasedAt).toBeUndefined();
+    expect(liveSessions.size).toBe(0);
+    expect(existsSync(nodeWorkspacePath)).toBe(true);
+  });
+
+  it("blocks the run and preserves a changed startup worktree instead of requeueing it", async () => {
+    const root = tempDir();
+    const workspace = initializeGitWorkspace(root);
+    writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
+    const runJsonPath = seedRunJson(root);
+    const liveSessions = new Set<string>();
+    const executor = {
+      remove: jest.fn(async (name: string) => {
+        liveSessions.delete(name);
+      }),
+      list: jest.fn(async () => [...liveSessions].map((name) => ({ name }))),
+      spawn: jest.fn(async (name: string) => {
+        liveSessions.add(name);
+        return { name, pid: 123 };
+      }),
+      sendKeys: jest.fn(async () => {
+        const run = JSON.parse(readFileSync(runJsonPath, "utf8"));
+        const handoff = JSON.parse(readFileSync(run.workspaceExecution.handoffs[0].artifactPath, "utf8"));
+        writeFileSync(join(handoff.workspacePath, "component.ts"), "export const value = 'startup-change';\n");
+        throw new Error("start command transport failed");
+      }),
+      capture: jest.fn(async () => ""),
+    };
+
+    await expect(executeLocalBootstrap(plan(root), {
+      ...context(root),
+      workspacePath: workspace,
+    }, executor)).resolves.toBeUndefined();
+
+    const run = JSON.parse(readFileSync(runJsonPath, "utf8"));
+    const attempt = run.runnerV2.attempts[0];
+    const handoff = JSON.parse(readFileSync(run.workspaceExecution.handoffs[0].artifactPath, "utf8"));
+    expect(run).toMatchObject({
+      status: "blocked",
+      blockedReason: expect.stringContaining("changed its isolated worktree; preserved for review"),
+      agents: [expect.objectContaining({ id: "writer", status: "blocked" })],
+    });
+    expect(attempt).toMatchObject({
+      phase: "released",
+      terminalReason: "interrupted_bootstrap_changes",
+      capacitySlotReleasedAt: expect.any(String),
+    });
+    expect(liveSessions.size).toBe(0);
+    expect(existsSync(handoff.workspacePath)).toBe(true);
+    expect(readFileSync(join(handoff.workspacePath, "component.ts"), "utf8")).toContain("startup-change");
   });
 
   it("leaves watcher and watchdog ownership with the background worker", async () => {
@@ -264,6 +587,7 @@ describe("runner-v2 bootstrap executor", () => {
     const executor = {
       has: jest.fn(async () => false),
       remove: jest.fn(async () => {}),
+      list: jest.fn(async () => []),
       spawn: jest.fn(async (name: string) => ({ name, pid: 123 })),
       sendKeys: jest.fn(async () => {}),
       capture: jest.fn(async () => "claude ready >"),
@@ -562,6 +886,7 @@ describe("runner-v2 bootstrap executor", () => {
     ];
     const executor = {
       remove: jest.fn(async () => {}),
+      list: jest.fn(async () => []),
       spawn: jest.fn(async (name: string) => ({ name, pid: 123 })),
       sendKeys: jest.fn(async () => {}),
       sendRaw: jest.fn(async () => {}),
@@ -576,7 +901,7 @@ describe("runner-v2 bootstrap executor", () => {
       chainName: "Test Chain",
       logFd: 1,
       cwd: "/repo",
-      env: { NODE_ENV: "test", RUNS_DIR: root, PATH: "/bin" },
+      env: { NODE_ENV: "test", RUNS_DIR: root, MENTIKO_ORG_ROOT: root, PATH: "/bin" },
     }, executor);
 
     expect(executor.sendRaw).toHaveBeenCalledWith("workspace-writer-run-1", "\r");
@@ -591,6 +916,7 @@ describe("runner-v2 bootstrap executor", () => {
     let sent = false;
     const executor = {
       remove: jest.fn(async () => {}),
+      list: jest.fn(async () => []),
       spawn: jest.fn(async (name: string) => ({ name, pid: 123 })),
       sendKeys: jest.fn(async (_name: string, text: string) => { if (text.includes("writer-instructions.md")) sent = true; }),
       sendRaw: jest.fn(async () => {}),
@@ -605,7 +931,7 @@ describe("runner-v2 bootstrap executor", () => {
       chainName: "Test Chain",
       logFd: 1,
       cwd: "/repo",
-      env: { NODE_ENV: "test", RUNS_DIR: root, PATH: "/bin" },
+      env: { NODE_ENV: "test", RUNS_DIR: root, MENTIKO_ORG_ROOT: root, PATH: "/bin" },
     }, executor);
 
     const attempts = (JSON.parse(readFileSync(runJsonPath, "utf8")).runnerV2 || {}).attempts || [];
@@ -636,6 +962,7 @@ describe("runner-v2 bootstrap executor", () => {
       let captureCount = 0;
       const executor = {
         remove: jest.fn(async () => {}),
+        list: jest.fn(async () => []),
         spawn: jest.fn(async (name: string) => ({ name, pid: 123 })),
         sendKeys: jest.fn(async () => {}),
         sendRaw: jest.fn(async () => {}),
@@ -686,6 +1013,7 @@ describe("runner-v2 bootstrap executor", () => {
       const captures = ["claude ready >", "❯ Read instructions"];
       const executor = {
         remove: jest.fn(async () => {}),
+        list: jest.fn(async () => []),
         spawn: jest.fn(async (name: string) => ({ name, pid: 123 })),
         sendKeys: jest.fn(async () => {}),
         sendRaw: jest.fn(() => new Promise<void>((resolve) => setTimeout(resolve, 10_000))),
@@ -801,6 +1129,63 @@ describe("runner-v2 bootstrap executor", () => {
     expect(executor.sendKeys).toHaveBeenCalledWith("workspace-writer-run-1", expect.stringContaining("writer-instructions.md"));
     const attempts = (JSON.parse(readFileSync(join(root, "run.json"), "utf8")).runnerV2 || {}).attempts || [];
     expect(attempts[0]?.phase).toBe("instructions_submitted");
+  });
+
+  it("applies a bounded typed startup recovery decision before submitting instructions", async () => {
+    const root = tempDir();
+    const profilesDir = join(root, "profiles");
+    const advisorCli = join(root, "advisor-cli.sh");
+    writeProfile(root, {
+      enabled: true,
+      ready_patterns: [{ name: "ready", type: "text", value: "Provider boot complete" }],
+      recoverable_patterns: [{ name: "press-enter", type: "text", value: "Press Enter", action: "recover", risk: "low" }],
+    });
+    writeFileSync(advisorCli, [
+      "#!/usr/bin/env bash",
+      "cat >/dev/null",
+      "printf '%s\\n' '{\"action\":\"send_keys\",\"keys\":[\"ENTER\"],\"confidence\":0.99,\"risk\":\"low\",\"reason\":\"benign startup prompt\"}'",
+      "",
+    ].join("\n"));
+    chmodSync(advisorCli, 0o700);
+    writeFileSync(join(profilesDir, "advisor.json"), JSON.stringify({
+      id: "advisor",
+      name: "Advisor",
+      cli: advisorCli,
+      isAdvisorDefault: true,
+    }));
+    writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
+    const runJsonPath = seedRunJson(root);
+    let captureCount = 0;
+    const executor = {
+      remove: jest.fn(async () => {}),
+      list: jest.fn(async () => []),
+      spawn: jest.fn(async (name: string) => ({ name, pid: 123 })),
+      sendKeys: jest.fn(async () => {}),
+      sendRaw: jest.fn(async () => {}),
+      capture: jest.fn(async () => {
+        captureCount += 1;
+        return captureCount === 1 ? "Press Enter to continue" : "Provider boot complete";
+      }),
+    };
+    const recoveryPlan = plan(root);
+    recoveryPlan.runContextExports = {
+      ...recoveryPlan.runContextExports,
+      AGENT_PROFILES_DIR: profilesDir,
+      MENTIKO_STARTUP_RECOVERY: "1",
+      MENTIKO_STARTUP_RECOVERY_MAX: "1",
+    };
+
+    await executeLocalBootstrap(recoveryPlan, context(root), executor);
+
+    expect(executor.sendRaw).toHaveBeenCalledWith("workspace-writer-run-1", "\r");
+    expect(readFileSync(join(root, "artifacts", "writer-startup-recovery-decisions.jsonl"), "utf8")).toContain(
+      "\"action\":\"send_keys\"",
+    );
+    const attempts = (JSON.parse(readFileSync(runJsonPath, "utf8")).runnerV2 || {}).attempts || [];
+    expect(attempts[0]).toMatchObject({
+      phase: "instructions_submitted",
+      recoveryDecisionCount: 1,
+    });
   });
 
   it.each([
@@ -920,7 +1305,12 @@ function context(root: string): RunnerV2LaunchContext {
     chainName: "Test Chain",
     logFd: 1,
     cwd: "/repo",
-    env: { NODE_ENV: "test" as const, RUNS_DIR: root, PATH: "/bin" },
+    env: {
+      NODE_ENV: "test" as const,
+      RUNS_DIR: root,
+      MENTIKO_ORG_ROOT: root,
+      PATH: "/bin",
+    },
   };
 }
 
@@ -937,11 +1327,29 @@ function writeProfile(root: string, readiness: unknown) {
 function executorWithCapture(output: string) {
   return {
     remove: jest.fn(async () => {}),
-    spawn: jest.fn(async (name: string) => ({ name, pid: 123 })),
+    list: jest.fn(async () => []),
+    spawn: jest.fn(async (
+      name: string,
+      _cmd?: string,
+      _args?: string[],
+      _opts?: { cwd?: string; env?: Record<string, string> },
+    ) => ({ name, pid: 123 })),
     sendKeys: jest.fn(async () => {}),
     sendRaw: jest.fn(async () => {}),
     capture: jest.fn(async () => output),
   };
+}
+
+function initializeGitWorkspace(root: string): string {
+  const workspace = join(root, "workspace");
+  mkdirSync(workspace, { recursive: true });
+  execFileSync("git", ["init", "-q"], { cwd: workspace });
+  execFileSync("git", ["config", "user.name", "Bootstrap Test"], { cwd: workspace });
+  execFileSync("git", ["config", "user.email", "bootstrap@example.com"], { cwd: workspace });
+  writeFileSync(join(workspace, "component.ts"), "export const value = 'original';\n");
+  execFileSync("git", ["add", "component.ts"], { cwd: workspace });
+  execFileSync("git", ["commit", "-qm", "initial"], { cwd: workspace });
+  return workspace;
 }
 
 async function flushMicrotasks(iterations = 12): Promise<void> {

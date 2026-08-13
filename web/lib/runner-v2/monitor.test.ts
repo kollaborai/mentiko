@@ -55,10 +55,11 @@ describe("runChainMonitor — driver", () => {
     expect(calls.died).toBe(0);
   });
 
-  it("stops cleanly when the session disappears", async () => {
-    const { io } = scriptedIO([{ alive: false }]);
+  it("fails when the session disappears without completion evidence", async () => {
+    const { io, calls } = scriptedIO([{ alive: false }]);
     const res = await runChainMonitor("s", io, {}, 0);
-    expect(res.reason).toBe("session-gone");
+    expect(res.reason).toBe("died");
+    expect(calls.died).toBe(1);
   });
 
   it("completion evidence beats session-gone classification", async () => {
@@ -69,6 +70,18 @@ describe("runChainMonitor — driver", () => {
 
     expect(res.reason).toBe("complete");
     expect(calls.complete).toBe(1);
+    expect(calls.died).toBe(0);
+  });
+
+  it("fails when the launched session never appears and no completion evidence exists", async () => {
+    const { io, calls } = scriptedIO([]);
+    io.hasSession = async () => false;
+    io.sleep = async () => {};
+
+    const res = await runChainMonitor("s", io, {}, 0);
+
+    expect(res.reason).toBe("died");
+    expect(calls.died).toBe(1);
   });
 
   it("TASK-093: an agent that produces output for many cycles then latches completes — never died/stalled", async () => {

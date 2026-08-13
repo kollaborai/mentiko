@@ -34,8 +34,18 @@ export const GET = withErrorHandling(async (
     throw new NotFound("Decision", id);
   }
 
-  // stale job detection: if decision is "researching" but the job is dead, reset
-  if (decision.status === "researching") {
+  // Stale research detection covers decisions that were left in intake by an
+  // older self-heal as well as decisions still marked researching. Keep the
+  // dead pointer visible to the UI so a human can repair it explicitly.
+  const hasUnfinishedResearchPointer =
+    (decision.status === "researching")
+    || (
+      decision.status === "intake"
+      && !decision.brief
+      && decision.options.length === 0
+      && Boolean(decision.researchRunId || decision.activeJobId)
+    );
+  if (hasUnfinishedResearchPointer) {
     let isStale = false;
 
     if (decision.researchRunId) {
@@ -67,7 +77,7 @@ export const GET = withErrorHandling(async (
               isStale = true;
             }
           } else {
-            isStale = run.status === "failed" || run.status === "cancelled" || run.status === "stopped";
+            isStale = ["failed", "blocked", "cancelled", "stopped", "deleted", "unknown"].includes(run.status);
           }
         } catch {
           isStale = true;
@@ -83,11 +93,13 @@ export const GET = withErrorHandling(async (
     }
 
     if (isStale) {
-      const updated = await updateDecision(nsId, orgId, id, {
-        status: "intake",
-        activeJobId: undefined,
-      }, workspacePath);
-      return apiSuccess({ decision: updated });
+      if (decision.status === "researching") {
+        const updated = await updateDecision(nsId, orgId, id, {
+          activeJobId: undefined,
+        }, workspacePath);
+        return apiSuccess({ decision: { ...updated, researchRecovery: "dead" as const } });
+      }
+      return apiSuccess({ decision: { ...decision, researchRecovery: "dead" as const } });
     }
   }
 

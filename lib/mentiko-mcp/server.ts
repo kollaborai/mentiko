@@ -269,7 +269,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
 
     // ---------- chains (tier A reads, tier B/C writes) ----------
     if (name === "list_chains") {
-      const result = await chains.listChains();
+      const result = await chains.listChains(args.id);
       return textResult(JSON.stringify(result, null, 2));
     }
 
@@ -340,7 +340,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
 
     // ---------- agents (tier A reads, tier B writes) ----------
     if (name === "list_agents") {
-      const result = await agents.listAgents(args.scope);
+      const result = await agents.listAgents(args.id);
       return textResult(JSON.stringify(result, null, 2));
     }
 
@@ -386,6 +386,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
         design: args.design,
         estimated_minutes: args.estimated_minutes,
         due_at: args.due_at,
+        autoRun: args.auto_run,
+        chainId: args.chain_id,
+        chainName: args.chain_name,
+        idempotencyKey: args.idempotency_key,
+        logicalKey: args.logical_key,
       });
       const taskId = result?.task?.id;
       if (taskId) await dispatchEffect("navigate", { route: `/tasks/${taskId}` });

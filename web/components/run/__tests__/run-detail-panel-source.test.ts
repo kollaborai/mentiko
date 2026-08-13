@@ -20,13 +20,22 @@ describe("run detail terminal interactivity source contract", () => {
     expect(source).toContain("running");
   });
 
+  it("opens active runs on the live terminal and selects a live agent", () => {
+    expect(source).toContain("function findLiveAgent");
+    expect(source).toContain("setOutputView(\"terminal\")");
+    expect(source).toContain('defaultValue={isActive ? "output" : "goal"}');
+    expect(source).toContain("key={runId}");
+    expect(source).toContain("min-h-[min(560px,70vh)]");
+    expect(source).not.toContain("min-h-[720px]");
+  });
+
   it("supports embedding the canonical run detail surface inside another workflow", () => {
     expect(source).toContain("embedded?: boolean");
     expect(source).toContain(
       "RunDetailPanel({ runId, onBack, onDelete, embedded",
     );
     expect(source).toContain("const panelClassName = embedded");
-    expect(source).toContain('"flex min-h-[720px]');
+    expect(source).toContain('"flex h-full min-h-[min(560px,70vh)]');
   });
 
   it("stacks embedded run headers so narrow task panes do not overflow", () => {

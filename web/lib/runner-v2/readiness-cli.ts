@@ -21,6 +21,14 @@ import { classifyCliReadiness, type CliReadinessResult } from "@/lib/runner-v2/r
 type Command = "classify" | "wait" | "result" | "result-field";
 type ProcessResult = { status: number | null; stdout: string };
 
+export interface StartupRecoveryDecision extends Record<string, unknown> {
+  action: "send_keys" | "retry_launch";
+  confidence: number;
+  risk: "low";
+  reason: string;
+  keys?: string[];
+}
+
 export interface StartupRecoveryInput {
   enabled: boolean;
   maxAttempts: number;
@@ -176,10 +184,40 @@ function attemptStartupRecovery(
   run: (command: string, args: string[]) => ProcessResult,
 ): boolean {
   const recovery = input.recovery;
-  if (!recovery?.profilesDir) return false;
+  if (!recovery) return false;
+  const payload = decideStartupRecovery({
+    recovery,
+    readiness,
+    output,
+    advisorRun: input.advisorRun,
+  });
+  if (!payload) return false;
+
+  if (payload.action === "send_keys") {
+    if (!payload.keys?.length) return false;
+    let applied = false;
+    for (const key of payload.keys) {
+      const sent = run(input.ptyCommand, ["send", input.session, "--raw", recoveryKeyBytes(key)]);
+      if (sent.status !== 0) return false;
+      applied = true;
+    }
+    return applied;
+  }
+  if (!recovery.command) return false;
+  return run(input.ptyCommand, ["send", input.session, recovery.command]).status === 0;
+}
+
+export function decideStartupRecovery(input: {
+  recovery: StartupRecoveryInput;
+  readiness: CliReadinessResult;
+  output: string;
+  advisorRun?: (command: string, input: string) => ProcessResult;
+}): StartupRecoveryDecision | undefined {
+  const { recovery } = input;
+  if (!recovery.profilesDir) return undefined;
   let advisor;
-  try { advisor = resolveDefaultProfile(recovery.profilesDir, "advisor"); } catch { return false; }
-  if (!advisor) return false;
+  try { advisor = resolveDefaultProfile(recovery.profilesDir, "advisor"); } catch { return undefined; }
+  if (!advisor) return undefined;
 
   let advisorCommand: string;
   try {
@@ -190,36 +228,20 @@ function attemptStartupRecovery(
       orgId: recovery.orgId || "default",
       purpose: "agent",
     });
-  } catch { return false; }
+  } catch { return undefined; }
 
-  const prompt = startupRecoveryPrompt(recovery, readiness, output);
+  const prompt = startupRecoveryPrompt(recovery, input.readiness, input.output);
   const advisorRun = input.advisorRun || ((command, advisorInput) => spawnSync("/bin/bash", ["-lc", command], {
     input: advisorInput,
     encoding: "utf8",
     timeout: 120_000,
   }));
   const response = advisorRun(advisorCommand, prompt);
-  if (response.status !== 0) return false;
+  if (response.status !== 0) return undefined;
   const payload = parseAdvisorPayload(typeof response.stdout === "string" ? response.stdout : "");
-  if (!payload || !isSafeRecoveryDecision(payload)) return false;
+  if (!payload || !isSafeRecoveryDecision(payload)) return undefined;
   appendRecoveryDecision(recovery, payload);
-
-  if (payload.action === "send_keys") {
-    if (!Array.isArray(payload.keys) || payload.keys.length === 0) return false;
-    let applied = false;
-    for (const key of payload.keys) {
-      if (typeof key !== "string") return false;
-      const sent = run(input.ptyCommand, ["send", input.session, "--raw", recoveryKeyBytes(key)]);
-      if (sent.status !== 0) return false;
-      applied = true;
-    }
-    return applied;
-  }
-  if (payload.action === "retry_launch") {
-    if (!recovery.command) return false;
-    return run(input.ptyCommand, ["send", input.session, recovery.command]).status === 0;
-  }
-  return false;
+  return payload;
 }
 
 function startupRecoveryPrompt(recovery: StartupRecoveryInput, readiness: CliReadinessResult, output: string): string {
@@ -249,7 +271,7 @@ function parseAdvisorPayload(text: string): Record<string, unknown> | undefined 
   } catch { return undefined; }
 }
 
-function isSafeRecoveryDecision(value: Record<string, unknown>): value is Record<string, unknown> & { action: string; confidence: number; risk: string; reason: string; keys?: unknown[] } {
+function isSafeRecoveryDecision(value: Record<string, unknown>): value is StartupRecoveryDecision {
   return typeof value.action === "string"
     && ["send_keys", "retry_launch", "suggest_profile_fix", "ask_human", "no_action"].includes(value.action)
     && typeof value.confidence === "number"
@@ -257,10 +279,18 @@ function isSafeRecoveryDecision(value: Record<string, unknown>): value is Record
     && typeof value.reason === "string"
     && value.confidence >= 0.85
     && value.risk === "low"
-    && (value.action === "send_keys" || value.action === "retry_launch");
+    && (value.action === "send_keys" || value.action === "retry_launch")
+    && (
+      value.action !== "send_keys"
+      || (
+        Array.isArray(value.keys)
+        && value.keys.length > 0
+        && value.keys.every((key) => typeof key === "string")
+      )
+    );
 }
 
-function recoveryKeyBytes(key: string): string {
+export function recoveryKeyBytes(key: string): string {
   switch (key) {
     case "ENTER": case "RETURN": case "CR": case "\\r": case "\\n": return "\r";
     case "ESC": case "ESCAPE": return "\x1b";
@@ -374,7 +404,16 @@ function reject(values: Map<string, string>, allowed: string[]): void { for (con
 function isCommand(value: string | undefined): value is Command { return value === "classify" || value === "wait" || value === "result" || value === "result-field"; }
 function usage(): string { return "usage: runner-readiness <classify|wait|result|result-field> [options]"; }
 
-if (require.main === module) {
+// This module is bundled into several runner entrypoints. A plain
+// `require.main === module` guard also fires for those bundles, causing the
+// embedded CLI to parse the runner's arguments and set exitCode=1. Only run
+// the CLI when the readiness entrypoint itself is the process entrypoint.
+function isStandaloneReadinessCli(): boolean {
+  const entrypoint = process.argv[1] || "";
+  return /(?:^|[\\/])(?:runner-readiness|readiness-cli)(?:\.(?:c|m)?[jt]s)?$/.test(entrypoint);
+}
+
+if (typeof require !== "undefined" && typeof module !== "undefined" && require.main === module && isStandaloneReadinessCli()) {
   try { runReadinessCli(process.argv.slice(2)); }
   catch (error) { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; }
 }

@@ -22,6 +22,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   assertValidGeneratedChainDeliveryContract,
   GENERATED_CHAIN_CONTRACT_SHAPE,
+  TASK_LINKED_CHAIN_RUNTIME_RULE,
 } from "@/lib/chains/generated-chain-delivery-contract";
 
 export interface ChainGeneratorOptions {
@@ -144,6 +145,14 @@ export function validateGeneratedChain(value: unknown): GeneratedChain {
     });
   }
 
+  // Deliberately NOT routed through generated-chain-acceptance (B3): this CLI
+  // is standalone -- it has no namespace/org, writes a chain file to --output,
+  // and never persists to the agent registry, the rejection ledger, or an
+  // accepted manifest. It shares the ONE validator (which includes the typed
+  // v2 lifecycle rules), so it cannot drift from the platform's semantics; it
+  // simply enforces them without the namespace-scoped circuit breaker, which
+  // is the correct default for a tool that has no namespace. A chain produced
+  // here is accepted for real when it enters the platform through save/import.
   assertValidGeneratedChainDeliveryContract(value);
 
   return { ...value, name: value.name, agents };
@@ -219,6 +228,9 @@ REQUIREMENTS:
 12. Include metadata.generated_chain_contract exactly as ${GENERATED_CHAIN_CONTRACT_SHAPE}. The assertion field is named acceptance_criteria; any other name for it is rejected. Use delivery for workspace file/code changes (requires edit_files — write_artifacts does not count, it only covers an agent's own generation handoff file), operations for command/API/MCP state mutations (requires run_commands), and research for evidence-only work. Running tests does not turn a code-writing task into operations.
 13. The last agent must be a final verifier with final_verifier: true, verifies_acceptance_criteria: true, and a success_assertion tied to metadata.generated_chain_contract.acceptance_criteria. It must verify evidence, not merely report that agents ran.
 14. Write every agent INLINE and complete: id, name, triggers, emits, prompt, authorities, deliverable, verification. Never emit a {"$ref": "agent-id"} catalog reference here, even if the REFERENCE TEMPLATE above uses one. This generator is standalone and has no agent registry to resolve a $ref against, so a reference would be validated as an agent that declares nothing and the chain would be rejected.
+15. Enforce the task-linked runtime contract below for every generated agent.
+
+${TASK_LINKED_CHAIN_RUNTIME_RULE.trim()}
 
 OUTPUT FORMAT:
 Raw JSON only. No backticks, no 'json' label, nothing but the JSON object.`;

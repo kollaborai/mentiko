@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { findCompletionEvent } from "@/lib/runner-v2/completion";
 import { readRunJson, type RunRecord } from "@/lib/runner-v2/run-state";
 import type { AgentAttemptRecord } from "@/lib/runner-v2/agent-attempt";
-import { decideNextRoute, type RoutingChain, type RoutingDecision } from "@/lib/runner-v2/routing";
+import { decideNextRoute, routingContextForEvents, type RoutingChain, type RoutingDecision } from "@/lib/runner-v2/routing";
 import { parseRunnerEvent, type RunnerEventRecord } from "@/lib/runner-v2/events";
 import { withRunJsonLock, writeRunJsonAtomic } from "@/lib/runs/run-json-lock";
 
@@ -12,6 +12,8 @@ export interface RecoverLateCompletionInput {
   runId: string;
   chain: RoutingChain;
   events: Array<RunnerEventRecord | string>;
+  /** Active + archived same-run evidence used only for routing prerequisites. */
+  firedEvents?: Array<RunnerEventRecord | string>;
   now?: Date;
   testHooks?: {
     afterLockAcquired?: () => void;
@@ -94,6 +96,7 @@ export function recoverLateCompletionEvents(input: RecoverLateCompletionInput): 
     input.testHooks?.afterLockAcquired?.();
     const current = readRunJson(input.runJsonPath);
     const events = readPhysicalEvents(input.events);
+    const firedEvents = input.firedEvents || input.events;
     const allAgentIds = input.chain.agents.map((candidate) => candidate.id);
     const runnerV2 = runnerV2State(current);
 
@@ -102,6 +105,7 @@ export function recoverLateCompletionEvents(input: RecoverLateCompletionInput): 
     const committed = materializeCommittedDeliveries({
       commits: runnerV2.lateCompletionRecoveries,
       events,
+      firedEvents,
       chain: input.chain,
       allAgentIds,
       runId: input.runId,
@@ -121,7 +125,12 @@ export function recoverLateCompletionEvents(input: RecoverLateCompletionInput): 
       const match = findCompletionEvent({ agent, runId: input.runId, events, allAgentIds });
       if (!match.matched || !match.event?.path) continue;
 
-      const route = decideNextRoute(input.chain, match.event.event);
+      const route = decideNextRoute(
+        input.chain,
+        match.event.event,
+        undefined,
+        routingContextForEvents(firedEvents, input.runId, match.event.event),
+      );
       next = applyRecoveredAgent(next, agentId, match.event, input.now);
       const commit = commitFor(match.event, agentId, input.now);
       commits.push(commit);
@@ -331,6 +340,7 @@ function readPhysicalEvents(events: Array<RunnerEventRecord | string>): RunnerEv
 function materializeCommittedDeliveries(input: {
   commits: LateCompletionRecoveryCommit[];
   events: RunnerEventRecord[];
+  firedEvents: Array<RunnerEventRecord | string>;
   chain: RoutingChain;
   allAgentIds: string[];
   runId: string;
@@ -366,7 +376,12 @@ function materializeCommittedDeliveries(input: {
       deliveryId: commit.deliveryId,
       agentId: commit.agentId,
       event: event.processed ? event : markExactEventProcessed(match.event),
-      route: decideNextRoute(input.chain, match.event.event),
+      route: decideNextRoute(
+        input.chain,
+        match.event.event,
+        undefined,
+        routingContextForEvents(input.firedEvents, input.runId, match.event.event),
+      ),
     };
     deliveries.push(delivery);
     if (!event.processed) converged.push(delivery);

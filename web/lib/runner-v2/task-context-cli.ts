@@ -43,14 +43,25 @@ export async function runRunnerTaskContextCli(
   write: (line: string) => void = (line) => console.log(line),
 ): Promise<void> {
   const parsed = parseArguments(argv);
+  const namespaceId = optional(parsed.values, "--namespace-id", "default");
+  const orgId = optional(parsed.values, "--org-id", "default");
   const result = await loadTaskContext({
     taskId: required(parsed.values, "--task-id"),
     apiBase: required(parsed.values, "--api-base"),
     authToken: optional(parsed.values, "--auth-token") || undefined,
-    namespaceId: optional(parsed.values, "--namespace-id", "default"),
-    orgId: optional(parsed.values, "--org-id", "default"),
+    namespaceId,
+    orgId,
   });
-  writeTaskContextEnv(required(parsed.values, "--env-file"), result);
+  // Launch identity for the immutable TASK_CONTEXT_JSON (B2): the runner
+  // invokes this CLI inside the run's environment, so the run/chain identity
+  // comes from the launcher-owned env — facts fixed at launch, never mutable
+  // task state.
+  writeTaskContextEnv(required(parsed.values, "--env-file"), result, {
+    namespaceId,
+    orgId,
+    sourceRunId: process.env.MENTIKO_RUN_ID || undefined,
+    chainId: process.env.MENTIKO_CHAIN_ID || undefined,
+  });
   write(JSON.stringify({ taskId: result.task.id, commentCount: result.comments.length }));
 }
 

@@ -2,6 +2,13 @@ import {
   GENERATED_CHAIN_CONTRACT_SHAPE,
   validateGeneratedChainDeliveryContract,
 } from "./generated-chain-delivery-contract";
+import {
+  INCIDENT_TASK_002_CIRCULAR_CHAIN,
+  INCIDENT_TASK_004_ATTEMPT_1,
+  INCIDENT_TASK_004_ATTEMPT_2,
+  INCIDENT_TASK_004_ATTEMPT_3,
+  INCIDENT_TASK_013_CHILD_TASK_CHAIN,
+} from "./__fixtures__/generated-chain-incident-corpus";
 
 // Regression: TASK-203 (2026-07-23). Six consecutive chain-generation attempts
 // were rejected, alternating between two errors, because the validator stopped
@@ -106,12 +113,12 @@ describe("validateGeneratedChainDeliveryContract", () => {
 
   it("reports every broken contract field at once", () => {
     const errors = validateGeneratedChainDeliveryContract({
-      metadata: { generated_chain_contract: { version: 2, mode: "audit" } },
+      metadata: { generated_chain_contract: { version: 3, mode: "audit" } },
       agents: [writer(["read_files", "edit_files"]), finalVerifier()],
     });
 
     expect(errors).toEqual(expect.arrayContaining([
-      "metadata.generated_chain_contract.version must be 1",
+      "metadata.generated_chain_contract.version must be 1 or 2",
       expect.stringContaining("metadata.generated_chain_contract.mode"),
       expect.stringContaining("metadata.generated_chain_contract.acceptance_criteria"),
     ]));
@@ -192,5 +199,50 @@ describe("validateGeneratedChainDeliveryContract", () => {
         { ...finalVerifier(), authorities: ["read_files"] },
       ],
     })).toEqual([]);
+  });
+
+  // 2026-07-30/31 devv incident corpus (chain-contract-plan-of-record.md).
+  // The v0.3.48 prose classifier (f49b8ec) inferred lifecycle requirements
+  // from agent prose and falsely rejected every one of these real generated
+  // chains. Prose may advise; it may never block. Only structural checks may
+  // reject a generated chain.
+  describe("incident corpus: prose never blocks", () => {
+    it.each([
+      ["TASK-013 child-task verifier (agents[3] false positive)", INCIDENT_TASK_013_CHILD_TASK_CHAIN],
+      ["TASK-004 attempt 2: lifecycle terms in evidence prose", INCIDENT_TASK_004_ATTEMPT_2],
+      ["TASK-004 attempt 3: 'without requiring terminal state' compliance language", INCIDENT_TASK_004_ATTEMPT_3],
+    ])("accepts %s", (_label, chain) => {
+      expect(validateGeneratedChainDeliveryContract(chain)).toEqual([]);
+    });
+
+    // Attempt 1 is the corpus proof that removing prose blocking did NOT
+    // weaken structural validation: both its agents declare only read_files on
+    // an operations chain, a real capability gap. The prose rejections are
+    // gone; the structural one stays -- and is the ONLY error.
+    it("rejects TASK-004 attempt 1 for its real structural gap only, with no prose errors", () => {
+      expect(validateGeneratedChainDeliveryContract(INCIDENT_TASK_004_ATTEMPT_1)).toEqual([
+        "operations generated chains require an agent with run_commands authority",
+      ]);
+    });
+
+    // The original TASK-002 chain genuinely requires its own run/task to be
+    // terminal -- a real defect family. It is still ACCEPTED here: the typed
+    // subject/phase/owner contract (Track B, contract v2) owns that invariant,
+    // not a prose classifier. Prompt rules already teach against it.
+    it("accepts the TASK-002 circular chain (typed contract v2 owns the invariant, not prose)", () => {
+      expect(validateGeneratedChainDeliveryContract(INCIDENT_TASK_002_CIRCULAR_CHAIN)).toEqual([]);
+    });
+
+    it("still blocks a structurally damaged incident chain", () => {
+      const damaged = JSON.parse(JSON.stringify(INCIDENT_TASK_013_CHILD_TASK_CHAIN)) as {
+        agents: Array<Record<string, unknown>>;
+      };
+      delete damaged.agents[3].final_verifier;
+      delete damaged.agents[0].deliverable;
+      expect(validateGeneratedChainDeliveryContract(damaged)).toEqual(expect.arrayContaining([
+        "agents[0].deliverable must name the concrete output this agent hands off",
+        "the last generated-chain agent must declare final_verifier: true",
+      ]));
+    });
   });
 });

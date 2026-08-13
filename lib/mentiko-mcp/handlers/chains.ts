@@ -6,8 +6,12 @@ export async function getCurrentPage() {
   );
 }
 
-export async function listChains() {
-  return await opsGet("/api/mentiko-mcp/ops/chains");
+export async function listChains(id?: string) {
+  return await opsGet(
+    id
+      ? `/api/mentiko-mcp/ops/chains?id=${encodeURIComponent(id)}`
+      : "/api/mentiko-mcp/ops/chains",
+  );
 }
 
 export async function createChainDraft(name: string, template?: string) {

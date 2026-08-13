@@ -68,7 +68,8 @@ describe("decision navigation", () => {
     expect(tree).toContain("gate");
     expect(overview).toContain('task.type === "decision"');
     expect(overview).toContain("gate");
-    expect(listItem).toContain("human decision gate");
+    expect(listItem).toContain('task.type === "decision"');
+    expect(listItem).toContain("bg-blue-500/5");
   });
 
   it("does not keep the standalone decisions route alive", () => {

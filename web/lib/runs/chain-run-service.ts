@@ -32,6 +32,11 @@ import { getWorkspace, listWorkspaces } from "@/lib/workspaces/workspace-storage
 import { fireWebhooks } from "@/lib/webhooks/webhook-utils";
 import type { Chain } from "@/lib/types";
 import { validateChain } from "@/lib/validators";
+import { verifyAcceptedManifest } from "@/lib/chains/generated-chain-acceptance";
+import {
+  isGeneratedChainContract,
+  validateGeneratedChainDeliveryContract,
+} from "@/lib/chains/generated-chain-delivery-contract";
 import { resolveMaxConcurrentChains } from "@/lib/system/system-settings";
 import { taskGet, taskUpdate } from "@/lib/tasks/task-store";
 import { BadRequest, Conflict, Forbidden, ValidationError } from "@/lib/api-errors";
@@ -43,10 +48,12 @@ import { runSyntheticRunnerV2Probe, runSyntheticRunnerV2ProbeWithDispatch } from
 import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
 import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
 import { resolveInternalAuthSecret } from "@/lib/auth/internal-api-auth";
+import { resolveInternalWebOrigin } from "@/lib/auth/internal-web-origin";
 import { mintSessionToken, verifySessionToken } from "@/lib/auth/session-token";
-import { resolveRunAgentProfileId } from "@/lib/agents/run-agent-profile";
+import { resolveRunAgentProfile } from "@/lib/agents/run-agent-profile";
 import { shouldRecordTaskExecutionMetadata } from "@/lib/runs/run-provenance";
 import { executionStartedLifecycleMetadata } from "@/lib/orchestration/task-lifecycle-metadata";
+import { mintAdHocGenerationJobIdentity } from "@/lib/generation/generation-job-identity";
 
 const SAFE_RUN_ID_RE = /^run-[A-Za-z0-9_-]{1,120}$/;
 
@@ -113,10 +120,25 @@ export interface StartChainRunResult {
  * reference resolution and runtime-profile application because those are the
  * exact fields the runner receives.
  */
-export function assertRunnableChainDefinition(chain: Chain): void {
+export function assertRunnableChainDefinition(
+  chain: Chain,
+  options?: { acceptedManifestVerified?: boolean },
+): void {
   const validation = validateChain(chain);
   if (!validation.valid) {
     throw new ValidationError("Invalid chain", { errors: validation.errors });
+  }
+  // A digest-verified accepted manifest executes under the semantics it was
+  // ACCEPTED with (plan-of-record B5): general integrity is always checked
+  // above, but the generated-chain contract is not re-interpreted under a
+  // later release's rules. Without a manifest (legacy/manual/ad-hoc chains),
+  // current rules apply.
+  if (options?.acceptedManifestVerified) return;
+  if (isGeneratedChainContract(chain)) {
+    const errors = validateGeneratedChainDeliveryContract(chain);
+    if (errors.length > 0) {
+      throw new ValidationError("Invalid generated chain delivery contract", { errors });
+    }
   }
 }
 
@@ -180,6 +202,12 @@ function markChainLaunchFailed(
     const errorRun = JSON.parse(readFileSync(errorRunPath, "utf-8"));
     errorRun.status = "failed";
     errorRun.error = message;
+    // C2: a launch that never produced a process is still a terminal write and
+    // still owes the reader its evidence. Without this the run showed `failed`
+    // with statusReason null and the spawn error buried in `error`.
+    errorRun.status_message = `chain launch failed: ${message}`;
+    errorRun.statusReason = { actor: "system", reason: `chain launch failed: ${message}` };
+    errorRun.completed = errorRun.completed || new Date().toISOString();
     writeFileSync(errorRunPath, JSON.stringify(errorRun, null, 2));
   }
   createNotification(namespaceId, {
@@ -276,7 +304,7 @@ async function buildChainSessionEnv(
   return {
     MENTIKO_SESSION_ID: sessionId,
     MENTIKO_SESSION_TOKEN: sessionToken,
-    MENTIKO_WEB_URL: new URL(request.url).origin,
+    MENTIKO_WEB_URL: resolveInternalWebOrigin(new URL(request.url).origin),
     KOLLABOR_ENGINE_URL: process.env.KOLLABOR_ENGINE_URL,
   };
 }
@@ -375,17 +403,42 @@ export async function startChainRun({
   if (authorizedWorkspacePath) {
     runChain.config = { ...(runChain.config || {}), project_root: authorizedWorkspacePath };
   }
-  const effectiveAgentProfileId = resolveRunAgentProfileId({
+  const profileResolution = resolveRunAgentProfile({
     requestedProfileId: requestedAgentProfileId,
     chainDefaultProfileId: runChain.default_agent_profile,
     workspaceDefaultProfileId: resolvedWorkspaceRecord?.default_agent_profile,
     profiles,
   });
+  const effectiveAgentProfileId = profileResolution?.id;
   const runtimeProfile = effectiveAgentProfileId
     ? getProfile(namespaceId, orgId, effectiveAgentProfileId)
     : null;
   runChain = applyRuntimeAgentProfileOverride(runChain, runtimeProfile?.id);
-  assertRunnableChainDefinition(runChain);
+
+  // B5 run-start manifest gate: verify against the persisted definition or its
+  // exact resolved GET read-model equivalent, never the later profiled runtime
+  // copy. A match executes the accepted semantics; drift requires explicit
+  // re-acceptance (re-save); no manifest falls back to current-rules checks.
+  const runStartChainId = callerChainId || validChainName.toLowerCase().replace(/\s+/g, "-");
+  const manifestVerification = verifyAcceptedManifest(
+    namespaceId,
+    orgId,
+    runStartChainId,
+    chain as unknown as Record<string, unknown>,
+  );
+  if (manifestVerification.state === "drifted") {
+    throw new ValidationError(
+      "Generated chain content changed after acceptance; save it again to re-accept before running",
+      {
+        chainId: runStartChainId,
+        accepted_digest: manifestVerification.record.digest,
+        current_digest: manifestVerification.currentDigest,
+      },
+    );
+  }
+  assertRunnableChainDefinition(runChain, {
+    acceptedManifestVerified: manifestVerification.state === "accepted",
+  });
 
   // --start <agent-id>: start the run at a specific agent instead of the chain's
   // default entry. Validated against the resolved agent list so a bad id is a
@@ -446,7 +499,26 @@ export async function startChainRun({
 
   mkdirSync(runDir, { recursive: true });
 
-  const runMetadata = normalizeRunMetadata(body.metadata);
+  const callerRunMetadata = normalizeRunMetadata(body.metadata);
+
+  // C3: a core generation chain launched ad-hoc (the chains page Run button)
+  // arrives with no job identity, which made its artifact permanently
+  // unacceptable to the monitor — the agent finished as instructed and the run
+  // failed anyway. Mint the job here so EVERY core-generation run, however it
+  // was started, presents the same identity to completion. Never overrides the
+  // task-driven path's own job.
+  const adHocGenerationIdentity = mintAdHocGenerationJobIdentity({
+    chain: runChain,
+    existingMetadata: callerRunMetadata,
+    namespaceId,
+    prompt: userPrompt || "",
+    workspacePath: authorizedWorkspacePath,
+    taskId: typeof taskId === "string" ? taskId : undefined,
+  });
+  const runMetadata = adHocGenerationIdentity
+    ? { ...(callerRunMetadata || {}), ...adHocGenerationIdentity }
+    : callerRunMetadata;
+
   const decisionRunMetadata = runMetadata?.decisionId && runMetadata?.decisionPhase
     ? runMetadata
     : undefined;
@@ -476,6 +548,7 @@ export async function startChainRun({
     ...(runMetadata ? { metadata: runMetadata } : {}),
     ...(authorizedWorkspacePath ? { workspacePath: authorizedWorkspacePath } : {}),
     ...(runtimeProfile?.id ? { agentProfileId: runtimeProfile.id } : {}),
+    ...(profileResolution?.source ? { agentProfileSource: profileResolution.source } : {}),
     ...(persistedWorkspaceId ? { workspaceId: persistedWorkspaceId } : {}),
     ...(taskId && typeof taskId === "string" ? { taskId } : {}),
   };
@@ -633,10 +706,27 @@ export async function startChainRun({
         markChainLaunchFailed(runDir, validChainName, namespaceId, runObject, runId, error instanceof Error ? error.message : String(error));
       });
   } else {
-    const runnerV2Launch = await startRunnerV2Launch(runnerV2LaunchContext);
+    // C2: the background branch above already records launch failures in
+    // run.json. This one used to throw straight out to the caller, leaving a
+    // run.json stamped `running` with no session, no reason, and nothing to
+    // reap it — the caller saw a 500 and the run read as an unexplained
+    // silence forever (reproduced live with a spawn ENOENT). Same treatment
+    // both sides: the record explains itself, then the error propagates.
+    let runnerV2Launch: Awaited<ReturnType<typeof startRunnerV2Launch>>;
+    try {
+      runnerV2Launch = await startRunnerV2Launch(runnerV2LaunchContext);
+    } catch (error) {
+      try { closeSync(logFd); } catch { /* already closed */ }
+      markChainLaunchFailed(
+        runDir, validChainName, namespaceId, runObject, runId,
+        error instanceof Error ? error.message : String(error),
+      );
+      throw error;
+    }
 
     if (runnerV2Launch.support === "unsupported") {
       closeSync(logFd);
+      markChainLaunchFailed(runDir, validChainName, namespaceId, runObject, runId, runnerV2Launch.reason);
       throw new Error(runnerV2Launch.reason);
     }
 

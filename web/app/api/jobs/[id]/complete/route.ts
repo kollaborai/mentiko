@@ -3,7 +3,6 @@ import { getJob, updateJob } from "@/lib/runs/job-store";
 import { taskGet, taskUpdate } from "@/lib/tasks/task-store";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { getDecision, updateDecision } from "@/lib/decisions/decision-storage";
-import { postProcessChain } from "@/lib/chains/chain-postprocessor";
 import { Unauthorized, NotFound } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { hasInternalAuth } from "@/lib/auth/internal-api-auth";
@@ -19,11 +18,10 @@ import {
   outcomeSummarySourceEligibility,
 } from "@/lib/tasks/run-outcome-evidence";
 import { unwrapAgentJsonOutput } from "@/lib/tasks/agent-json-output";
-import {
-  assertValidGeneratedChainDeliveryContract,
-  GeneratedChainContractError,
-} from "@/lib/chains/generated-chain-delivery-contract";
-import { resolveChainAgents } from "@/lib/agents/agent-loader";
+import { acceptGeneratedChain, GeneratedChainRejectedError } from "@/lib/chains/generated-chain-acceptance";
+import { type GeneratedChainRejectionEnvelope } from "@/lib/chains/generated-chain-rejections";
+import { appendGenerationAttempt } from "@/lib/tasks/generation-attempt-ledger";
+import { decideGenerationRejection } from "@/lib/tasks/generation-rejection-policy";
 import {
   extractGeneratedChainResult,
   INVALID_GENERATED_CHAIN_RESULT_ERROR,
@@ -123,6 +121,52 @@ function chainAssignmentAuditMetadata(
   return null;
 }
 
+/**
+ * Import-door rejection bookkeeping (A3/A4): persist the typed envelope and
+ * the deterministic-fingerprint decision on the linked task, so the auto-run
+ * retry path can branch on typed data instead of parsing the error message.
+ * The stop decision itself (halt vs one guided regeneration) is applied by
+ * /api/tasks/auto-run when it observes the failed job.
+ */
+function applyImportRejectionToTask(
+  taskId: string | undefined,
+  jobId: string,
+  orgId: string,
+  namespaceId: string,
+  envelope: GeneratedChainRejectionEnvelope,
+): void {
+  if (!taskId) return;
+  try {
+    const task = taskGet(orgId, taskId, namespaceId);
+    if (!task) return;
+    const existing = metadataRecord(task.metadata);
+    const decision = decideGenerationRejection({
+      envelope,
+      priorFingerprints: existing.generation_rejection_fingerprints,
+    });
+    taskUpdate(orgId, taskId, {
+      metadata: {
+        ...existing,
+        generation_rejection: envelope,
+        generation_rejection_job_id: jobId,
+        generation_rejection_fingerprints: decision.fingerprints,
+        ...(decision.stop ? { generation_stop_reason: decision.stopReason } : {}),
+        ...appendGenerationAttempt(existing, {
+          phase: "import",
+          code: envelope.code,
+          class: "deterministic",
+          input_hash: envelope.artifact_hash,
+          revision: envelope.validator_revision,
+          guidance: envelope.message,
+          ...(decision.stop ? { stop_reason: decision.stopReason } : {}),
+        }),
+      },
+    }, namespaceId);
+  } catch (error) {
+    console.error("Failed to persist generated-chain rejection on task:", error);
+  }
+}
+
 function removeAuditRunFromExecutionMetadata(
   metadata: Record<string, unknown>,
   auditRunId?: string
@@ -199,14 +243,29 @@ export const POST = withErrorHandling(async (
     jobError = INVALID_GENERATED_CHAIN_RESULT_ERROR;
   }
 
+  // Task generation has one more completion boundary than an ordinary job:
+  // the model payload must first be imported into the task store (and, when
+  // requested, handed to the auto-run driver). Publishing `complete` before
+  // that side effect lets the UI race in, see only the raw generated task,
+  // and fall back to the manual preview even though Auto-run is enabled.
+  // Keep the job non-terminal until the task tree has been materialized.
+  const deferTaskGenerationCompletion =
+    jobStatus === "complete"
+    && job.type === "task"
+    && !job.taskId
+    && !!(result || job.result);
+  const persistedJobStatus = deferTaskGenerationCompletion ? "running" : jobStatus;
+
   // update job
   updateJob(id, {
-    status: jobStatus,
+    status: persistedJobStatus,
     result: result || job.result,
     error: jobStatus === "failed" ? jobError || job.error : undefined,
     runId: typeof body.runId === "string" ? body.runId : job.runId,
     chainId: typeof body.chainId === "string" ? body.chainId : job.chainId,
-    completedAt: jobStatus === "complete" || jobStatus === "failed" ? new Date().toISOString() : job.completedAt,
+    completedAt: persistedJobStatus === "complete" || persistedJobStatus === "failed"
+      ? new Date().toISOString()
+      : job.completedAt,
   }, namespaceId);
 
   // post-process chain generation: extract inline agents -> write to registry -> rewrite with $refs
@@ -217,64 +276,57 @@ export const POST = withErrorHandling(async (
       const chainJson = extractGeneratedChainResult(result);
 
       if (chainJson) {
-        // This is the import boundary for model output. Do not persist agents
-        // from an activity-only chain and hope the later task audit infers an
-        // outcome; every generated agent must declare its handoff and the last
-        // one must assert the task contract from evidence.
-        //
-        // Validate what will actually RUN: a {"$ref": "id"} reuse entry carries
-        // its declarations and authorities in the registry, not inline, so the
-        // raw model output alone made a correct catalog-reuse chain look like it
-        // had no deliverable and no edit_files agent. /api/chains/save has always
-        // resolved before validating (save/route.ts) -- this boundary hadn't, and
-        // the false rejection cost TASK-203 a regeneration round.
-        const chainForContract = { ...chainJson };
-        if (Array.isArray(chainJson.agents)) {
-          try {
-            chainForContract.agents = resolveChainAgents(chainJson.agents, nsId, oId) as unknown[];
-          } catch {
-            // Unresolvable $ref: validate the raw shape so the rejection names
-            // the missing declarations rather than swallowing a broken chain.
-            chainForContract.agents = chainJson.agents;
-          }
+        // This is the import boundary for model output. ONE authoritative
+        // acceptance pipeline (generated-chain-acceptance.ts) materializes
+        // the candidate, validates structurally + by versioned contract,
+        // consults the deterministic-rejection ledger, and commits registry
+        // writes only after everything passed (B3/B4). A rejected payload is
+        // an expected outcome of model generation, not a server error: mark
+        // the job failed and let the rest of this handler run (task metadata
+        // + auto-run continuation) -- CHOR-001 (2026-07-20) aborted with a
+        // 500 here and nothing ever learned the generation failed.
+        try {
+          const accepted = acceptGeneratedChain({
+            chain: chainJson,
+            namespaceId: nsId,
+            orgId: oId,
+            phase: "import",
+          });
+          result = {
+            ...result,
+            output: JSON.stringify(accepted.manifestChain, null, 2),
+            createdAgents: accepted.createdAgents,
+            extractedCount: accepted.extractedCount,
+            ...(accepted.warnings.length > 0 ? { acceptanceWarnings: accepted.warnings } : {}),
+          };
+          updateJob(id, { result }, namespaceId);
+        } catch (rejection) {
+          if (!(rejection instanceof GeneratedChainRejectedError)) throw rejection;
+          updateJob(id, {
+            status: "failed",
+            error: rejection.message,
+            completedAt: new Date().toISOString(),
+          }, namespaceId);
+          applyImportRejectionToTask(job.taskId, id, oId, namespaceId, rejection.envelope);
         }
-        assertValidGeneratedChainDeliveryContract(chainForContract);
-        const processed = await postProcessChain(chainJson, nsId, oId);
-        // update result with processed chain
-        result = {
-          ...result,
-          output: JSON.stringify(processed.chain, null, 2),
-          createdAgents: processed.createdAgents,
-          extractedCount: processed.extractedCount,
-        };
-        updateJob(id, { result }, namespaceId);
       }
     } catch (e) {
+      // Only unexpected failures (materialization, storage) reach here now --
+      // contract rejections are handled above without throwing.
       const message = e instanceof Error ? e.message : String(e);
       updateJob(id, {
         status: "failed",
         error: message,
         completedAt: new Date().toISOString(),
       }, namespaceId);
-      // A rejected generated-chain payload is an expected outcome of model
-      // generation, not an internal server error: the job is correctly
-      // terminal-failed above, and the bounded auto-run retry path (see
-      // app/api/tasks/auto-run/route.ts's generation_last_error handling)
-      // re-generates with the validator's message as corrective guidance. Let
-      // the rest of this handler run (task metadata + auto-run continuation)
-      // instead of aborting with an uncaught 500 -- CHOR-001 (2026-07-20) hit
-      // exactly this: the 500 killed the job AND skipped the task metadata
-      // update below, so nothing ever learned the generation failed.
-      if (!(e instanceof GeneratedChainContractError)) {
-        throw e;
-      }
+      throw e;
     }
   }
 
   // re-fetch to get updated state
   let updatedJob = getJob(id, namespaceId);
 
-  if (updatedJob?.type === "task" && updatedJob.status === "complete" && updatedJob.result && !updatedJob.taskId) {
+  if (deferTaskGenerationCompletion && updatedJob?.type === "task" && updatedJob.result && !updatedJob.taskId) {
     try {
       const workspacePath = workspacePathFromJobInput(updatedJob.input);
       const parentId = typeof updatedJob.input.parentId === "string"
@@ -311,8 +363,10 @@ export const POST = withErrorHandling(async (
           taskId: outcome.taskId,
         };
         updateJob(id, {
+          status: "complete",
           taskId: outcome.taskId,
           result: enrichedResult,
+          completedAt: new Date().toISOString(),
         }, namespaceId);
         updatedJob = getJob(id, namespaceId);
         // Decisions don't auto-run — the human steps through them in /decisions.
@@ -323,15 +377,19 @@ export const POST = withErrorHandling(async (
           createdTaskIds: outcome.createdTaskIds,
           createdTasks: outcome.tasks,
         };
-        updateJob(id, {
-          taskId: outcome.parentId,
-          result: enrichedResult,
-        }, namespaceId);
-        updatedJob = getJob(id, namespaceId);
-
         if (autoRun) {
           await triggerAutoRunContinuation(request, namespaceId, orgId, outcome.parentId);
         }
+
+        // Do not expose the terminal state until task import and the optional
+        // auto-run continuation have both been handed off.
+        updateJob(id, {
+          status: "complete",
+          taskId: outcome.parentId,
+          result: enrichedResult,
+          completedAt: new Date().toISOString(),
+        }, namespaceId);
+        updatedJob = getJob(id, namespaceId);
       }
     } catch (e) {
       updateJob(id, {

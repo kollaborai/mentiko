@@ -3,10 +3,41 @@ import { basename, dirname, join } from "path";
 import { pty } from "@/lib/pty/pty-client";
 import { shellEscape } from "@/lib/api/audit-exec";
 import config from "@/lib/config";
-import { buildAgentBootstrapPlan, type AgentBootstrapPlan } from "@/lib/runner-v2/agent-bootstrap-plan";
+import {
+  buildAgentBootstrapPlan,
+  writeAgentNodeChainSnapshot,
+  retargetAgentBootstrapPlan,
+  type AgentBootstrapPlan,
+} from "@/lib/runner-v2/agent-bootstrap-plan";
 import { createRunnerAgentState, transitionRunnerAgentState } from "@/lib/runner-v2/agent-state";
 import { CONCURRENCY_CAP_BLOCKED_REASON_PREFIX } from "@/lib/runner-v2/concurrency-admission";
+import { enqueueAgentAttempt, waitForTypedAgentCapacity } from "@/lib/runner-v2/agent-capacity";
+import {
+  bindRoutedLaunchJobAttempt,
+  routedLaunchJobLeaseOwned,
+} from "@/lib/runner-v2/launch-job";
 import { classifyCliReadiness, type CliReadinessResult } from "@/lib/runner-v2/readiness-policy";
+import { isComposerHoldingInput } from "@/lib/runner-v2/composer-submit";
+import {
+  captureAgentWorkspaceHandoff,
+  ensureRunWorkspaceBaseline,
+} from "@/lib/runner-v2/workspace-evidence";
+import type { WorkspaceHandoffArtifact } from "@/lib/runner-v2/workspace-evidence-types";
+import {
+  loadTaskContext,
+  taskContextEnvironment,
+} from "@/lib/runner-v2/task-context";
+import { cleanupGitNodeWorkspaceDurably } from "@/lib/runner-v2/workspace-cleanup";
+import {
+  allocateGitNodeWorkspace,
+  initializeGitRunWorkspaceIsolation,
+  type GitNodeWorkspace,
+} from "@/lib/runner-v2/workspace-isolation";
+import {
+  decideStartupRecovery,
+  recoveryKeyBytes,
+  type StartupRecoveryInput,
+} from "@/lib/runner-v2/readiness-cli";
 import { addRunSession, readRunJson, updateRunJson, updateRunStatus, type RunAgentRecord } from "@/lib/runner-v2/run-state";
 import {
   type AgentAttemptPhase,
@@ -16,15 +47,18 @@ import {
   isTerminalAgentAttemptPhase,
   readRunnerV2AttemptState,
   recordAgentAttemptProcess,
+  recordAgentAttemptRecoveryDecision,
   releaseAgentAttempt,
   submitAgentAttemptInstructions,
   transitionAgentAttempt,
+  transitionAgentAttemptIfOpen,
 } from "@/lib/runner-v2/agent-attempt";
 import type { RunnerV2LaunchContext, RunnerV2LaunchResult } from "@/lib/runner-v2/types";
 import type { AgentProfileReadinessConfig } from "@/lib/types";
 
 export interface RunnerV2BootstrapExecutor {
   remove(name: string): Promise<void>;
+  list(): Promise<Array<{ name: string }>>;
   spawn(name: string, cmd?: string, args?: string[], opts?: { cwd?: string; env?: Record<string, string> }): Promise<{ name: string; pid: number }>;
   sendKeys(name: string, text: string): Promise<void>;
   /** send raw bytes with no daemon-appended enter (used for bare enter retries) */
@@ -42,6 +76,8 @@ const TERMINAL_RUN_STATUSES = new Set(["blocked", "failed", "stopped", "complete
 export class TerminalBootstrapStateError extends Error {}
 
 export class TypedMonitorRuntimeMissingError extends Error {}
+
+export class RoutedLaunchJobOwnershipLostError extends Error {}
 
 /**
  * Completion instructions are part of the typed launch contract, not a shell
@@ -129,6 +165,54 @@ export function assertTypedMonitorRuntimeAvailable(codeRoot: string = config.cod
   }
 }
 
+/**
+ * Resolve the immutable task snapshot at the typed bootstrap boundary.
+ *
+ * Initial web launches, routed launches, and recovery launches all converge
+ * here. Keeping the fetch here prevents one caller from remembering TASK_ID
+ * while another silently launches with blank TASK_* values. A caller that has
+ * already loaded the same snapshot can carry it forward without a second API
+ * request.
+ */
+export async function resolveRunnerV2LaunchEnv(
+  context: Pick<RunnerV2LaunchContext, "env" | "taskId" | "runId" | "chainId">,
+): Promise<NodeJS.ProcessEnv> {
+  const taskId = context.taskId?.trim();
+  if (!taskId) return context.env;
+
+  if (context.env.TASK_ID === taskId && context.env.TASK_CONTEXT?.trim()) {
+    return context.env;
+  }
+
+  const apiBase = context.env.BETTER_AUTH_URL
+    || context.env.MENTIKO_WEB_URL
+    || `http://localhost:${context.env.WEB_PORT || context.env.PORT || "3000"}`;
+  const task = await loadTaskContext({
+    taskId,
+    apiBase,
+    // BETTER_AUTH_SECRET is intentionally excluded from the child agent env.
+    // The launcher still owns the process-level service credential, so use it
+    // for this server-side task snapshot request without leaking it into the
+    // run-scoped environment.
+    // The task route accepts the Better Auth service bearer, while the
+    // run-scoped session token is intended for APIs that explicitly verify
+    // that token. When both are present (the normal web-launch case), use the
+    // service credential for this server-side snapshot request.
+    authToken: context.env.BETTER_AUTH_SECRET
+      || process.env.BETTER_AUTH_SECRET
+      || context.env.MENTIKO_SESSION_TOKEN,
+    namespaceId: context.env.NAMESPACE_ID || "default",
+    orgId: context.env.ORG_ID || "default",
+  });
+  const taskEnv = taskContextEnvironment(task, {
+    namespaceId: context.env.NAMESPACE_ID || "default",
+    orgId: context.env.ORG_ID || "default",
+    sourceRunId: context.runId,
+    chainId: context.chainId,
+  });
+  return { ...context.env, ...taskEnv };
+}
+
 export async function startRunnerV2Bootstrap(context: RunnerV2LaunchContext): Promise<RunnerV2LaunchResult> {
   if (context.env.WORKSPACE_TYPE && context.env.WORKSPACE_TYPE !== "local") {
     return {
@@ -148,26 +232,29 @@ export async function startRunnerV2Bootstrap(context: RunnerV2LaunchContext): Pr
     };
   }
 
+  let launchContext = context;
   let plan: AgentBootstrapPlan;
   try {
+    const launchEnv = await resolveRunnerV2LaunchEnv(context);
+    launchContext = { ...context, env: launchEnv };
     plan = buildAgentBootstrapPlan({
-      chainPath: context.chainPath,
-      runDir: context.runDir,
-      runId: context.runId,
-      agentId: context.agentId,
-      workspacePath: context.workspacePath,
-      env: context.env,
+      chainPath: launchContext.chainPath,
+      runDir: launchContext.runDir,
+      runId: launchContext.runId,
+      agentId: launchContext.agentId,
+      workspacePath: launchContext.workspacePath,
+      env: launchContext.env,
     });
   } catch (error) {
     return {
       support: "unsupported",
-      reason: error instanceof Error ? error.message : "runner-v2 bootstrap planning failed",
-      fallbackAllowed: true,
+      reason: error instanceof Error ? `runner-v2 bootstrap planning failed: ${error.message}` : "runner-v2 bootstrap planning failed",
+      fallbackAllowed: false,
     };
   }
 
   try {
-    await executeLocalBootstrap(plan, context, pty);
+    await executeLocalBootstrap(plan, launchContext, pty);
     return {
       support: "supported",
       mode: "typed-plan",
@@ -195,45 +282,164 @@ export async function executeLocalBootstrap(
   executor: RunnerV2BootstrapExecutor,
 ): Promise<void> {
   const runJsonPath = join(context.runDir, "run.json");
-  assertBootstrapLaunchable(runJsonPath, context.runId, plan.agentId);
+  const launchJobId = context.env.MENTIKO_LAUNCH_JOB_ID;
+  const launchOwnerId = context.env.MENTIKO_LAUNCH_JOB_OWNER_ID;
+  const launchOccurrenceId = context.env.MENTIKO_COMPLETION_OCCURRENCE_ID;
+  assertBootstrapLaunchable(runJsonPath, context.runId, plan.agentId, launchJobId);
+  mkdirSync(plan.artifactsDir, { recursive: true });
+  const workspaceExecution = ensureRunWorkspaceBaseline({
+    runJsonPath,
+    runDir: context.runDir,
+    runId: context.runId,
+    workspacePath: context.workspacePath || plan.sourceWorkspacePath,
+  });
+  const runWorkspace = workspaceExecution.tracking === "git"
+    ? initializeGitRunWorkspaceIsolation({
+      runId: context.runId,
+      runDir: context.runDir,
+      baseline: workspaceExecution.baseline,
+    })
+    : undefined;
   const attempt = createAgentAttempt({
     runJsonPath,
     runId: context.runId,
     agentId: plan.agentId,
     leaseId: plan.sessionName,
+    launchJobId,
+    launchOccurrenceId,
   });
-  const admission = await acquireChainAdmission({
-    runJsonPath,
-    runId: context.runId,
-    agentId: plan.agentId,
-    env: context.env,
-  });
-  if (!admission.admitted) {
-    transitionAgentAttempt({
+  if (launchJobId || launchOwnerId) {
+    assertRoutedLaunchJobOwnership(runJsonPath, launchJobId, launchOwnerId);
+    bindRoutedLaunchJobAttempt({
       runJsonPath,
+      jobId: launchJobId!,
+      ownerId: launchOwnerId!,
+      agentId: plan.agentId,
       attemptId: attempt.id,
-      to: "human_action_required",
-      reason: "concurrency_cap_blocked",
-      detail: admission.reason,
     });
-    return;
   }
-  transitionAgentAttempt({ runJsonPath, attemptId: attempt.id, to: "lease_acquired" });
-
-  mkdirSync(plan.artifactsDir, { recursive: true });
-  mkdirSync(plan.eventsDir, { recursive: true });
-  mkdirSync(dirname(plan.statePath), { recursive: true });
-  writeFileSync(plan.instructionPath, buildInitialInstructions(plan, context), { mode: 0o600 });
-  createRunnerAgentState(plan.statePath, buildInitialState(plan));
-
-  const startScriptPath = join(context.runDir, "artifacts", `${plan.agentId}-start.sh`);
-  writeFileSync(startScriptPath, buildStartScript(plan), { mode: 0o700 });
-  chmodSync(startScriptPath, 0o700);
-
+  let executionPlan = plan;
+  let nodeWorkspace: GitNodeWorkspace | undefined;
   try {
-    await executor.remove(plan.sessionName);
-    const spawned = await executor.spawn(plan.sessionName, "zsh", [], {
-      cwd: plan.projectRoot,
+    if (attempt.phase === "created") {
+      const admission = await acquireChainAdmission({
+        runJsonPath,
+        runId: context.runId,
+        agentId: plan.agentId,
+        env: context.env,
+      });
+      if (!admission.admitted) {
+        transitionAgentAttemptIfOpen({
+          runJsonPath,
+          attemptId: attempt.id,
+          to: "human_action_required",
+          reason: "concurrency_cap_blocked",
+          detail: admission.reason,
+        });
+        return;
+      }
+      enqueueAgentAttempt({
+        runJsonPath,
+        attemptId: attempt.id,
+        scopeRoot: context.env.MENTIKO_ORG_ROOT || config.orgRoot,
+      });
+      markRunAgentQueued(runJsonPath, plan);
+    }
+    const agentAdmission = await acquireAgentCapacityAdmission({
+      runJsonPath,
+      runId: context.runId,
+      attemptId: attempt.id,
+      env: context.env,
+    });
+    if (!agentAdmission.admitted) {
+      const terminalAttempt = transitionAgentAttemptIfOpen({
+        runJsonPath,
+        attemptId: attempt.id,
+        to: "human_action_required",
+        reason: "agent_capacity_timeout",
+        detail: agentAdmission.reason,
+      });
+      // A cancelled capacity wait already released the attempt because the
+      // run became terminal. Do not rewrite that run as blocked or reopen the
+      // released attempt merely because this async caller resumed afterward.
+      if (terminalAttempt?.phase !== "released") {
+        markRunAgentBlocked(runJsonPath, plan.agentId, agentAdmission.reason);
+      }
+      return;
+    }
+    assertRoutedLaunchJobOwnership(runJsonPath, launchJobId, launchOwnerId);
+    nodeWorkspace = runWorkspace
+      ? allocateGitNodeWorkspace({
+        runWorkspace,
+        agentId: plan.agentId,
+        attemptId: attempt.id,
+        baseCommit: context.env.MENTIKO_WORKSPACE_BASE_COMMIT,
+      })
+      : undefined;
+    // nodeWorkspace only exists when runWorkspace was allocated, which itself
+    // only happens for a git-tracked baseline (see runWorkspace above) — but
+    // that link is a runtime invariant, not something the type checker can
+    // see across two separate variables. Re-narrow on the discriminant so the
+    // unavailable variant (no baseline to rewrite chain paths against)
+    // explicitly skips this retarget block instead of throwing.
+    if (nodeWorkspace && workspaceExecution.tracking === "git") {
+      const nodeChainPath = join(
+        executionPlan.artifactsDir,
+        `${safeArtifactName(plan.agentId)}-${safeArtifactName(attempt.id)}-chain.json`,
+      );
+      writeAgentNodeChainSnapshot({
+        chainPath: plan.monitorSpec.chainPath,
+        sourceWorkspacePath: workspaceExecution.baseline.sourceWorkspacePath,
+        nodeWorkspacePath: nodeWorkspace.workspacePath,
+        targetPath: nodeChainPath,
+      });
+      executionPlan = retargetAgentBootstrapPlan(
+        plan,
+        nodeWorkspace.workspacePath,
+        context.env,
+        nodeChainPath,
+      );
+    }
+    executionPlan = {
+      ...executionPlan,
+      runContextExports: {
+        ...executionPlan.runContextExports,
+        MENTIKO_AGENT_ATTEMPT_ID: attempt.id,
+      },
+    };
+    const workspaceHandoff = captureAgentWorkspaceHandoff({
+      runJsonPath,
+      runDir: context.runDir,
+      runId: context.runId,
+      agentId: plan.agentId,
+      attemptId: attempt.id,
+      workspaceExecution,
+      ...(nodeWorkspace
+        ? {
+          workspacePath: nodeWorkspace.workspacePath,
+          nodeBaseCommit: nodeWorkspace.baseCommit,
+          nodeWorkspaceRecordPath: nodeWorkspace.recordPath,
+        }
+        : {}),
+    });
+
+    mkdirSync(executionPlan.eventsDir, { recursive: true });
+    mkdirSync(dirname(executionPlan.statePath), { recursive: true });
+    writeFileSync(
+      executionPlan.instructionPath,
+      buildInitialInstructions(executionPlan, context, workspaceHandoff),
+      { mode: 0o600 },
+    );
+    createRunnerAgentState(executionPlan.statePath, buildInitialState(executionPlan));
+
+    const startScriptPath = join(context.runDir, "artifacts", `${executionPlan.agentId}-start.sh`);
+    writeFileSync(startScriptPath, buildStartScript(executionPlan), { mode: 0o700 });
+    chmodSync(startScriptPath, 0o700);
+
+    assertRoutedLaunchJobOwnership(runJsonPath, launchJobId, launchOwnerId);
+    await executor.remove(executionPlan.sessionName);
+    const spawned = await executor.spawn(executionPlan.sessionName, "zsh", [], {
+      cwd: executionPlan.projectRoot,
       env: sanitizePtyEnv({
         PATH: context.env.PATH || process.env.PATH || "",
         HOME: context.env.HOME || process.env.HOME || "",
@@ -241,7 +447,7 @@ export async function executeLocalBootstrap(
         TERM: context.env.TERM || process.env.TERM || "xterm-256color",
         MENTIKO_RUNNER_V2_ACTIVE: "1",
         MENTIKO_RUNNER_V2_MODE: "typed-plan",
-        ...plan.runContextExports,
+        ...executionPlan.runContextExports,
       }),
     });
     transitionAgentAttempt({ runJsonPath, attemptId: attempt.id, to: "pty_allocated" });
@@ -253,17 +459,23 @@ export async function executeLocalBootstrap(
     });
     transitionAgentAttempt({ runJsonPath, attemptId: attempt.id, to: "process_spawned" });
 
-    registerRunSession(context, plan);
-    const startCommand = `cd ${shellEscape(plan.projectRoot)} && bash ${shellEscape(startScriptPath)}`;
-    await executor.sendKeys(plan.sessionName, `${startCommand}\r`);
-    await waitForBootstrapReadiness(plan, executor, attempt.id, runJsonPath);
+    registerRunSession(context, executionPlan);
+    // The PTY intentionally starts as an interactive shell, but a failed
+    // startup script must terminate that shell. Otherwise readiness can see a
+    // normal zsh prompt and inject agent instructions as shell commands.
+    const startCommand = `cd ${shellEscape(executionPlan.projectRoot)} && bash ${shellEscape(startScriptPath)} || exit $?`;
+    // No trailing \r: sendKeys now sets the daemon's `enter` flag, which appends
+    // the return itself after its settle delay. A literal \r here would submit a
+    // second, empty line.
+    await executor.sendKeys(executionPlan.sessionName, startCommand);
+    await waitForBootstrapReadiness(executionPlan, executor, attempt.id, runJsonPath);
     transitionAgentAttempt({ runJsonPath, attemptId: attempt.id, to: "ready_for_instructions" });
     const submission = submitAgentAttemptInstructions({
       runJsonPath,
       attemptId: attempt.id,
-      idempotencyKey: `${context.runId}:${plan.agentId}:${plan.instructionPath}`,
-      instructionPath: plan.instructionPath,
-      pointer: plan.instructionPointer,
+      idempotencyKey: `${context.runId}:${executionPlan.agentId}:${executionPlan.instructionPath}`,
+      instructionPath: executionPlan.instructionPath,
+      pointer: executionPlan.instructionPointer,
     });
     if (submission.delivered) {
       // no trailing \r: the pointer is multi-line, so the CLI receives it as a
@@ -272,8 +484,8 @@ export async function executeLocalBootstrap(
       // settle delay; confirmInstructionSubmission then verifies the composer
       // actually accepted it (a CLI still running boot checks — e.g. MCP auth —
       // renders the composer but drops enters) and retries bare enters.
-      await executor.sendKeys(plan.sessionName, plan.instructionPointer);
-      const confirmed = await confirmInstructionSubmission(plan, executor);
+      await executor.sendKeys(executionPlan.sessionName, executionPlan.instructionPointer);
+      const confirmed = await confirmInstructionSubmission(executionPlan, executor);
       if (confirmed) {
         transitionAgentAttempt({ runJsonPath, attemptId: attempt.id, to: "instructions_submitted" });
       } else {
@@ -286,15 +498,108 @@ export async function executeLocalBootstrap(
         });
       }
     }
-    await startMonitorSession(plan, executor);
+    await startMonitorSession(executionPlan, executor);
   } catch (error) {
     if (error instanceof BootstrapReadinessBlockedError) {
       return;
     }
-    await executor.remove(plan.sessionName).catch(() => undefined);
-    await executor.remove(plan.monitorSessionName).catch(() => undefined);
-    releaseAgentAttempt({ runJsonPath, attemptId: attempt.id });
+    if (error instanceof RoutedLaunchJobOwnershipLostError) {
+      return;
+    }
+    try {
+      await removeBootstrapSessionsAndProveAbsent(executor, [
+        executionPlan.monitorSessionName,
+        executionPlan.sessionName,
+      ]);
+      if (runWorkspace && nodeWorkspace) {
+        const cleanup = cleanupGitNodeWorkspaceDurably({
+          runWorkspace,
+          agentId: plan.agentId,
+          attemptId: attempt.id,
+          mode: "pristine-startup",
+        });
+        if (cleanup.outcome === "preserved-changes") {
+          const detail = `failed startup attempt ${attempt.id} changed its isolated worktree; preserved for review`;
+          transitionAgentAttemptIfOpen({
+            runJsonPath,
+            attemptId: attempt.id,
+            to: "human_action_required",
+            reason: "interrupted_bootstrap_changes",
+            detail,
+          });
+          markRunAgentBlocked(runJsonPath, plan.agentId, detail);
+          // Both PTYs are proven absent, so the host-capacity reservation can
+          // be returned without making this attempt launchable again. The
+          // terminal reason keeps the routed launch job blocked and the
+          // changed worktree remains intact for review.
+          releaseAgentAttempt({ runJsonPath, attemptId: attempt.id });
+          return;
+        }
+      }
+      releaseAgentAttempt({ runJsonPath, attemptId: attempt.id });
+    } catch (cleanupError) {
+      const startupMessage = error instanceof Error ? error.message : String(error);
+      const cleanupMessage = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
+      throw new Error(
+        `bootstrap failed (${startupMessage}); capacity retained because startup cleanup was not proven: ${cleanupMessage}`,
+      );
+    }
     throw error;
+  }
+}
+
+async function removeBootstrapSessionsAndProveAbsent(
+  executor: RunnerV2BootstrapExecutor,
+  sessionNames: string[],
+): Promise<void> {
+  await Promise.allSettled(sessionNames.map((sessionName) => executor.remove(sessionName)));
+  const remaining = await executor.list();
+  const liveNames = new Set(remaining.map((session) => session.name));
+  const unremoved = sessionNames.filter((sessionName) => liveNames.has(sessionName));
+  if (unremoved.length > 0) {
+    throw new Error(`PTY removal could not be proven for ${unremoved.join(", ")}`);
+  }
+}
+
+function markRunAgentQueued(
+  runJsonPath: string,
+  plan: Pick<AgentBootstrapPlan, "agentId" | "agentName" | "sessionName">,
+): void {
+  const queuedAt = new Date().toISOString();
+  updateRunJson(runJsonPath, (current) => {
+    if (!current) throw new Error(`run.json not found: ${runJsonPath}`);
+    const agents = [...(current.agents || [])];
+    const existing = agents.findIndex((agent) => agent.id === plan.agentId);
+    const queued: RunAgentRecord = {
+      ...(existing >= 0 ? agents[existing] : {}),
+      id: plan.agentId,
+      name: plan.agentName,
+      session: plan.sessionName,
+      status: "pending",
+      queuedAt,
+      lastMessage: "queued: waiting for an active agent slot",
+      completed: undefined,
+    };
+    if (existing >= 0) agents[existing] = queued;
+    else agents.push(queued);
+    return { ...current, agents };
+  });
+}
+
+function assertRoutedLaunchJobOwnership(
+  runJsonPath: string,
+  launchJobId?: string,
+  launchOwnerId?: string,
+): void {
+  if (!launchJobId && !launchOwnerId) return;
+  if (!launchJobId || !launchOwnerId || !routedLaunchJobLeaseOwned({
+    runJsonPath,
+    jobId: launchJobId,
+    ownerId: launchOwnerId,
+  })) {
+    throw new RoutedLaunchJobOwnershipLostError(
+      `routed launch job lease is not owned${launchJobId ? `: ${launchJobId}` : ""}`,
+    );
   }
 }
 
@@ -302,6 +607,7 @@ function assertBootstrapLaunchable(
   runJsonPath: string,
   runId: string,
   agentId: string,
+  launchJobId?: string,
 ): void {
   const run = readRunJson(runJsonPath);
   if (run.id !== runId) {
@@ -315,6 +621,12 @@ function assertBootstrapLaunchable(
     .reverse()
     .find((attempt) => attempt.runId === runId && attempt.agentId === agentId);
   if (!latestAttempt || !isTerminalAgentAttemptPhase(latestAttempt.phase)) return;
+
+  if (
+    launchJobId
+    && latestAttempt.launchJobId === launchJobId
+    && (latestAttempt.phase === "released" || latestAttempt.phase === "startup_failed")
+  ) return;
 
   // A resume route authorizes one fresh occurrence by persisting resumedAt on
   // the run before relaunch. This is durable route state, unlike an environment
@@ -345,23 +657,82 @@ function buildStartScript(plan: AgentBootstrapPlan): string {
   ].join("\n");
 }
 
-function buildInitialInstructions(plan: AgentBootstrapPlan, context: RunnerV2LaunchContext): string {
+function buildWorkspaceEvidenceInstructions(evidence: WorkspaceHandoffArtifact): string {
+  const isolationNotes = evidence.isolation === "git-worktree"
+    ? [
+      "Isolation: dedicated Git worktree (concurrent node writes are isolated).",
+      ...(evidence.tracking === "git"
+        ? [`Node workspace: ${evidence.workspacePath}`, `Node base commit: ${evidence.nodeBaseCommit}`]
+        : []),
+    ]
+    : [
+      "Isolation: shared workspace (concurrent writes are not isolated).",
+      "This artifact is attribution evidence, not a write lock; another agent may mutate the workspace after capture.",
+    ];
+  if (evidence.tracking === "unavailable") {
+    return [
+      "WORKSPACE EVIDENCE:",
+      "Tracking: unavailable",
+      `Run baseline artifact: ${evidence.baselineArtifactPath}`,
+      `Agent handoff artifact: ${evidence.artifactPath}`,
+      `Reason: ${evidence.reason}`,
+      ...isolationNotes,
+      "If your role verifies acceptance, report workspace attribution as blocked; do not infer the task delta from HEAD.",
+    ].join("\n");
+  }
+  return [
+    "WORKSPACE EVIDENCE:",
+    "Tracking: git snapshot",
+    `Run baseline artifact: ${evidence.baselineArtifactPath}`,
+    `Run baseline snapshot commit: ${evidence.baseline.snapshotCommit}`,
+    `Agent handoff artifact: ${evidence.artifactPath}`,
+    `Agent handoff snapshot commit: ${evidence.observed.snapshotCommit}`,
+    `Files changed from run baseline before this agent: ${evidence.changeSet.summary.filesChanged}`,
+    ...isolationNotes,
+    "HEAD is not the run baseline.",
+    "If your role verifies acceptance, the handoff artifact changeSet is the authoritative task delta observed before this agent started; do not substitute git diff against HEAD.",
+  ].join("\n");
+}
+
+function buildInitialInstructions(
+  plan: AgentBootstrapPlan,
+  context: RunnerV2LaunchContext,
+  workspaceEvidence: WorkspaceHandoffArtifact,
+): string {
   const taskContext = plan.runContextExports.TASK_CONTEXT;
+  const nodeBaseCommit = (workspaceEvidence.tracking === "git" ? workspaceEvidence.nodeBaseCommit : undefined)
+    || "not available";
   return [
     `You are: ${plan.agentName}`,
     `Run-ID: ${context.runId}`,
     `Agent-ID: ${plan.agentId}`,
     "",
+    "CURRENT EXECUTION FACTS (AUTHORITATIVE — COPY THESE VALUES EXACTLY WHEN RECORDING THIS RUN):",
+    `TASK_ID=${plan.runContextExports.TASK_ID || "not supplied"}`,
+    `RUN_ID=${plan.runContextExports.MENTIKO_RUN_ID || context.runId}`,
+    `NODE_WORKSPACE=${plan.projectRoot}`,
+    `NODE_BASE_COMMIT=${nodeBaseCommit}`,
+    "These facts describe this launch, not the task design. If a required fact is unavailable, report blocked instead of guessing.",
+    "Never source current task/run/workspace/base-commit facts from DESCRIPTION, ACCEPTANCE CRITERIA, DESIGN NOTES, NOTES, or examples.",
+    "",
     `Your chain run is ${context.chainName}.`,
     `Artifacts directory: ${plan.artifactsDir}`,
     `Events directory: ${plan.eventsDir}`,
+    `Node workspace: ${plan.projectRoot}`,
+    "All workspace reads and writes must use this node workspace. Do not use the registered source workspace from run metadata.",
     "",
     "Read the chain JSON for your full task context:",
-    context.chainPath,
+    plan.monitorSpec.chainPath,
     ...(taskContext ? ["", "Typed task context:", taskContext] : []),
+    "",
+    buildWorkspaceEvidenceInstructions(workspaceEvidence),
     "",
     buildTypedCompletionContract(plan),
   ].join("\n");
+}
+
+function safeArtifactName(value: string): string {
+  return value.replace(/[^A-Za-z0-9._-]+/g, "-");
 }
 
 function buildInitialState(plan: AgentBootstrapPlan) {
@@ -421,6 +792,13 @@ async function waitForBootstrapReadiness(
       failClosed,
     });
     if (readiness.status === "ready") return;
+    if (
+      isRecoverableReadinessStatus(readiness.status)
+      && await attemptTypedStartupRecovery(plan, executor, attemptId, runJsonPath, readiness, output)
+    ) {
+      await sleep(pollMs);
+      continue;
+    }
     if (isTerminalReadinessStatus(readiness.status)) {
       const failure = classifyPolicyReadinessFailure(readiness, output);
       blockStartupForReadiness({
@@ -469,6 +847,58 @@ async function waitForBootstrapReadiness(
   throw new BootstrapReadinessBlockedError(`runner-v2 typed bootstrap timed out waiting for profile readiness; last_output=${lastOutput.slice(-500)}`);
 }
 
+async function attemptTypedStartupRecovery(
+  plan: AgentBootstrapPlan,
+  executor: RunnerV2BootstrapExecutor,
+  attemptId: string,
+  runJsonPath: string,
+  readiness: CliReadinessResult,
+  output: string,
+): Promise<boolean> {
+  const enabled = envValue(plan, "MENTIKO_STARTUP_RECOVERY") === "1";
+  const maxAttempts = Number(envValue(plan, "MENTIKO_STARTUP_RECOVERY_MAX"));
+  const currentAttempt = readRunnerV2AttemptState(runJsonPath).attempts
+    .find((attempt) => attempt.id === attemptId);
+  if (
+    !enabled
+    || !Number.isInteger(maxAttempts)
+    || maxAttempts <= 0
+    || (currentAttempt?.recoveryDecisionCount || 0) >= maxAttempts
+  ) {
+    return false;
+  }
+
+  const recovery: StartupRecoveryInput = {
+    enabled: true,
+    maxAttempts,
+    runId: plan.runContextExports.MENTIKO_RUN_ID,
+    profilesDir: plan.runContextExports.AGENT_PROFILES_DIR,
+    namespaceId: plan.runContextExports.NAMESPACE_ID,
+    orgId: plan.runContextExports.ORG_ID,
+    agentId: plan.agentId,
+    profileId: plan.profileId,
+    cli: plan.localStartCommand,
+    cwd: plan.projectRoot,
+    command: plan.localStartCommand,
+    stateFile: plan.statePath,
+    artifactDir: plan.artifactsDir,
+  };
+  const decision = decideStartupRecovery({ recovery, readiness, output });
+  if (!decision) return false;
+
+  recordAgentAttemptRecoveryDecision({ runJsonPath, attemptId });
+  if (decision.action === "send_keys") {
+    if (!executor.sendRaw || !decision.keys?.length) return false;
+    for (const key of decision.keys) {
+      await executor.sendRaw(plan.sessionName, recoveryKeyBytes(key));
+    }
+    return true;
+  }
+
+  await executor.sendKeys(plan.sessionName, plan.localStartCommand);
+  return true;
+}
+
 class BootstrapReadinessBlockedError extends Error {}
 
 function resolvePlanReadinessPolicy(plan: AgentBootstrapPlan): {
@@ -495,6 +925,10 @@ function resolvePlanReadinessPolicy(plan: AgentBootstrapPlan): {
 
 function isTerminalReadinessStatus(status: CliReadinessResult["status"]): boolean {
   return status === "blocked" || status === "recover" || status === "retry" || status === "no_ready_signal";
+}
+
+function isRecoverableReadinessStatus(status: CliReadinessResult["status"]): boolean {
+  return status === "blocked" || status === "recover" || status === "retry";
 }
 
 function classifyPolicyReadinessFailure(readiness: CliReadinessResult, output: string): {
@@ -643,6 +1077,48 @@ async function acquireChainAdmission(input: {
     await sleep(pollMs);
     pollMs = Math.min(pollMs * 2, pollMaxMs);
   }
+}
+
+async function acquireAgentCapacityAdmission(input: {
+  runJsonPath: string;
+  runId: string;
+  attemptId: string;
+  env: Record<string, string | undefined>;
+}): Promise<{ admitted: true } | { admitted: false; reason: string }> {
+  const configuredCap = input.env.MENTIKO_CAP_DISABLED === "1"
+    ? 0
+    : Number(input.env.MENTIKO_MAX_ACTIVE_AGENTS ?? input.env.MAX_CONCURRENT_AGENTS ?? 3);
+  if (!Number.isSafeInteger(configuredCap) || configuredCap < 0) {
+    return { admitted: false, reason: "active agent cap must be a non-negative safe integer" };
+  }
+  const maxWaitMs = secondsEnv(input.env.MENTIKO_AGENT_CAP_MAX_WAIT_SECS, 86_400) * 1000;
+  const pollMs = secondsEnv(input.env.MENTIKO_AGENT_CAP_POLL_SECS, 1) * 1000;
+  const pollMaxMs = secondsEnv(input.env.MENTIKO_AGENT_CAP_POLL_MAX_SECS, 5) * 1000;
+  const result = await waitForTypedAgentCapacity({
+    runJsonPath: input.runJsonPath,
+    runId: input.runId,
+    attemptId: input.attemptId,
+    cap: configuredCap,
+    scopeRoot: input.env.MENTIKO_ORG_ROOT || config.orgRoot,
+    launchJobId: input.env.MENTIKO_LAUNCH_JOB_ID,
+    launchOwnerId: input.env.MENTIKO_LAUNCH_JOB_OWNER_ID,
+    maxWaitMs,
+    pollMs,
+    pollMaxMs,
+  });
+  if (result.status === "admitted") return { admitted: true };
+  if (result.status === "ownership_lost") {
+    throw new RoutedLaunchJobOwnershipLostError(result.reason);
+  }
+  if (result.status === "cancelled") return { admitted: false, reason: result.reason };
+  if (result.status === "timeout") {
+    const waitedSeconds = Math.floor(result.waitedMs / 1000);
+    return {
+      admitted: false,
+      reason: `agent capacity: waited ${waitedSeconds}s for a slot (${result.active} active, limit ${result.cap})`,
+    };
+  }
+  return { admitted: false, reason: result.reason };
 }
 
 function secondsEnv(value: string | undefined, fallback: number): number {
@@ -802,23 +1278,6 @@ async function sleepBeforeSubmissionDeadline(delayMs: number, deadline: number):
   if (remainingMs <= 0) return false;
   await sleep(Math.min(delayMs, remainingMs));
   return Date.now() < deadline;
-}
-
-/**
- * The composer is the LAST line containing the ❯ prompt; content after it
- * means unsubmitted input (an accepted paste re-renders in history with a
- * `>` prefix instead). Menus/dialogs also use ❯ as a selection caret — an
- * enter retry there picks the default option, which the readiness failure
- * classifier already treats as human_action_required territory.
- */
-function isComposerHoldingInput(output: string): boolean {
-  const lines = output.split("\n");
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const idx = lines[i].indexOf("❯"); // ❯
-    if (idx === -1) continue;
-    return lines[i].slice(idx + 1).trim().length > 0;
-  }
-  return false;
 }
 
 async function startMonitorSession(

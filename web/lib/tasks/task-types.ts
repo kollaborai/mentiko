@@ -1,5 +1,6 @@
 // task type definitions for UI consumption
 import type { AutoRunState } from "@/lib/tasks/auto-run-state";
+import type { GenerationAttemptEntry } from "@/lib/tasks/generation-attempt-ledger";
 
 // raw task record shape (used by UI transforms)
 export interface TaskRecord {
@@ -129,9 +130,29 @@ export interface TaskChainBinding {
   recommendation_run_id?: string;
   recommendation_chain_id?: string;
   generation_job_id?: string;
-  generation_status?: JobStatusType;
+  generation_status?: JobStatusType | "rejected";
   generated_chain_run_id?: string;
   generated_chain_source_chain_id?: string;
+  // A4 deterministic-rejection state (chain-contract-plan-of-record.md):
+  // generation_stop_reason set => automatic retries stopped INTENTIONALLY
+  // (same rejection fingerprint repeated / allowance spent), not a model or
+  // transport failure. The envelope carries the typed phase + message.
+  generation_stop_reason?: "deterministic_duplicate" | "deterministic_budget_exhausted";
+  generation_rejection?: {
+    phase: "import" | "recovery" | "save" | "run_start";
+    code: string;
+    deterministic: boolean;
+    artifact_hash: string;
+    validator_revision: string;
+    contract_version: number;
+    paths: string[];
+    message: string;
+    at: string;
+  };
+  // B7 phase-aware attempt ledger. This is what status display reads: the
+  // ordered record of what each door actually decided, replacing inference
+  // from a single generic retry integer.
+  generation_attempts?: GenerationAttemptEntry[];
 }
 
 // normalized task for UI consumption

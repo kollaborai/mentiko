@@ -24,7 +24,6 @@ import { SplitDetailHeader } from "@/components/ui/detail-header";
 import { BackButton } from "@/components/ui/back-button";
 import { copyToClipboard } from "@/lib/ui/copy-to-clipboard";
 import { PriorityBadge } from "./priority-badge";
-import { TypeBadge } from "./type-badge";
 import { timeAgo } from "@/lib/tasks/task-transforms";
 import { MAX_AUTO_RUN_RETRIES, resolveAutoRunState } from "@/lib/tasks/auto-run-state";
 import type { Task } from "@/lib/tasks/task-types";
@@ -181,7 +180,6 @@ export function TaskDetailHeader({
               {task.title}
             </h2>
             <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-              <TypeBadge type={task.type} />
               <PriorityBadge
                 priority={task.priority}
                 rawPriority={task.rawPriority}

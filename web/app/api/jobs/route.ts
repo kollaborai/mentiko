@@ -13,7 +13,10 @@ import { resolveJobWorkspaceCwd } from "@/lib/runs/job-runner-launch";
 import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
 import { startGenerationChainRun } from "@/lib/generation/generation-chain-dispatch";
 import { buildChainRecommendationCatalog, getAllChains } from "@/lib/chains/chain-utils";
-import { buildChainGenerationPrompt } from "@/lib/generation/chain-generation-required-rules";
+import {
+  buildChainGenerationPrompt,
+  withRequiredChainRecommendationRules,
+} from "@/lib/generation/chain-generation-required-rules";
 import { buildAgentCatalog } from "@/lib/agents/agent-catalog";
 import { buildProfileCatalog } from "@/lib/agents/profile-catalog";
 
@@ -132,7 +135,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     }
 
     const template = getTemplate(namespaceId, orgId, "chain_recommendation");
-    const prompt = resolveTemplate(template.content, {
+    const prompt = resolveTemplate(withRequiredChainRecommendationRules(template.content), {
       TASK_CONTEXT: taskContext,
       CHAIN_CATALOG: String(input.chainCatalog),
       AGENT_CATALOG: agentCatalog,
@@ -140,7 +143,12 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
       WORKSPACE_CONTEXT: workspaceContext,
     });
 
-    input.prompt = prompt;
+    // Post-exhaustion fallback (W1): chain generation for this task is spent,
+    // so generate_new is not an available answer — either something in the
+    // catalog fits, or the task needs a human.
+    input.prompt = input.existingOnly === true
+      ? `${prompt}\n\nHARD CONSTRAINT: chain generation has already been tried for this task and failed repeatedly. You MUST NOT answer "generate_new". Choose "use_existing" only if a chain in the catalog above genuinely fits the task; otherwise answer "no_action_needed" and explain in reasoning what is missing.`
+      : prompt;
   }
 
   if (type === "generate") {

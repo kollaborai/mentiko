@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { join } from "path";
-import config from "@/lib/config";
+import { nsPath } from "@/lib/config";
 import { getCircuitBreakerState } from "@/lib/api/circuit-breaker";
 import { getBackgroundWorkerStatus } from "@/lib/system/background-worker-control";
 import {
@@ -129,8 +129,12 @@ function isRecent(at: string | undefined, now: number): boolean {
   return Number.isFinite(parsed) && now - parsed <= RECENT_WINDOW_MS;
 }
 
-function scanRuns(now: number): MonitorStatusDigest["runs"] {
-  const runsDir = config.runsDir;
+function scanRuns(
+  now: number,
+  namespaceId: string,
+  workspacePath?: string,
+): MonitorStatusDigest["runs"] {
+  const runsDir = nsPath(namespaceId, "runs");
   const result: MonitorStatusDigest["runs"] = {
     total: 0,
     active: 0,
@@ -149,7 +153,7 @@ function scanRuns(now: number): MonitorStatusDigest["runs"] {
     return result;
   }
 
-  result.total = names.length;
+  if (!workspacePath) result.total = names.length;
 
   for (const name of names.slice(0, RUN_SCAN_CAP)) {
     let meta: Record<string, unknown>;
@@ -158,6 +162,13 @@ function scanRuns(now: number): MonitorStatusDigest["runs"] {
     } catch {
       continue;
     }
+    const runWorkspacePath = typeof meta.workspacePath === "string" ? meta.workspacePath : undefined;
+    // A workspace-scoped view must fail closed for legacy records that have no
+    // workspace identity; otherwise removed-workspace history leaks into the
+    // replacement workspace's diagnostics.
+    if (workspacePath && runWorkspacePath !== workspacePath) continue;
+    if (workspacePath) result.total += 1;
+
     const status = typeof meta.status === "string" ? meta.status : "unknown";
     const at = runTimestamp(meta);
     const snapshot: MonitorRunSnapshot = {
@@ -196,10 +207,14 @@ async function scanSessions(): Promise<MonitorStatusDigest["sessions"]> {
   }
 }
 
-function countTasks(namespaceId: string, orgId: string): MonitorStatusDigest["tasks"] {
+function countTasks(
+  namespaceId: string,
+  orgId: string,
+  workspacePath?: string,
+): MonitorStatusDigest["tasks"] {
   const count = (status: string): number => {
     try {
-      return taskCount(orgId, { status }, undefined, namespaceId);
+      return taskCount(orgId, { status }, workspacePath, namespaceId);
     } catch {
       return 0;
     }
@@ -285,6 +300,7 @@ function buildHeadline(digest: Omit<MonitorStatusDigest, "headline">): string {
 export async function buildMonitorStatusDigest(
   namespaceId: string,
   orgId: string,
+  workspacePath?: string,
 ): Promise<MonitorStatusDigest> {
   const now = Date.now();
   const mode = detectMode();
@@ -295,8 +311,8 @@ export async function buildMonitorStatusDigest(
   const warning = Object.entries(checks).filter(([, c]) => c.status === "warn").map(([k]) => k);
 
   const worker = getBackgroundWorkerStatus();
-  const runs = scanRuns(now);
-  const tasks = countTasks(namespaceId, orgId);
+  const runs = scanRuns(now, namespaceId, workspacePath);
+  const tasks = countTasks(namespaceId, orgId, workspacePath);
   const webhooks = scanWebhooks(now);
   const breaker = getCircuitBreakerState();
 

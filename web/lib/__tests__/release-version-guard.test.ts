@@ -28,9 +28,8 @@ describe("release version guard", () => {
     const latestTag = latestStableTag();
 
     expect(`v${packageJson.version}`).toBe(latestTag);
-    expect(releasesSource).toContain(`version: "${latestTag}"`);
-    expect(releasesSource.indexOf(`version: "${latestTag}"`)).toBeLessThan(
-      releasesSource.indexOf('version: "v0.3.9"'),
+    expect(releasesSource).toContain(
+      `export const CURRENT_RELEASE_VERSION = "${latestTag}"`,
     );
   });
 

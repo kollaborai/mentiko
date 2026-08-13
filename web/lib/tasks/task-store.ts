@@ -181,6 +181,18 @@ function runMigrations(db: Database.Database): void {
     WHERE json_extract(metadata, '$.task_generation_job_id') IS NOT NULL
       AND json_extract(metadata, '$.task_generation_role') IN ('parent', 'decision')
   `);
+
+  // Chain-contract Track C: task-creation-service.ts idempotency replay guard.
+  // A caller-supplied or agent-derived idempotency key is stamped into
+  // metadata.idempotency_key on create; this closes the same race the index
+  // above closes for generation jobs -- two concurrent creates with the same
+  // key can't both win, the loser's INSERT throws and the service re-queries
+  // to return the winner's row instead of a duplicate.
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_idempotency_key
+    ON tasks(org_id, json_extract(metadata, '$.idempotency_key'))
+    WHERE json_extract(metadata, '$.idempotency_key') IS NOT NULL
+  `);
 }
 
 // ---------- ID generation ----------

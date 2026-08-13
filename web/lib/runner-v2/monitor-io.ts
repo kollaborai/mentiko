@@ -125,14 +125,17 @@ export function findCompletionEventFile(input: {
   sessionName?: string;
 }): string {
   if (!input.eventsDir || !existsSync(input.eventsDir)) return "";
-  if (!input.expectedEvent) return "";
+  // Normalize the same way the event parser and agentOwnsEvent do (trim, then
+  // lowercase). This also makes a whitespace-only `emits` fall into the
+  // no-declared-event branch instead of matching nothing forever.
+  const expectedEvent = input.expectedEvent.trim().toLowerCase();
+  if (!expectedEvent) return "";
   let files: string[];
   try {
     files = readdirSync(input.eventsDir).filter((f) => f.endsWith(".event"));
   } catch {
     return "";
   }
-  const expectedEvent = input.expectedEvent.toLowerCase();
   for (const file of files) {
     let event: RunnerEventRecord;
     try {
@@ -233,8 +236,14 @@ export function readDeclaredEmits(chainPath: string, agentId: string): string {
     const agents = Array.isArray(chain.agents) ? chain.agents : [];
     for (const agent of agents) {
       if (agent && typeof agent === "object" && (agent as { id?: unknown }).id === agentId) {
+        // Trim to match the event parser, which trims every field value it
+        // reads (events.ts). A chain.json `emits` carrying incidental
+        // whitespace ("draft-ready ") would otherwise never equal the parsed
+        // event name ("draft-ready"), so route A silently never matches and
+        // the run hangs forever with no error anywhere. agentOwnsEvent already
+        // normalizes with trim+lowercase; this is the same contract.
         const emits = (agent as { emits?: unknown }).emits;
-        return typeof emits === "string" ? emits : "";
+        return typeof emits === "string" ? emits.trim() : "";
       }
     }
   } catch {

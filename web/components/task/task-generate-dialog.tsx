@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CloseCircleFilled as X, MagicStarFilled as Sparkles, ArrowLeftFilled as ArrowLeft, RotateFilled, JudgeFilled, TaskSquareFilled } from "@aliimam/icons";
 import { Button } from "@/components/ui/button";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { unwrapApiData } from "@/lib/api/api-client";
 
 interface GeneratedTask {
   title: string;
@@ -53,6 +54,14 @@ interface TaskGenerateResponse {
   taskId?: string;
 }
 
+interface GeneratedTaskResult {
+  task?: GeneratedTask;
+  routedTo?: "decision";
+  decisionId?: string;
+  taskId?: string;
+  createdTaskIds?: string[];
+}
+
 function unwrapTaskGenerateResponse(body: unknown): TaskGenerateResponse {
   if (body && typeof body === "object" && "data" in body) {
     const data = (body as { data?: unknown }).data;
@@ -61,6 +70,57 @@ function unwrapTaskGenerateResponse(body: unknown): TaskGenerateResponse {
     }
   }
   return body as TaskGenerateResponse;
+}
+
+function parseGeneratedTaskValue(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Normalize direct, routed, and `{ output: JSON }` generation job payloads. */
+export function unwrapGeneratedTaskResult(value: unknown): GeneratedTaskResult {
+  const envelope = value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+  const output = parseGeneratedTaskValue(envelope.output);
+  const payload = output && typeof output === "object" && !Array.isArray(output)
+    ? output as Record<string, unknown>
+    : envelope;
+  const task = payload.task && typeof payload.task === "object" && !Array.isArray(payload.task)
+    ? payload.task as GeneratedTask
+    : "title" in payload && "type" in payload
+      ? payload as unknown as GeneratedTask
+      : undefined;
+  const route = payload.route === "decision" || envelope.routedTo === "decision"
+    ? "decision"
+    : undefined;
+  const createdTaskIds = Array.isArray(envelope.createdTaskIds)
+    ? envelope.createdTaskIds.filter((id): id is string => typeof id === "string")
+    : Array.isArray(payload.createdTaskIds)
+      ? payload.createdTaskIds.filter((id): id is string => typeof id === "string")
+    : [];
+  const decisionId = typeof envelope.decisionId === "string"
+    ? envelope.decisionId
+    : typeof payload.decisionId === "string"
+      ? payload.decisionId
+      : undefined;
+  const taskId = typeof envelope.taskId === "string"
+    ? envelope.taskId
+    : typeof payload.taskId === "string"
+      ? payload.taskId
+      : undefined;
+
+  return {
+    ...(task ? { task } : {}),
+    ...(route ? { routedTo: route } : {}),
+    ...(decisionId ? { decisionId } : {}),
+    ...(taskId ? { taskId } : {}),
+    ...(createdTaskIds.length > 0 ? { createdTaskIds } : {}),
+  };
 }
 
 const PRIORITY_LABELS: Record<number, string> = {
@@ -90,6 +150,7 @@ export function TaskGenerateDialog({
   const [step, setStep] = useState<"describe" | "preview">("describe");
   const [prompt, setPrompt] = useState("");
   const [generating, setGenerating] = useState(false);
+  const generationInFlightRef = useRef(false);
   const [error, setError] = useState("");
   const [generated, setGenerated] = useState<GeneratedTask | null>(null);
   const [parent, setParent] = useState("");
@@ -130,7 +191,8 @@ export function TaskGenerateDialog({
   };
 
   const handleGenerate = async (mode: "task" | "decision" = "task") => {
-    if (!prompt.trim() || generating) return;
+    if (!prompt.trim() || generationInFlightRef.current) return;
+    generationInFlightRef.current = true;
     setGenerating(true);
     setError("");
 
@@ -144,7 +206,7 @@ export function TaskGenerateDialog({
           ...(parent ? { parentId: parent } : {}),
           ...(mode === "decision" ? { mode: "decision" } : {}),
           ...(mode === "task" && autoRun ? { autoRun: true } : {}),
-          ...(mode === "task" && sendToDecisionIfWarranted ? { sendToDecisionIfWarranted: true } : {}),
+          ...(mode === "task" ? { sendToDecisionIfWarranted } : {}),
         }),
       });
 
@@ -179,18 +241,14 @@ export function TaskGenerateDialog({
       for (let i = 0; i < 300; i++) {
         await new Promise((r) => setTimeout(r, 2000));
         const pollRes = await fetchWithNamespace(`/api/jobs/${jobId}`);
-        const job = await pollRes.json() as {
+        const job = unwrapApiData<{
           status?: string;
           taskId?: string;
-          result?: (GeneratedTask & { createdTaskIds?: string[] });
+          result?: unknown;
           error?: string;
-        };
-        if (job.status === "complete" && job.result) {
-          const result = job.result as GeneratedTask & {
-            routedTo?: string;
-            decisionId?: string;
-            createdTaskIds?: string[];
-          };
+        }>(await pollRes.json());
+        if (job.status === "complete") {
+          const result = unwrapGeneratedTaskResult(job.result);
           // Agent-as-gate: the generation agent may route a strategic prompt to
           // a decision instead of producing a task tree.
           if (result.routedTo === "decision" && result.decisionId) {
@@ -200,13 +258,17 @@ export function TaskGenerateDialog({
             router.push(`/decisions?id=${encodeURIComponent(result.decisionId)}`);
             return;
           }
-          if (job.taskId || result.createdTaskIds?.length) {
+          if (job.taskId || result.taskId || result.createdTaskIds?.length) {
             onRefresh?.();
             resetForm();
             onClose();
             return;
           }
-          setGenerated(job.result as GeneratedTask);
+          if (!result.task) {
+            setError("generation returned no task payload");
+            return;
+          }
+          setGenerated(result.task);
           setStep("preview");
           return;
         }
@@ -219,6 +281,7 @@ export function TaskGenerateDialog({
     } catch {
       setError("failed to connect to generation API");
     } finally {
+      generationInFlightRef.current = false;
       setGenerating(false);
     }
   };

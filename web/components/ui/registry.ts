@@ -1,4 +1,4 @@
-export type UiLibraryStatus = "approved" | "provisional" | "planned";
+export type UiLibraryStatus = "approved" | "provisional" | "planned" | "not-used";
 export type UiLibrarySource = "gaia-derived" | "shared-app" | "radix-base";
 
 export interface UiLibraryComponentDefinition {
@@ -126,6 +126,15 @@ export const UI_LIBRARY_GROUPS: UiLibraryGroup[] = [
         usage: "Every workflow and docs page. Required for all new pages.",
         notes: "Props: title, subtitle, icon, sectionColor, actions (charms), docs (doc links), children. See DESIGN_SYSTEM.md for full anatomy.",
       },
+      {
+        id: "detail-header",
+        name: "DetailHeader",
+        path: "@/components/ui/detail-header",
+        status: "approved",
+        source: "shared-app",
+        description: "Compact header shell for selected-item detail panes and operational views.",
+        usage: "Notification, run, task, and other list-detail panels.",
+      },
     ],
   },
   {
@@ -167,10 +176,11 @@ export const UI_LIBRARY_GROUPS: UiLibraryGroup[] = [
         id: "workflow-card",
         name: "WorkflowCard",
         path: "@/components/ui/workflow-card",
-        status: "approved",
+        status: "not-used",
         source: "gaia-derived",
         description: "Shared summary card for runs, chains, and execution status.",
         usage: "List/detail shells and workflow overviews.",
+        notes: "No production route renders this component today; runs and run detail only import its WorkflowAgent type.",
       },
       {
         id: "workflow-sidebar",
@@ -191,13 +201,23 @@ export const UI_LIBRARY_GROUPS: UiLibraryGroup[] = [
         usage: "Schedules, recurring tasks, event-driven pages.",
       },
       {
-        id: "chat-composer",
-        name: "ChatComposer / Composer",
-        path: "@/components/ui/chat-composer",
+        id: "composer",
+        name: "Composer / SessionComposer",
+        path: "@/components/ui/composer",
         status: "approved",
         source: "gaia-derived",
-        description: "Input surface for prompt-like authoring with actions.",
-        usage: "Conversation, prompting, and intake-style flows.",
+        description: "Production composer surface with session context, tools, attachments, slash commands, and send state.",
+        usage: "Conversations, session steering, and prompt-like authoring.",
+        notes: "Use Composer directly for the rich input surface; use SessionComposer when the session-status row is part of the workflow.",
+      },
+      {
+        id: "session-composer",
+        name: "SessionComposer",
+        path: "@/components/ui/session-composer",
+        status: "approved",
+        source: "shared-app",
+        description: "Production conversation composer with aligned session status and rich message input.",
+        usage: "Conversation pages and active agent-session messaging.",
       },
       {
         id: "nested-menu",
@@ -217,16 +237,6 @@ export const UI_LIBRARY_GROUPS: UiLibraryGroup[] = [
       "Components that are real shared primitives, but should only be used with clear product justification.",
     components: [
       {
-        id: "holo-card",
-        name: "HoloCard",
-        path: "@/components/ui/holo-card",
-        status: "provisional",
-        source: "gaia-derived",
-        description: "Tall, feature-card surface with holographic treatment and optional tilt/flip behavior.",
-        usage: "Rare featured objects where the card itself is the content.",
-        notes: "Not for normal workflow headers or dense decision/detail panes.",
-      },
-      {
         id: "wave-spinner",
         name: "WaveSpinner",
         path: "@/components/ui/wave-spinner",
@@ -238,11 +248,12 @@ export const UI_LIBRARY_GROUPS: UiLibraryGroup[] = [
       {
         id: "status-indicator",
         name: "StatusIndicator",
-        path: "@/components/ui/status-indicator",
-        status: "approved",
+        path: "@/components/shared/status-indicator",
+        status: "provisional",
         source: "shared-app",
-        description: "Compact state indicator for online/offline or workflow signals.",
-        usage: "Inline system and runtime state display.",
+        description: "Shared status dot and label for runtime, session, and workflow state.",
+        usage: "Inline active, running, connected, error, warning, and idle state display.",
+        notes: "This is the shared version to review. No production route currently imports it; the older UI-local state-based indicator is not registered.",
       },
       {
         id: "knowledge-graph",
@@ -270,6 +281,15 @@ export const UI_LIBRARY_GROUPS: UiLibraryGroup[] = [
         source: "shared-app",
         description: "Stat cards grid showing chain, run, and agent counts with polling indicator.",
         usage: "Dashboard overview row, system health summaries.",
+      },
+      {
+        id: "system-status-widget",
+        name: "SystemStatusWidget",
+        path: "@/components/dashboard/system-status-widget",
+        status: "approved",
+        source: "shared-app",
+        description: "Live health, daemon, uptime, and supporting-service status widget.",
+        usage: "Dashboard system-status strip and runtime health summaries.",
       },
       {
         id: "active-chains",
@@ -324,6 +344,50 @@ export const UI_LIBRARY_GROUPS: UiLibraryGroup[] = [
         source: "shared-app",
         description: "Changelog preview showing 3 most recent releases.",
         usage: "Dashboard footer, what's new section.",
+      },
+    ],
+  },
+  {
+    id: "operational",
+    title: "Operational Surfaces",
+    description:
+      "Reusable run, metrics, lineage, and data-shape surfaces used across the product.",
+    components: [
+      {
+        id: "run-detail-panel",
+        name: "RunDetailPanel",
+        path: "@/components/run/run-detail-panel",
+        status: "approved",
+        source: "shared-app",
+        description: "Embedded and full-page run supervision surface with output, logs, agents, and metrics.",
+        usage: "Runs, task attempts, and dashboard run detail.",
+      },
+      {
+        id: "run-comparison",
+        name: "RunComparison",
+        path: "@/components/run/run-comparison",
+        status: "approved",
+        source: "shared-app",
+        description: "Side-by-side run comparison with metric differences and agent-level context.",
+        usage: "Dashboard run detail and comparison workflows.",
+      },
+      {
+        id: "performance-tab",
+        name: "PerformanceTab",
+        path: "@/components/run/performance-tab",
+        status: "approved",
+        source: "shared-app",
+        description: "Performance metrics and timeline view for a chain run.",
+        usage: "Chain run panel performance tab.",
+      },
+      {
+        id: "data-shapes-catalog",
+        name: "DataShapesCatalog",
+        path: "@/components/docs/data-shapes-catalog",
+        status: "approved",
+        source: "shared-app",
+        description: "Searchable data-shape catalog with scopes, formats, status, and runner lineage.",
+        usage: "Data Shapes documentation and contract exploration.",
       },
     ],
   },

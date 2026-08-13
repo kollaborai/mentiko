@@ -5,6 +5,7 @@ import { updateRunJson, type RunMutationObserver, type RunRecord } from "@/lib/r
 
 export type AgentAttemptPhase =
   | "created"
+  | "queued"
   | "lease_acquired"
   | "pty_allocated"
   | "process_spawned"
@@ -26,6 +27,7 @@ export type AgentAttemptTerminalReason =
   | "completed_from_cross_run_event"
   | "completed_from_handoff_artifact"
   | "completed_from_generation_artifact"
+  | "completed_from_decision_artifact"
   | "completed_empty_emits_last_agent"
   | "no_completion_event"
   | "retries_exhausted"
@@ -35,8 +37,14 @@ export type AgentAttemptTerminalReason =
   | "readiness_policy_retry"
   | "readiness_no_ready_signal"
   | "concurrency_cap_blocked"
+  | "workspace_integration_conflict"
+  | "source_workspace_changed"
+  | "agent_capacity_timeout"
   | "auth_prompt_detected"
   | "instruction_submission_unconfirmed"
+  | "instruction_delivery_ambiguous"
+  | "interrupted_bootstrap_changes"
+  | "launch_coordinator_interrupted"
   | "invalid_transition"
   | "reconciliation_window_expired"
   | "released";
@@ -75,6 +83,14 @@ export interface AgentAttemptRecord {
   leaseId?: string;
   leaseAcquiredAt?: string;
   leaseReleasedAt?: string;
+  capacitySlotAcquiredAt?: string;
+  capacitySlotReleasedAt?: string;
+  /** Stable routed-edge job/occurrence ownership for crash-safe launch replay. */
+  launchJobId?: string;
+  launchOccurrenceId?: string;
+  /** Queue order is assigned under the org-scoped capacity claim. */
+  queueEnteredAt?: string;
+  queueSequence?: number;
   processEvidence?: AgentAttemptProcessEvidence;
   instructionLedger: AgentAttemptInstructionLedgerEntry[];
   recoveryDecisionCount: number;
@@ -116,13 +132,16 @@ export interface AgentAttemptStuckEvent {
 }
 
 const ALLOWED_TRANSITIONS: Record<AgentAttemptPhase, AgentAttemptPhase[]> = {
-  created: ["lease_acquired", "startup_failed", "human_action_required", "stuck", "released"],
+  created: ["queued", "lease_acquired", "startup_failed", "human_action_required", "stuck", "released"],
+  queued: ["lease_acquired", "startup_failed", "human_action_required", "released"],
   lease_acquired: ["pty_allocated", "startup_failed", "human_action_required", "released"],
   pty_allocated: ["process_spawned", "startup_failed", "human_action_required", "released"],
   process_spawned: ["ready_for_instructions", "startup_failed", "human_action_required", "stuck", "released"],
   ready_for_instructions: ["instructions_submitted", "startup_failed", "human_action_required", "stuck", "released"],
   instructions_submitted: ["completed", "completion_failed", "startup_failed", "human_action_required", "stuck", "released"],
-  completed: ["released"],
+  // Agent execution can be complete while the graph edge that integrates its
+  // workspace result still needs human resolution.
+  completed: ["human_action_required", "released"],
   completion_failed: ["released"],
   startup_failed: ["released"],
   human_action_required: ["released"],
@@ -146,7 +165,8 @@ export function isTerminalAgentAttemptPhase(phase: AgentAttemptPhase): boolean {
 }
 
 const NEXT_DESIRED_PHASE: Partial<Record<AgentAttemptPhase, AgentAttemptPhase>> = {
-  created: "lease_acquired",
+  created: "queued",
+  queued: "lease_acquired",
   lease_acquired: "pty_allocated",
   pty_allocated: "process_spawned",
   process_spawned: "ready_for_instructions",
@@ -168,6 +188,8 @@ export function createAgentAttempt(input: {
   agentId: string;
   attemptId?: string;
   leaseId?: string;
+  launchJobId?: string;
+  launchOccurrenceId?: string;
   now?: Date;
 }): AgentAttemptRecord {
   const at = iso(input.now);
@@ -182,7 +204,15 @@ export function createAgentAttempt(input: {
       : latest?.id || `${input.runId}:${input.agentId}:1`
   );
   const existing = state.attempts.find((item) => item.id === attemptId);
-  if (existing) return existing;
+  if (existing) {
+    if (input.launchJobId && existing.launchJobId !== input.launchJobId) {
+      throw new Error(`AgentAttempt ${attemptId} belongs to another launch job`);
+    }
+    if (input.launchOccurrenceId && existing.launchOccurrenceId !== input.launchOccurrenceId) {
+      throw new Error(`AgentAttempt ${attemptId} belongs to another launch occurrence`);
+    }
+    return existing;
+  }
   const attempt: AgentAttemptRecord = {
     id: attemptId,
     runId: input.runId,
@@ -191,6 +221,8 @@ export function createAgentAttempt(input: {
     desiredPhase: "lease_acquired",
     observedPhase: "created",
     leaseId: input.leaseId,
+    launchJobId: input.launchJobId,
+    launchOccurrenceId: input.launchOccurrenceId,
     instructionLedger: [],
     recoveryDecisionCount: 0,
     createdAt: at,
@@ -218,10 +250,19 @@ export function adoptAgentAttemptForCompletion(input: {
   runJsonPath: string;
   runId: string;
   agentId: string;
+  attemptId?: string;
   sessionName?: string;
   now?: Date;
   onMutation?: RunMutationObserver;
 }): AgentAttemptRecord {
+  if (input.attemptId) {
+    const exact = readRunnerV2AttemptState(input.runJsonPath).attempts.find(
+      (attempt) => attempt.id === input.attemptId,
+    );
+    if (!exact) throw new Error(`completion AgentAttempt not found: ${input.attemptId}`);
+    assertCompletionAttemptIdentity(exact, input);
+    return exact;
+  }
   const existing = findLatestAttempt(input.runJsonPath, input.runId, input.agentId);
   // a completed latest attempt stays authoritative (duplicate completion events
   // are idempotent downstream). A FAILURE-terminal latest must not wedge the
@@ -261,6 +302,49 @@ export function adoptAgentAttemptForCompletion(input: {
   return attempt;
 }
 
+export function resolveAgentAttemptForCompletion(input: {
+  runJsonPath: string;
+  runId: string;
+  agentId: string;
+  attemptId?: string;
+  sessionName?: string;
+}): AgentAttemptRecord | undefined {
+  const attempts = readRunnerV2AttemptState(input.runJsonPath).attempts.filter(
+    (attempt) => attempt.runId === input.runId && attempt.agentId === input.agentId,
+  );
+  if (input.attemptId) {
+    const exact = attempts.find((attempt) => attempt.id === input.attemptId);
+    if (!exact) throw new Error(`completion AgentAttempt not found: ${input.attemptId}`);
+    assertCompletionAttemptIdentity(exact, input);
+    return exact;
+  }
+  if (attempts.length > 1) {
+    throw new Error(
+      `completion AgentAttempt identity is ambiguous for ${input.runId}/${input.agentId}; exact MENTIKO_AGENT_ATTEMPT_ID required`,
+    );
+  }
+  const only = attempts[0];
+  if (only) assertCompletionAttemptIdentity(only, input);
+  return only;
+}
+
+function assertCompletionAttemptIdentity(
+  attempt: AgentAttemptRecord,
+  input: { runId: string; agentId: string; sessionName?: string },
+): void {
+  if (attempt.runId !== input.runId || attempt.agentId !== input.agentId) {
+    throw new Error(`completion AgentAttempt identity mismatch: ${attempt.id}`);
+  }
+  if (!input.sessionName) return;
+  const boundSessions = [attempt.leaseId, attempt.processEvidence?.ptySessionId]
+    .filter((value): value is string => Boolean(value));
+  if (boundSessions.length > 0 && !boundSessions.includes(input.sessionName)) {
+    throw new Error(
+      `completion AgentAttempt session mismatch for ${attempt.id}: expected ${boundSessions.join(" or ")}, received ${input.sessionName}`,
+    );
+  }
+}
+
 export function transitionAgentAttempt(input: {
   runJsonPath: string;
   attemptId: string;
@@ -287,6 +371,13 @@ export function transitionAgentAttempt(input: {
       releaseReason: input.to === "released" ? input.reason : attempt.releaseReason,
       leaseAcquiredAt: input.to === "lease_acquired" ? at : attempt.leaseAcquiredAt,
       leaseReleasedAt: input.to === "released" ? at : attempt.leaseReleasedAt,
+      capacitySlotAcquiredAt: input.to === "lease_acquired" && attempt.phase === "queued"
+        ? at
+        : attempt.capacitySlotAcquiredAt,
+      capacitySlotReleasedAt: input.to === "released" && attempt.capacitySlotAcquiredAt
+        ? at
+        : attempt.capacitySlotReleasedAt,
+      queueEnteredAt: input.to === "queued" ? at : attempt.queueEnteredAt,
       updatedAt: at,
       transitions: [
         ...attempt.transitions,
@@ -294,6 +385,70 @@ export function transitionAgentAttempt(input: {
       ],
     };
   }, input.onMutation);
+}
+
+/**
+ * Complete a best-effort terminal transition without reopening historical
+ * evidence. A watchdog, stop request, or capacity reaper can release an
+ * attempt between an async admission/readiness step and the caller's terminal
+ * write. In that race, `released -> human_action_required` is not a new state
+ * transition; the released record is already the authoritative outcome.
+ * Preserve strict transition errors for non-terminal programmer mistakes.
+ */
+export function transitionAgentAttemptIfOpen(input: {
+  runJsonPath: string;
+  attemptId: string;
+  to: AgentAttemptPhase;
+  reason?: AgentAttemptTerminalReason;
+  detail?: string;
+  now?: Date;
+  onMutation?: RunMutationObserver;
+}): AgentAttemptRecord | undefined {
+  try {
+    return transitionAgentAttempt(input);
+  } catch (error) {
+    if (!(error instanceof AgentAttemptTransitionError)) throw error;
+    const current = readRunnerV2AttemptState(input.runJsonPath).attempts
+      .find((attempt) => attempt.id === input.attemptId);
+    if (
+      current
+      && (
+        current.phase === input.to
+        || (isTerminalAgentAttemptPhase(current.phase) && !canTransition(current.phase, input.to))
+      )
+    ) {
+      return current;
+    }
+    throw error;
+  }
+}
+
+/** Persist the strict FIFO sequence chosen while the org-scoped capacity
+ * claim is held. Replays keep the original position. */
+export function recordAgentAttemptQueueOrder(input: {
+  runJsonPath: string;
+  attemptId: string;
+  queueSequence: number;
+  now?: Date;
+}): AgentAttemptRecord {
+  if (!Number.isSafeInteger(input.queueSequence) || input.queueSequence <= 0) {
+    throw new Error("agent queue sequence must be a positive safe integer");
+  }
+  const at = iso(input.now);
+  return updateAttempt(input.runJsonPath, input.attemptId, (attempt) => {
+    if (attempt.phase !== "queued") {
+      throw new Error(`AgentAttempt ${attempt.id} is not queued`);
+    }
+    if (attempt.queueSequence !== undefined && attempt.queueSequence !== input.queueSequence) {
+      throw new Error(`AgentAttempt ${attempt.id} already has queue sequence ${attempt.queueSequence}`);
+    }
+    return {
+      ...attempt,
+      queueSequence: attempt.queueSequence ?? input.queueSequence,
+      queueEnteredAt: attempt.queueEnteredAt || at,
+      updatedAt: at,
+    };
+  });
 }
 
 export function recordAgentAttemptRecoveryDecision(input: {
@@ -363,6 +518,7 @@ export function markAgentAttemptCompletedFromGeneration(input: {
   runJsonPath: string;
   runId: string;
   agentId: string;
+  attemptId?: string;
   detail?: string;
   now?: Date;
   onMutation?: RunMutationObserver;
@@ -373,10 +529,31 @@ export function markAgentAttemptCompletedFromGeneration(input: {
   });
 }
 
+/**
+ * System-owned decision completion (C3): the run-scoped decision-result.json
+ * was the deliverable, so the run completes on the artifact rather than on the
+ * agent's final `mentiko decision import` shell command landing.
+ */
+export function markAgentAttemptCompletedFromDecisionArtifact(input: {
+  runJsonPath: string;
+  runId: string;
+  agentId: string;
+  attemptId?: string;
+  detail?: string;
+  now?: Date;
+  onMutation?: RunMutationObserver;
+}): AgentAttemptRecord | undefined {
+  return markLatestAttemptCompleted({
+    ...input,
+    reason: "completed_from_decision_artifact",
+  });
+}
+
 export function markAgentAttemptCompletedFromEvent(input: {
   runJsonPath: string;
   runId: string;
   agentId: string;
+  attemptId?: string;
   detail?: string;
   now?: Date;
   onMutation?: RunMutationObserver;
@@ -391,6 +568,7 @@ export function markAgentAttemptCompletedFromDurableMarker(input: {
   runJsonPath: string;
   runId: string;
   agentId: string;
+  attemptId?: string;
   detail?: string;
   now?: Date;
   onMutation?: RunMutationObserver;
@@ -405,6 +583,7 @@ export function markAgentAttemptCompletedFromCrossRunEvent(input: {
   runJsonPath: string;
   runId: string;
   agentId: string;
+  attemptId?: string;
   detail?: string;
   now?: Date;
   onMutation?: RunMutationObserver;
@@ -419,6 +598,7 @@ export function markAgentAttemptCompletedFromHandoffArtifact(input: {
   runJsonPath: string;
   runId: string;
   agentId: string;
+  attemptId?: string;
   detail?: string;
   now?: Date;
   onMutation?: RunMutationObserver;
@@ -433,6 +613,7 @@ export function markAgentAttemptCompletedFromEmptyEmits(input: {
   runJsonPath: string;
   runId: string;
   agentId: string;
+  attemptId?: string;
   detail?: string;
   now?: Date;
   onMutation?: RunMutationObserver;
@@ -447,6 +628,7 @@ export function markAgentAttemptFailedNoCompletion(input: {
   runJsonPath: string;
   runId: string;
   agentId: string;
+  attemptId?: string;
   detail?: string;
   now?: Date;
   onMutation?: RunMutationObserver;
@@ -461,6 +643,7 @@ export function markAgentAttemptRetriesExhausted(input: {
   runJsonPath: string;
   runId: string;
   agentId: string;
+  attemptId?: string;
   detail?: string;
   now?: Date;
   onMutation?: RunMutationObserver;
@@ -526,6 +709,52 @@ export function releaseAgentAttempt(input: {
     reason: "released",
     now: input.now,
   });
+}
+
+/** Release only the host-capacity reservation after its PTY has been removed.
+ * The attempt's terminal phase remains intact as completion evidence. */
+export function releaseAgentCapacitySlot(input: {
+  runJsonPath: string;
+  attemptId: string;
+  now?: Date;
+}): AgentAttemptRecord {
+  const at = iso(input.now);
+  return updateAttempt(input.runJsonPath, input.attemptId, (attempt) => {
+    if (!attempt.capacitySlotAcquiredAt || attempt.capacitySlotReleasedAt) return attempt;
+    return {
+      ...attempt,
+      capacitySlotReleasedAt: at,
+      updatedAt: at,
+    };
+  });
+}
+
+/** Release every outstanding host-capacity reservation after a run has been
+ * terminalized by an out-of-band owner such as the watchdog. */
+export function releaseRunAgentCapacitySlots(input: {
+  runJsonPath: string;
+  attemptIds?: ReadonlySet<string>;
+  now?: Date;
+  onMutation?: RunMutationObserver;
+}): number {
+  const at = iso(input.now);
+  let released = 0;
+  updateRunJson(input.runJsonPath, (run) => {
+    if (!run) throw new Error(`run.json not found: ${input.runJsonPath}`);
+    const runnerV2 = run.runnerV2 && typeof run.runnerV2 === "object"
+      ? run.runnerV2 as RunnerV2AttemptState & Record<string, unknown>
+      : undefined;
+    if (!runnerV2 || !Array.isArray(runnerV2.attempts)) return run;
+    const attempts = runnerV2.attempts.map((attempt) => {
+      if (!attempt.capacitySlotAcquiredAt || attempt.capacitySlotReleasedAt) return attempt;
+      if (input.attemptIds && !input.attemptIds.has(attempt.id)) return attempt;
+      released += 1;
+      return { ...attempt, capacitySlotReleasedAt: at, updatedAt: at };
+    });
+    if (released === 0) return run;
+    return { ...run, runnerV2: { ...runnerV2, attempts } };
+  }, undefined, input.onMutation);
+  return released;
 }
 
 export function readRunnerV2AttemptState(runJsonPath: string): RunnerV2AttemptState {
@@ -599,12 +828,18 @@ function markLatestAttemptCompleted(input: {
   runJsonPath: string;
   runId: string;
   agentId: string;
+  attemptId?: string;
   reason: AgentAttemptTerminalReason;
   detail?: string;
   now?: Date;
   onMutation?: RunMutationObserver;
 }): AgentAttemptRecord | undefined {
-  const attempt = findLatestAttempt(input.runJsonPath, input.runId, input.agentId);
+  const attempt = input.attemptId
+    ? readAttempt(input.runJsonPath, input.attemptId)
+    : findLatestAttempt(input.runJsonPath, input.runId, input.agentId);
+  if (attempt && (attempt.runId !== input.runId || attempt.agentId !== input.agentId)) {
+    throw new Error(`completion AgentAttempt identity mismatch: ${attempt.id}`);
+  }
   if (!attempt || attempt.phase === "completed" || attempt.phase === "released") return attempt;
   // same guard as markLatestAttemptFailed: the ledger records evidence, it must
   // never abort the live completion handoff with an invalid-transition throw
@@ -626,12 +861,18 @@ function markLatestAttemptFailed(input: {
   runJsonPath: string;
   runId: string;
   agentId: string;
+  attemptId?: string;
   reason: AgentAttemptTerminalReason;
   detail?: string;
   now?: Date;
   onMutation?: RunMutationObserver;
 }): AgentAttemptRecord | undefined {
-  const attempt = findLatestAttempt(input.runJsonPath, input.runId, input.agentId);
+  const attempt = input.attemptId
+    ? readAttempt(input.runJsonPath, input.attemptId)
+    : findLatestAttempt(input.runJsonPath, input.runId, input.agentId);
+  if (attempt && (attempt.runId !== input.runId || attempt.agentId !== input.agentId)) {
+    throw new Error(`completion AgentAttempt identity mismatch: ${attempt.id}`);
+  }
   if (!attempt) return undefined;
   // completion failure only applies to an attempt that actually reached a running
   // agent; leave already-terminal or pre-instructions attempts untouched instead

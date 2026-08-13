@@ -3,6 +3,7 @@ import { lstatSync, readFileSync } from "node:fs";
 import {
   agentCompleteMarkerDurable,
   findTranscriptJsonl,
+  findTranscriptJsonlByInstructionPath,
   hasTranscriptIdentityBoundary,
   scoreTranscriptIdentity,
   selectTranscriptFromCapture,
@@ -88,10 +89,15 @@ export function resolveTranscriptPath(
   const root = transcriptRootFromProfile(values.get("--profile-path"));
   if (!root) return "";
   const depth = captureDepth(values.get("--capture-depth"));
+  // Mirrors monitor-live-io's resolveTranscriptJsonl: a screen-scraped uuid and
+  // the instruction-pointer path recorded in the transcript's own content are
+  // independent finders scored through the same funnel, so this shell boundary
+  // keeps agreeing with the live monitor on CLIs that never print a uuid.
   return selectTranscriptFromCapture(
     deps.readCapture(),
     (uuid) => findTranscriptJsonl(root, uuid, depth),
     identity,
+    () => findTranscriptJsonlByInstructionPath(root, identity, depth),
   );
 }
 

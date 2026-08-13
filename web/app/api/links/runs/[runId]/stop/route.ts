@@ -64,10 +64,12 @@ export const POST = withErrorHandling(async (
   // update run + agent statuses
   run.status = "stopped";
   run.completed = new Date().toISOString();
+  run.statusReason = { actor: "user", reason: "link run stopped via link stop API" };
   if (run.agents) {
     for (const agent of run.agents) {
       if (agent.status === "running" || agent.status === "pending") {
         agent.status = "stopped";
+        agent.statusReason = { actor: "user", reason: "link run stopped via link stop API" };
       }
     }
   }

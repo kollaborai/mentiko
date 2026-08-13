@@ -1,11 +1,11 @@
 import { spawnSync } from "child_process";
 import { createHash } from "crypto";
-import { existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "fs";
 import { join } from "path";
 import { isDeepStrictEqual } from "util";
 import { runQualityGateEventArtifact } from "@/lib/event-artifacts/event-artifact-runner";
 import { applyTypedExecutorPlan, GenerationImportError, killAgentSessions, readTypedRetryAttempt, type AdapterResult } from "@/lib/runner-v2/adapters";
-import { adoptAgentAttemptForCompletion, markAgentAttemptCompletedFromGeneration, readRunnerV2AttemptState, type AgentAttemptRecord } from "@/lib/runner-v2/agent-attempt";
+import { adoptAgentAttemptForCompletion, isTerminalAgentAttemptPhase, markAgentAttemptCompletedFromGeneration, readRunnerV2AttemptState, releaseAgentCapacitySlot, resolveAgentAttemptForCompletion, transitionAgentAttempt, type AgentAttemptRecord } from "@/lib/runner-v2/agent-attempt";
 import { agentOwnsEvent } from "@/lib/runner-v2/completion";
 import { runCompletionPipeline, type CompletionPipelineResult } from "@/lib/runner-v2/completion-pipeline";
 import type { AgentLivenessInput, CompletionRecoveryEvidence } from "@/lib/runner-v2/completion-runner";
@@ -13,7 +13,19 @@ import { scanRunnerEventFiles } from "@/lib/runner-v2/event-lifecycle";
 import { eventMatchesRunId, type RunnerEventRecord } from "@/lib/runner-v2/events";
 import { buildTypedExecutorPlan, type TypedExecutorPlan } from "@/lib/runner-v2/executor";
 import { captureHash, monitorStatePaths } from "@/lib/runner-v2/monitor-io";
-import { readRunJson, updateRunAgent, updateRunJson, updateRunStatus, type RunAgentRecord, type RunJsonMutation, type RunMutationObserver, type RunRecord } from "@/lib/runner-v2/run-state";
+import {
+  assertRunAgentAttemptCurrent,
+  readRunJson,
+  StaleRunAgentAttemptError,
+  updateRunAgent,
+  updateRunJson,
+  updateRunStatus,
+  type RunAgentAttemptGuard,
+  type RunAgentRecord,
+  type RunJsonMutation,
+  type RunMutationObserver,
+  type RunRecord,
+} from "@/lib/runner-v2/run-state";
 import { livePendingHandoffAgentIds } from "@/lib/runner-v2/handoff-liveness";
 import { evaluateQualityGate, type AgentSummary } from "@/lib/runner-v2/quality-gate";
 import { readLoopState, restoreLoopMutations, type LoopFileMutation, type LoopMutationObserver } from "@/lib/runner-v2/loop-state";
@@ -23,7 +35,19 @@ import { runnerV2PtyEnv } from "@/lib/runner-v2/pty-scope";
 import { isPayloadCompatibleWithKind } from "@/lib/generation/payload-contract";
 import { shouldRecordTaskExecutionMetadata } from "@/lib/runs/run-provenance";
 import { triggerDecisionImportReplay } from "@/lib/decisions/decision-auto-advance";
+import type { OnCompletePolicy, TerminalCompletionInput } from "@/lib/runner-v2/terminal-plan";
 import config from "@/lib/config";
+import {
+  cleanupIntegratedNodeWorkspace,
+  currentRunWorkspaceCommit,
+  integrateAcceptedCompletionWorkspace,
+  integrateCompletedNodeWorkspace,
+  publishCompletedRunWorkspace,
+} from "@/lib/runner-v2/completion-workspace";
+import type {
+  GitNodeIntegrationResult,
+  GitRunWorkspacePublicationResult,
+} from "@/lib/runner-v2/workspace-isolation";
 
 export interface RunnerV2CompletionEntrypointInput {
   sessionName: string;
@@ -88,10 +112,97 @@ export function runRunnerV2CompletionEntrypoint(
   })
     || generationDuplicate;
   if (duplicate) {
+    let completionAttempt: ReturnType<typeof resolveAgentAttemptForCompletion>;
+    let completionAttemptCurrent = true;
+    let integration: GitNodeIntegrationResult | undefined;
+    if (!input.dryRun) {
+      completionAttempt = resolveAgentAttemptForCompletion({
+        runJsonPath,
+        runId,
+        agentId: agent.id,
+        attemptId: env.MENTIKO_AGENT_ATTEMPT_ID,
+        sessionName: input.sessionName,
+      });
+      completionAttemptCurrent = completionAttempt ? completionAttemptIsCurrent({
+        runJsonPath,
+        runId,
+        agentId: agent.id,
+        attemptId: completionAttempt.id,
+      }) : true;
+      integration = completionAttempt
+        ? integrateCompletedNodeWorkspace({
+          run,
+          runId,
+          runDir,
+          agentId: agent.id,
+          attemptId: completionAttempt.id,
+          now: input.now,
+        })
+        : undefined;
+      if (integration?.status === "conflict") {
+        return blockWorkspaceIntegrationConflict({
+          runJsonPath,
+          runId,
+          eventsDir,
+          stateDir,
+          sessionName: input.sessionName,
+          agentId: agent.id,
+          attemptId: completionAttempt!.id,
+          integration,
+          env,
+          now: input.now,
+        });
+      }
+      const publication = run.status === "completed" || generationDuplicate
+        ? publishCompletedRunWorkspace({ run, runId, runDir, now: input.now })
+        : undefined;
+      if (publication?.status === "source-changed") {
+        return blockSourceWorkspaceChanged({
+          runJsonPath,
+          runId,
+          eventsDir,
+          stateDir,
+          sessionName: input.sessionName,
+          agentId: agent.id,
+          attemptId: completionAttempt!.id,
+          publication,
+          env,
+          now: input.now,
+        });
+      }
+    }
     if (!input.dryRun && generationDuplicate) {
-      killAgentSessions(input.sessionName, { stateDir, runId, env });
-      updateRunAgent(runJsonPath, agent.id, "complete", input.now);
-      updateRunStatus(runJsonPath, "completed", undefined, input.now);
+      if (completionAttempt) {
+        removeAgentSessionsAndReleaseCapacity({
+          sessionName: input.sessionName,
+          stateDir,
+          runId,
+          runJsonPath,
+          attemptId: completionAttempt.id,
+          env,
+          now: input.now,
+        });
+      } else {
+        killAgentSessions(input.sessionName, { stateDir, runId, env });
+      }
+      const attemptGuard = completionAttempt && completionAttemptCurrent
+        ? completionAttemptGuard(runId, agent.id, completionAttempt.id)
+        : undefined;
+      if (!completionAttempt || completionAttemptCurrent) {
+        const completedReason = { actor: "system" as const, reason: "completion entrypoint accepted the agent's completion handoff" };
+        updateRunAgent(runJsonPath, agent.id, "complete", input.now, undefined, attemptGuard, completedReason);
+        updateRunStatus(runJsonPath, "completed", undefined, input.now, undefined, attemptGuard, completedReason);
+      }
+    }
+    if (!input.dryRun && completionAttempt && integration && integration.status !== "conflict") {
+      cleanupNodeWorkspaceAfterCompletion({
+        run,
+        runId,
+        runDir,
+        agentId: agent.id,
+        attemptId: completionAttempt.id,
+        now: input.now,
+      });
     }
     return {
       status: "handled",
@@ -130,10 +241,13 @@ export function runRunnerV2CompletionEntrypoint(
     runJsonPath,
     runId,
     agentId: agent.id,
+    attemptId: env.MENTIKO_AGENT_ATTEMPT_ID,
     sessionName: input.sessionName,
     now: input.now,
     onMutation: onRunMutation,
   });
+  const attemptGuard = completionAttemptGuard(runId, agent.id, completionAttempt.id);
+  assertRunAgentAttemptCurrent(readRunJson(runJsonPath), attemptGuard);
 
   const workspacePath = run.workspacePath || stringValue(chain.config?.project_root);
   const completionChainId = resolveCompletionChainId(run, chain);
@@ -162,6 +276,7 @@ export function runRunnerV2CompletionEntrypoint(
     now: input.now,
     dryRun: input.dryRun,
     onRunMutation,
+    attemptGuard,
     });
   if (qualityGate) {
     if (input.dryRun) {
@@ -169,7 +284,10 @@ export function runRunnerV2CompletionEntrypoint(
     } else {
       // shell phase-4 parity: the fallback handler never runs after a typed
       // verdict, so the bridge tears down the agent + monitor sessions itself
-      killAgentSessions(input.sessionName, { stateDir, runId, env });
+      removeAgentSessionsAndReleaseCapacity({
+        sessionName: input.sessionName, stateDir, runId, runJsonPath,
+        attemptId: completionAttempt.id, env, now: input.now,
+      });
     }
     return {
       status: "handled",
@@ -197,24 +315,32 @@ export function runRunnerV2CompletionEntrypoint(
     };
   }
 
+    const terminal: TerminalCompletionInput = {
+      runId,
+      chainId: completionChainId,
+      chainName: completionChainName,
+      chainPath: input.chainPath,
+      taskId: executionTaskId,
+      lastAgentId: agent.id,
+      sessions: run.sessions,
+      schedule: configuredSchedule(chain.config?.schedule),
+      onComplete: terminalOnComplete(chain.config?.on_complete),
+      webhookUrl: stringValue(chain.config?.webhook_url),
+    };
+
     const pipeline = runCompletionPipeline({
       runDir,
       runJsonPath,
       runId,
+      attemptId: completionAttempt.id,
       agent,
       chain,
       events,
       maxRounds,
       now: input.now,
-      terminal: {
-        runId,
-        chainId: completionChainId,
-        chainName: completionChainName,
-        chainPath: input.chainPath,
-        taskId: executionTaskId,
-        lastAgentId: agent.id,
-      },
+      terminal,
       generation: generationImportPlan(run, runDir, agent.id, env),
+      decision: decisionCompletionPlan(run, runDir, agent.id),
       completionRecoveryEvidence: monitorCompletionRecoveryEvidence(env),
       fanGroup,
       liveness,
@@ -237,6 +363,34 @@ export function runRunnerV2CompletionEntrypoint(
         occurrenceId: retryOccurrenceId,
       },
     });
+    if (pipeline.decision.action !== "stale-attempt") {
+      assertRunAgentAttemptCurrent(readRunJson(runJsonPath), attemptGuard);
+    }
+    const workspaceIntegration = integrateAcceptedCompletionWorkspace({
+      run,
+      runId,
+      runDir,
+      agentId: agent.id,
+      attemptId: completionAttempt.id,
+      completionAction: pipeline.decision.action,
+      dryRun: input.dryRun,
+      now: input.now,
+    });
+    if (workspaceIntegration?.status === "conflict") {
+      restoreSnapshots(runJsonPath, runMutationJournal, loopMutationJournal);
+      return blockWorkspaceIntegrationConflict({
+        runJsonPath,
+        runId,
+        eventsDir,
+        stateDir,
+        sessionName: input.sessionName,
+        agentId: agent.id,
+        attemptId: completionAttempt.id,
+        integration: workspaceIntegration,
+        env,
+        now: input.now,
+      });
+    }
     if (pipeline.decision.action === "await-liveness") {
       if (!input.dryRun) {
         recordCompletionLivenessExtension({
@@ -257,18 +411,15 @@ export function runRunnerV2CompletionEntrypoint(
       attemptId: completionAttempt.id,
       pipeline,
     });
+    const routedWorkspaceBaseCommit = workspaceIntegration?.integrationCommit
+      || (!input.dryRun
+        ? currentRunWorkspaceCommit({ run, runId, runDir, now: input.now })
+        : undefined);
     const plan = buildTypedExecutorPlan({
       pipeline,
       allEvents: events,
       allAgentIds: chain.agents.map((candidate) => candidate.id),
-      terminal: {
-        runId,
-        chainId: completionChainId,
-        chainName: completionChainName,
-        chainPath: input.chainPath,
-        taskId: executionTaskId,
-        lastAgentId: agent.id,
-      },
+      terminal,
       agentCompletion: {
         runId,
         chainName: completionChainName,
@@ -294,10 +445,45 @@ export function runRunnerV2CompletionEntrypoint(
           MENTIKO_WEB_URL: env.MENTIKO_WEB_URL,
           MENTIKO_RUNNER_V2: env.MENTIKO_RUNNER_V2,
           MENTIKO_RUNNER_V2_COMPLETION: env.MENTIKO_RUNNER_V2_COMPLETION,
+          TASK_ID: env.TASK_ID,
+          TASK_TITLE: env.TASK_TITLE,
+          TASK_DESCRIPTION: env.TASK_DESCRIPTION,
+          TASK_TYPE: env.TASK_TYPE,
+          TASK_PRIORITY: env.TASK_PRIORITY,
+          TASK_ACCEPTANCE_CRITERIA: env.TASK_ACCEPTANCE_CRITERIA,
+          TASK_DESIGN: env.TASK_DESIGN,
+          TASK_NOTES: env.TASK_NOTES,
+          TASK_COMMENTS: env.TASK_COMMENTS,
+          TASK_CONTEXT: env.TASK_CONTEXT,
+          TASK_CONTEXT_JSON: env.TASK_CONTEXT_JSON,
           MENTIKO_COMPLETION_OCCURRENCE_ID: occurrenceId,
+          MENTIKO_WORKSPACE_BASE_COMMIT: routedWorkspaceBaseCommit,
         },
       },
     });
+
+    const publication = !input.dryRun && runBecameCompletedInPlan(plan)
+      ? publishCompletedRunWorkspace({ run, runId, runDir, now: input.now })
+      : undefined;
+    if (publication?.status === "source-changed") {
+      restoreSnapshots(runJsonPath, runMutationJournal, loopMutationJournal);
+      return blockSourceWorkspaceChanged({
+        runJsonPath,
+        runId,
+        eventsDir,
+        stateDir,
+        sessionName: input.sessionName,
+        agentId: agent.id,
+        attemptId: completionAttempt.id,
+        publication,
+        env,
+        now: input.now,
+      });
+    }
+
+    if (pipeline.decision.action !== "stale-attempt") {
+      assertRunAgentAttemptCurrent(readRunJson(runJsonPath), attemptGuard);
+    }
 
     const adapter = applyTypedExecutorPlan(plan, {
       runJsonPath,
@@ -306,8 +492,10 @@ export function runRunnerV2CompletionEntrypoint(
       orgId: env.ORG_ID || "default",
       eventsDir,
       eventsArchiveDir: join(eventsDir, "archive"),
+      schedulesDir: env.SCHEDULES_DIR,
       dryRun: input.dryRun,
       onRunMutation,
+      ...(pipeline.decision.action !== "stale-attempt" ? { attemptGuard } : {}),
     });
 
     if (!input.dryRun && runBecameCompletedInPlan(plan)) {
@@ -334,7 +522,20 @@ export function runRunnerV2CompletionEntrypoint(
       // verdict, so the bridge tears down the agent + monitor sessions itself.
       // Runs for every handled verdict — v1 kills sessions unconditionally in
       // phase 4 before its routing decisions; relaunches use fresh sessions.
-      killAgentSessions(input.sessionName, { stateDir, runId, env });
+      removeAgentSessionsAndReleaseCapacity({
+        sessionName: input.sessionName, stateDir, runId, runJsonPath,
+        attemptId: completionAttempt.id, env, now: input.now,
+      });
+      if (workspaceIntegration) {
+        cleanupNodeWorkspaceAfterCompletion({
+          run,
+          runId,
+          runDir,
+          agentId: agent.id,
+          attemptId: completionAttempt.id,
+          now: input.now,
+        });
+      }
     }
 
     return {
@@ -349,6 +550,27 @@ export function runRunnerV2CompletionEntrypoint(
     };
   } catch (error) {
     restoreSnapshots(runJsonPath, runMutationJournal, loopMutationJournal);
+    if (error instanceof StaleRunAgentAttemptError) {
+      const staleAttempt = resolveAgentAttemptForCompletion({
+        runJsonPath,
+        runId,
+        agentId: agent.id,
+        attemptId: env.MENTIKO_AGENT_ATTEMPT_ID,
+        sessionName: input.sessionName,
+      });
+      if (!input.dryRun && staleAttempt) {
+        removeAgentSessionsAndReleaseCapacity({
+          sessionName: input.sessionName,
+          stateDir,
+          runId,
+          runJsonPath,
+          attemptId: staleAttempt.id,
+          env,
+          now: input.now,
+        });
+      }
+      return staleCompletionEntrypointResult({ runId, agentId: agent.id, runJsonPath, eventsDir });
+    }
     if (!input.dryRun && error instanceof GenerationImportError) {
       // The generation agent did finish and produced an accepted artifact; the
       // system failed while importing that artifact. Do not restore the run to
@@ -356,25 +578,314 @@ export function runRunnerV2CompletionEntrypoint(
       // tear down the PTYs so the watchdog cannot mistake a zombie session for
       // active work. A later completion replay can still retry the idempotent
       // job import and move the run from failed to completed.
-      adoptAgentAttemptForCompletion({
+      const recoveredAttempt = adoptAgentAttemptForCompletion({
         runJsonPath,
         runId,
         agentId: agent.id,
+        attemptId: env.MENTIKO_AGENT_ATTEMPT_ID,
         sessionName: input.sessionName,
         now: input.now,
       });
-      updateRunAgent(runJsonPath, agent.id, "complete", input.now);
       markAgentAttemptCompletedFromGeneration({
         runJsonPath,
         runId,
         agentId: agent.id,
+        attemptId: recoveredAttempt.id,
         detail: "generation artifact accepted; import failed after agent completion",
         now: input.now,
       });
-      updateRunStatus(runJsonPath, "failed", error.message, input.now);
-      killAgentSessions(input.sessionName, { stateDir, runId, env });
+      const recoveredGuard = completionAttemptGuard(runId, agent.id, recoveredAttempt.id);
+      if (completionAttemptIsCurrent({
+        runJsonPath,
+        ...recoveredGuard,
+      })) {
+        updateRunAgent(runJsonPath, agent.id, "complete", input.now, undefined, recoveredGuard,
+          { actor: "system", reason: "generation artifact accepted; agent work completed" });
+        updateRunStatus(runJsonPath, "failed", error.message, input.now, undefined, recoveredGuard,
+          { actor: "system", reason: `generation import failed after agent completion: ${error.message}` });
+      }
+      removeAgentSessionsAndReleaseCapacity({
+        sessionName: input.sessionName, stateDir, runId, runJsonPath,
+        attemptId: recoveredAttempt.id, env, now: input.now,
+      });
     }
     throw error;
+  }
+}
+
+function removeAgentSessionsAndReleaseCapacity(input: {
+  sessionName: string;
+  stateDir: string;
+  runId: string;
+  runJsonPath: string;
+  attemptId: string;
+  env: NodeJS.ProcessEnv | Record<string, string | undefined>;
+  now?: Date;
+}): void {
+  const competingAttempt = readRunnerV2AttemptState(input.runJsonPath).attempts.find((attempt) => (
+    attempt.id !== input.attemptId
+    && attempt.runId === input.runId
+    && !isTerminalAgentAttemptPhase(attempt.phase)
+    && (
+      attempt.leaseId === input.sessionName
+      || attempt.processEvidence?.ptySessionId === input.sessionName
+    )
+  ));
+  if (competingAttempt) {
+    // A stale completion may replay after a retry or loop occurrence reused the
+    // same deterministic PTY name. Release only the exact completed attempt's
+    // capacity; the newer occurrence owns the live session.
+    releaseAgentCapacitySlot({
+      runJsonPath: input.runJsonPath,
+      attemptId: input.attemptId,
+      now: input.now,
+    });
+    return;
+  }
+  const cleanup = killAgentSessions(input.sessionName, {
+    stateDir: input.stateDir,
+    runId: input.runId,
+    env: input.env,
+  });
+  // The monitor does not consume an active-agent slot. Release only after the
+  // agent PTY itself is proven absent; a failed removal stays durably counted
+  // and the watchdog cleanup pass retries it.
+  if (!cleanup.failed.includes(input.sessionName)) {
+    releaseAgentCapacitySlot({
+      runJsonPath: input.runJsonPath,
+      attemptId: input.attemptId,
+      now: input.now,
+    });
+  }
+}
+
+function completionAttemptGuard(
+  runId: string,
+  agentId: string,
+  attemptId: string,
+): RunAgentAttemptGuard {
+  return { runId, agentId, attemptId };
+}
+
+/**
+ * A completion replay can arrive after the original completion already
+ * released the attempt's PTY/capacity lease. The replay still needs to
+ * surface the workspace conflict at run level, but it must not try to move a
+ * historical released attempt back into a live terminal phase.
+ */
+function transitionAttemptToHumanActionRequired(input: {
+  runJsonPath: string;
+  attemptId: string;
+  reason: Parameters<typeof transitionAgentAttempt>[0]["reason"];
+  detail: string;
+  now?: Date;
+}): AgentAttemptRecord | undefined {
+  const attempt = readRunnerV2AttemptState(input.runJsonPath).attempts.find(
+    (candidate) => candidate.id === input.attemptId,
+  );
+  if (!attempt) return undefined;
+  if (attempt.phase === "human_action_required") return attempt;
+  // `completed` is explicitly allowed to transition to a human-resolution
+  // state. Every other terminal phase is historical evidence and cannot be
+  // reopened; leave it intact and let the guarded run-level status carry the
+  // replayed conflict.
+  if (isTerminalAgentAttemptPhase(attempt.phase) && attempt.phase !== "completed") return attempt;
+  return transitionAgentAttempt({
+    runJsonPath: input.runJsonPath,
+    attemptId: input.attemptId,
+    to: "human_action_required",
+    reason: input.reason,
+    detail: input.detail,
+    now: input.now,
+  });
+}
+
+function completionAttemptIsCurrent(
+  input: RunAgentAttemptGuard & { runJsonPath: string },
+): boolean {
+  try {
+    assertRunAgentAttemptCurrent(readRunJson(input.runJsonPath), input);
+    return true;
+  } catch (error) {
+    if (error instanceof StaleRunAgentAttemptError) return false;
+    throw error;
+  }
+}
+
+function staleCompletionEntrypointResult(input: {
+  runId: string;
+  agentId: string;
+  runJsonPath: string;
+  eventsDir: string;
+}): RunnerV2CompletionEntrypointResult {
+  return {
+    status: "handled",
+    runId: input.runId,
+    agentId: input.agentId,
+    decision: "stale-attempt",
+    plan: {
+      action: "stale-attempt",
+      launches: [],
+      effects: [],
+    },
+    adapter: {
+      effectsApplied: [],
+      operations: [],
+      launchesStarted: [],
+    },
+    runJsonPath: input.runJsonPath,
+    eventsDir: input.eventsDir,
+  };
+}
+
+function blockWorkspaceIntegrationConflict(input: {
+  runJsonPath: string;
+  runId: string;
+  eventsDir: string;
+  stateDir: string;
+  sessionName: string;
+  agentId: string;
+  attemptId: string;
+  integration: GitNodeIntegrationResult;
+  env: NodeJS.ProcessEnv | Record<string, string | undefined>;
+  now?: Date;
+}): RunnerV2CompletionEntrypointResult {
+  const paths = input.integration.conflictPaths.length > 0
+    ? input.integration.conflictPaths.join(", ")
+    : "unknown paths";
+  const detail = [
+    `workspace integration conflict after agent ${input.agentId}`,
+    `paths: ${paths}`,
+    `artifact: ${input.integration.artifactPath}`,
+  ].join("; ");
+
+  transitionAttemptToHumanActionRequired({
+    runJsonPath: input.runJsonPath,
+    attemptId: input.attemptId,
+    reason: "workspace_integration_conflict",
+    detail,
+    now: input.now,
+  });
+  const attemptGuard = completionAttemptGuard(input.runId, input.agentId, input.attemptId);
+  const blockedReason = { actor: "system" as const, reason: detail };
+  updateRunAgent(input.runJsonPath, input.agentId, "blocked", input.now, undefined, attemptGuard, blockedReason);
+  updateRunStatus(input.runJsonPath, "blocked", detail, input.now, undefined, attemptGuard, blockedReason);
+  removeAgentSessionsAndReleaseCapacity({
+    sessionName: input.sessionName,
+    stateDir: input.stateDir,
+    runId: input.runId,
+    runJsonPath: input.runJsonPath,
+    attemptId: input.attemptId,
+    env: input.env,
+    now: input.now,
+  });
+
+  return {
+    status: "handled",
+    runId: input.runId,
+    agentId: input.agentId,
+    decision: "workspace-conflict",
+    plan: {
+      action: "workspace-conflict",
+      launches: [],
+      effects: [],
+    },
+    adapter: {
+      effectsApplied: [],
+      operations: [],
+      launchesStarted: [],
+    },
+    runJsonPath: input.runJsonPath,
+    eventsDir: input.eventsDir,
+  };
+}
+
+function blockSourceWorkspaceChanged(input: {
+  runJsonPath: string;
+  runId: string;
+  eventsDir: string;
+  stateDir: string;
+  sessionName: string;
+  agentId: string;
+  attemptId: string;
+  publication: GitRunWorkspacePublicationResult;
+  env: NodeJS.ProcessEnv | Record<string, string | undefined>;
+  now?: Date;
+}): RunnerV2CompletionEntrypointResult {
+  const changedPaths = input.publication.sourceChanges.files.map((file) => file.path);
+  const detail = [
+    `source workspace changed before publishing run ${input.runId}`,
+    `changes: ${changedPaths.length > 0 ? changedPaths.join(", ") : "HEAD or branch identity"}`,
+    ...(input.publication.rollback?.status === "reverted"
+      ? ["post-apply race detected; Mentiko result patch was reverted"]
+      : input.publication.rollback?.status === "not-needed"
+        ? ["post-apply race detected; source returned to the task-start snapshot before rollback"]
+        : input.publication.rollback?.status === "failed"
+          ? [
+            "post-apply race detected; unaffected Mentiko result paths were reverted",
+            `externally changed paths preserved: ${input.publication.rollback.preservedPaths?.join(", ") || "unknown"}`,
+            "those preserved paths may contain Mentiko result changes",
+          ]
+          : []),
+    `artifact: ${input.publication.artifactPath}`,
+  ].join("; ");
+
+  transitionAttemptToHumanActionRequired({
+    runJsonPath: input.runJsonPath,
+    attemptId: input.attemptId,
+    reason: "source_workspace_changed",
+    detail,
+    now: input.now,
+  });
+  const attemptGuard = completionAttemptGuard(input.runId, input.agentId, input.attemptId);
+  const blockedReason = { actor: "system" as const, reason: detail };
+  updateRunAgent(input.runJsonPath, input.agentId, "blocked", input.now, undefined, attemptGuard, blockedReason);
+  updateRunStatus(input.runJsonPath, "blocked", detail, input.now, undefined, attemptGuard, blockedReason);
+  removeAgentSessionsAndReleaseCapacity({
+    sessionName: input.sessionName,
+    stateDir: input.stateDir,
+    runId: input.runId,
+    runJsonPath: input.runJsonPath,
+    attemptId: input.attemptId,
+    env: input.env,
+    now: input.now,
+  });
+
+  return {
+    status: "handled",
+    runId: input.runId,
+    agentId: input.agentId,
+    decision: "workspace-source-changed",
+    plan: {
+      action: "workspace-source-changed",
+      launches: [],
+      effects: [],
+    },
+    adapter: {
+      effectsApplied: [],
+      operations: [],
+      launchesStarted: [],
+    },
+    runJsonPath: input.runJsonPath,
+    eventsDir: input.eventsDir,
+  };
+}
+
+function cleanupNodeWorkspaceAfterCompletion(input: {
+  run: RunRecord;
+  runId: string;
+  runDir: string;
+  agentId: string;
+  attemptId: string;
+  now?: Date;
+}): void {
+  try {
+    cleanupIntegratedNodeWorkspace(input);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.error(
+      `[runner-v2] could not remove integrated node worktree ${input.attemptId}: ${detail}`,
+    );
   }
 }
 
@@ -494,6 +1005,7 @@ function maybeHandleQualityGateFailure(input: {
   now?: Date;
   dryRun?: boolean;
   onRunMutation?: RunMutationObserver;
+  attemptGuard: RunAgentAttemptGuard;
 }) {
   const artifactsDir = join(input.runDir, "artifacts");
   const summaryPath = join(artifactsDir, `${input.agent.id}-summary.json`);
@@ -514,6 +1026,8 @@ function maybeHandleQualityGateFailure(input: {
   // retry blindly. Preserve that distinction for reconciliation and task UI.
   const summaryStatus = summary?.status?.trim().toLowerCase();
   const terminalRunStatus = summaryStatus === "blocked" ? "blocked" : "failed";
+
+  assertRunAgentAttemptCurrent(readRunJson(input.runJsonPath), input.attemptGuard);
 
   const artifact: { status: string; executionId?: string; artifactPath?: string } = !input.dryRun ? runQualityGateEventArtifact({
     namespaceId: input.namespaceId,
@@ -564,8 +1078,25 @@ function maybeHandleQualityGateFailure(input: {
   }) : { status: "planned" as const };
 
   if (!input.dryRun) {
-    updateRunAgent(input.runJsonPath, input.agent.id, "failed", input.now, input.onRunMutation);
-    updateRunStatus(input.runJsonPath, terminalRunStatus, result.reason, input.now, input.onRunMutation);
+    const failureReason = { actor: "system" as const, reason: result.reason };
+    updateRunAgent(
+      input.runJsonPath,
+      input.agent.id,
+      "failed",
+      input.now,
+      input.onRunMutation,
+      input.attemptGuard,
+      failureReason,
+    );
+    updateRunStatus(
+      input.runJsonPath,
+      terminalRunStatus,
+      result.reason,
+      input.now,
+      input.onRunMutation,
+      input.attemptGuard,
+      failureReason,
+    );
   }
   return artifact;
 }
@@ -634,6 +1165,48 @@ function hasImportableGenerationPayload(input: {
     }
   }
   return false;
+}
+
+/**
+ * Decision-phase counterpart to generationImportPlan (C3).
+ *
+ * A decision core-chain run's real deliverable is `artifacts/decision-result.json`.
+ * The `mentiko decision import` CLI call that applies it is the LAST thing the
+ * agent does, and four runs died exactly there: valid artifact on disk, valid
+ * run-scoped import token, and a failed run because the model flubbed the final
+ * command. Completion must own that, with the CLI as an accelerant.
+ *
+ * Same identity discipline as the generation side — decision id, phase, the
+ * run-scoped token chain-run-service wrote, and an artifact written after this
+ * attempt started. A filename alone is never authoritative.
+ */
+function decisionCompletionPlan(
+  run: RunRecord,
+  runDir: string,
+  agentId: string,
+): { decisionId: string; phase: string; artifactPath: string } | undefined {
+  const metadata = objectValue(run.metadata);
+  const decisionId = stringValue(metadata?.decisionId);
+  const phase = stringValue(metadata?.decisionPhase);
+  if (!decisionId || !phase) return undefined;
+  if (!existsSync(join(runDir, ".internal", "decision-import-token"))) return undefined;
+
+  const artifactPath = join(runDir, "artifacts", "decision-result.json");
+  if (!existsSync(artifactPath)) return undefined;
+
+  const notBefore = generationArtifactNotBeforeMs(run, agentId);
+  try {
+    if (notBefore !== undefined && statSync(artifactPath).mtimeMs < notBefore) return undefined;
+    const payload = JSON.parse(readFileSync(artifactPath, "utf8")) as unknown;
+    // An empty object or an array is not a phase result; anything else is the
+    // decision route's business to validate, not ours to second-guess.
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return undefined;
+    if (Object.keys(payload as Record<string, unknown>).length === 0) return undefined;
+  } catch {
+    return undefined;
+  }
+
+  return { decisionId, phase, artifactPath };
 }
 
 function generationArtifactNotBeforeMs(run: RunRecord, agentId: string): number | undefined {
@@ -716,6 +1289,11 @@ interface ChainAgent {
   name?: string;
   emits?: string;
   triggers?: string[];
+  wait_for_events?: {
+    events: string[];
+    wait_for?: "all" | "any" | "quorum";
+    quorum?: number;
+  };
   status?: string;
   lastAttemptCreatedAt?: string;
   session_prefix?: string;
@@ -727,6 +1305,9 @@ interface ChainConfig {
   max_rounds?: unknown;
   retry?: unknown;
   session_prefix?: unknown;
+  on_complete?: unknown;
+  webhook_url?: unknown;
+  schedule?: unknown;
   webhooks?: unknown;
 }
 
@@ -1059,6 +1640,21 @@ function sessionPrefix(sessionName: string, chain: ChainFile): string {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function configuredSchedule(value: unknown): string | undefined {
+  const direct = stringValue(value);
+  if (direct) return direct;
+  return stringValue(objectValue(value)?.cron);
+}
+
+function terminalOnComplete(value: unknown): OnCompletePolicy | undefined {
+  const policy = stringValue(value);
+  if (!policy) return undefined;
+  if (policy === "stop" || policy === "keep" || policy === "archive" || policy === "webhook" || policy.startsWith("chain:")) {
+    return policy as OnCompletePolicy;
+  }
+  return undefined;
 }
 
 function resolveCompletionChainId(run: RunRecord, chain: Pick<ChainFile, "id" | "name">): string | undefined {

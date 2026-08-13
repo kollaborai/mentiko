@@ -2,13 +2,18 @@ import {
   GENERATED_CHAIN_CONTRACT_SHAPE,
   validateGeneratedChainDeliveryContract,
 } from "@/lib/chains/generated-chain-delivery-contract";
-import { withRequiredChainGenerationRules } from "./chain-generation-required-rules";
+import {
+  TASK_LINKED_CHAIN_RUNTIME_RULE,
+  withRequiredChainGenerationRules,
+  withRequiredChainRecommendationRules,
+} from "./chain-generation-required-rules";
 
 describe("withRequiredChainGenerationRules", () => {
-  it("appends both required markers to a template that has neither", () => {
+  it("appends every required marker to a template that has none", () => {
     const result = withRequiredChainGenerationRules("Design a chain for the request.");
     expect(result).toContain("DYNAMIC_PORT_RUNTIME_PROOF");
     expect(result).toContain("DELIVERY_CONTRACT_EDIT_AUTHORITY");
+    expect(result).toContain("TASK_LINKED_CHAIN_RUNTIME");
   });
 
   // Regression: CHOR-001 (2026-07-20) -- the generator wrote a delivery-mode
@@ -146,8 +151,58 @@ describe("withRequiredChainGenerationRules", () => {
     expect(result).toContain("DELIVERY_CONTRACT_EDIT_AUTHORITY");
   });
 
+  // Regression: TASK-007 (2026-08-09). The schema advertised version "1.0"
+  // and nothing taught the branch-key vocabulary, so generation burned its
+  // deterministic budget on the validator's two graph rejections. The rule
+  // must state both in the validator's own words.
+  it("teaches the graph vocabulary in the exact words the validator rejects with", () => {
+    const result = withRequiredChainGenerationRules("Design a chain for the request.");
+    expect(result).toContain("GRAPH_EVENT_VOCABULARY");
+    expect(result).toContain('exactly "1.0.0"');
+    expect(result).toContain("must be in semver format");
+    expect(result).toContain("must match an event emitted or consumed by an agent");
+    expect(result).toContain("pruned at import");
+  });
+
+  it("does not duplicate the graph-vocabulary marker when already present", () => {
+    const already = "Some template.\n\nGRAPH_EVENT_VOCABULARY already present here.";
+    const result = withRequiredChainGenerationRules(already);
+    expect(result.split("GRAPH_EVENT_VOCABULARY").length - 1).toBe(1);
+    expect(result).toContain("RUNTIME_CONTEXT_TRUTH");
+  });
+
   it("documents both authorities shapes the validator accepts", () => {
     const result = withRequiredChainGenerationRules("Design a chain for the request.");
     expect(result).toContain("Authorities may be a string array or authorities.can");
+  });
+
+  it("teaches post-admission task state and forbids self-terminal verification", () => {
+    const result = withRequiredChainGenerationRules("Design a chain for the request.");
+    expect(result).toContain('status "in_progress"');
+    expect(result).toContain("metadata.chain_id");
+    expect(result).toContain("assignee may be null");
+    expect(result).toContain("No agent inside a run may require that same run");
+    expect(result).toContain("external orchestrator after the run");
+  });
+
+  it("injects the same temporal contract into stored recommendation templates", () => {
+    const result = withRequiredChainRecommendationRules("Recommend a chain.");
+    expect(result).toContain("TASK_LINKED_CHAIN_RUNTIME");
+    expect(result).toContain("metadata.last_run_id/task_run_scope");
+  });
+
+  it("does not duplicate the task-linked runtime rule in either producer", () => {
+    const already = `Recommend a chain.\n\n${TASK_LINKED_CHAIN_RUNTIME_RULE.trim()}`;
+    expect(withRequiredChainRecommendationRules(already)).toBe(already);
+    expect(withRequiredChainGenerationRules(already)
+      .split("TASK_LINKED_CHAIN_RUNTIME").length - 1).toBe(1);
+  });
+
+  it("does not trust a marker substring in an obsolete or inverted template", () => {
+    const stale = "TASK_LINKED_CHAIN_RUNTIME: require the task to stay open.";
+    const result = withRequiredChainRecommendationRules(stale);
+    expect(result).toContain(stale);
+    expect(result).toContain(TASK_LINKED_CHAIN_RUNTIME_RULE.trim());
+    expect(result.split("TASK_LINKED_CHAIN_RUNTIME").length - 1).toBe(2);
   });
 });

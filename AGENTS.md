@@ -4,8 +4,9 @@ event-driven AI agent orchestration system.
 users define chains (agent pipelines) in JSON, system executes them
 via pty-manager sessions with file-based event communication.
 
-evolving into a SaaS product. vision and roadmap tracked in
-the memory system (see MEMORY.md topic files).
+evolving into a SaaS product. the high-level roadmap is in
+`docs/ROADMAP.md`; working vision and decision context remain in the memory
+system (see MEMORY.md topic files).
 
 ## architecture
 
@@ -422,6 +423,13 @@ when something doesn't work, check in this order:
 
 always screenshot AFTER every action. don't assume it worked.
 
+## user-facing docs and updates
+
+When a change affects the in-app `/docs` or `/updates` surfaces, load
+`.agents/skills/mentiko-user-docs/SKILL.md` before editing. It defines the
+source files, user-relevance bar, release metadata rule, link checks, and
+live verification required for those product surfaces.
+
 ## production deployment
 
 This repo contains the self-hosted Mentiko platform. Production guidance
@@ -431,7 +439,10 @@ release version guard:
   - public releases are strict `vX.Y.Z` tags only
   - each release must increment the previous stable tag by +0.0.1
   - before tagging, update `web/package.json`, `web/package-lock.json`, and
-    `web/lib/releases.ts` to the same version
+    `web/lib/releases.ts` (`CURRENT_RELEASE_VERSION`) to the same version
+  - `releases` is the user-facing update feed, not an engineering diary; only
+    add a card when the release changes something a product user can use,
+    observe, depend on, or must act on
   - rich build labels like `v0.3.10-r...` are rejected
 
 platform image build pipeline:

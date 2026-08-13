@@ -138,6 +138,50 @@ describe("decision reconciler", () => {
     expect(existsSync(ledgerPath)).toBe(false);
   });
 
+  it("schedules a dead research run through the bounded recovery ledger", () => {
+    const decision = {
+      id: "dead-research",
+      status: "researching",
+      prompt: "recover research",
+      createdAt: "2026-07-21T00:00:00.000Z",
+      updatedAt: "2026-07-21T00:00:00.000Z",
+      options: [],
+      workspacePath: "/workspace/a",
+      researchRunId: "run-dead-research",
+    } as Decision;
+    const { deps, advance } = dependencies({
+      workspaces: [{ id: "a", path: "/workspace/a" }],
+      decisions: { "/workspace/a": [decision] },
+      inspect: () => ({
+        kind: "dead",
+        phase: "research",
+        pointer: { runId: "run-dead-research" },
+      }),
+    });
+
+    const result = reconcileDecisions({
+      namespaceId: "ns",
+      orgId: "org",
+      codeRoot: "/code",
+      ledgerPath,
+      nowMs: 0,
+      dependencies: deps,
+    });
+
+    expect(result).toMatchObject({
+      examined: 1,
+      activeGenerating: 1,
+      deadPointers: 1,
+      eligibleRecoveries: 1,
+      recoveriesScheduled: 1,
+    });
+    expect(advance).toHaveBeenCalledWith({
+      namespaceId: "ns",
+      orgId: "org",
+      decision,
+    });
+  });
+
   it("persists cooldowns and exhausts the automatic retry budget", () => {
     const decision = optionsDecision({ id: "dead-options", workspacePath: "/workspace/a" });
     const { deps, advance } = dependencies({

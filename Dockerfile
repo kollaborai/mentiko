@@ -65,7 +65,7 @@ RUN --mount=type=cache,target=/build/web/.next/cache,id=next-${TARGETARCH} \
       test -f .next/standalone/server.js || (echo "FATAL: SKIP_NEXT_BUILD=1 but .next/standalone/server.js missing — artifact not staged" && exit 1); \
     else \
       echo "=== next.js build (webpack) ===" && \
-      ./node_modules/.bin/next build --webpack && \
+      NODE_OPTIONS="--max-old-space-size=8192" ./node_modules/.bin/next build --webpack && \
       test -f .next/standalone/server.js || (echo "FATAL: standalone build missing server.js" && exit 1); \
     fi
 
@@ -79,6 +79,8 @@ RUN echo "=== assembling platform ===" && \
     cp -r /build/bin/. /context/bin/ 2>/dev/null || true && \
     cp -r /build/lib/. /context/lib/ 2>/dev/null || true && \
     cp -r /build/web/lib/. /context/lib/ 2>/dev/null || true && \
+    mkdir -p /context/docs/orchestration/contracts && \
+    cp /build/docs/orchestration/contracts/*.json /context/docs/orchestration/contracts/ && \
     cp -r server/. /context/server/ 2>/dev/null || true && \
     test -d /build/kollab/agent-bundles/mentiko || (echo "FATAL: missing kollab/agent-bundles/mentiko (kollabor bar bootstrap)" && exit 1) && \
     mkdir -p /context/kollab/agent-bundles && \
@@ -625,15 +627,16 @@ RUN if [ -f /build/web/lib/process-manager.ts ] && [ ! -f /context/lib/process-m
 
 # compile mentiko-mcp — uses the lib/mentiko-mcp workspace package's own
 # build, which produces dist/server.js cleanly without cross-project alias
-# resolution issues. The bin/mentiko-mcp bash shim prefers this bundle in
-# prod and falls back to tsx in dev.
+# resolution issues. Keep the package's canonical dist/server.js layout:
+# runner-v2 injects this exact path into Claude's private MCP config, and the
+# bin/mentiko-mcp shim also resolves it from the repository root.
 RUN if [ -f /build/lib/mentiko-mcp/package.json ]; then \
       echo "=== building mentiko-mcp package ===" && \
       cd /build/lib/mentiko-mcp && \
       npm install --no-audit --no-fund && \
       npm run build && \
-      mkdir -p /context/lib/mentiko-mcp && \
-      cp /build/lib/mentiko-mcp/dist/server.js /context/lib/mentiko-mcp/server.js && \
+      mkdir -p /context/lib/mentiko-mcp/dist && \
+      cp /build/lib/mentiko-mcp/dist/server.js /context/lib/mentiko-mcp/dist/server.js && \
       rm -f /context/lib/mentiko-mcp/server.ts \
             /context/lib/mentiko-mcp/dispatch.ts \
             /context/lib/mentiko-mcp/tools.ts && \

@@ -124,7 +124,8 @@ export interface SessionInfo {
   history_length: number;
   active: boolean;
   mcp_servers: string[];
-  mcp_connected: string[];
+  /** Removed from the engine payload — it was always []. Kept optional for old engines. */
+  mcp_connected?: string[];
   /** Injected by the web proxy on POST /sessions — 15-min JWT for ops routes */
   session_token?: string;
 }
@@ -348,12 +349,20 @@ function requiredSessionSignature(opts: CreateSessionRequest): string | null {
 }
 
 function sessionMatchesRequest(info: SessionInfo, opts: CreateSessionRequest): boolean {
+  // The engine keeps listing sessions whose daemon has died, so a stored id can
+  // resolve to a corpse. Reusing one gets HTTP 409 "Session daemon is not
+  // running" on the first turn. `active` is a real os.kill(pid, 0) check.
+  if (info.active === false) return false;
+
   if (opts.profile && info.profile !== opts.profile) return false;
 
+  // Reuse is a question about how the session was CONFIGURED, not about whether
+  // its MCP servers are connected this instant. Gating on live connection state
+  // meant every boot spawned a fresh daemon and orphaned the old one.
   const requiredMcpServers = opts.mcp_servers ?? [];
   if (requiredMcpServers.length > 0) {
-    const connected = new Set(info.mcp_connected ?? []);
-    return requiredMcpServers.every((server) => connected.has(server));
+    const configured = new Set(info.mcp_servers ?? []);
+    return requiredMcpServers.every((server) => configured.has(server));
   }
 
   return true;
@@ -569,12 +578,10 @@ export async function getOrCreateSession(
         const sessionToken = tokenRes?.ok
           ? (await tokenRes.json().catch(() => null))?.session_token as string | undefined
           : undefined;
-        if (sessionToken) {
-          return { sessionId: info.session_id, sessionToken };
-        }
-        if (typeof window !== "undefined") {
-          clearStoredSession();
-        }
+        // A failed refresh is a health problem, not a reason to throw away a
+        // session that already matched. Reuse it — the bar re-auths on 401.
+        // Abandoning here spawned a second daemon for a perfectly good session.
+        return { sessionId: info.session_id, sessionToken };
       } else {
         clearStoredSession();
       }

@@ -64,6 +64,32 @@ describe("runner agent transcript CLI boundary", () => {
     }
   });
 
+  it("resolves via --instruction-path with no uuid anywhere in the capture (CLI-agnostic route B)", () => {
+    // Mirrors monitor-live-io's resolveTranscriptJsonl: a codex/aider/kollab
+    // session, or an unconfigured claude with no status line, never prints a
+    // session uuid to the screen. The pasted instruction-pointer path is the
+    // anchor instead.
+    const root = mkdtempSync(join(tmpdir(), "mentiko-agent-transcript-cli-"));
+    try {
+      const logs = join(root, "logs");
+      const workspace = join(root, "workspace");
+      mkdirSync(logs, { recursive: true });
+      mkdirSync(workspace, { recursive: true });
+      const instructionPath = join(root, "runs", "run-1", "artifacts", "writer-instructions.md");
+      const transcriptPath = join(logs, "session.jsonl");
+      writeFileSync(transcriptPath, transcript("", workspace, `Read ${instructionPath}\nAGENT_COMPLETE`));
+      const profilePath = join(root, "profile.json");
+      writeFileSync(profilePath, JSON.stringify({ log_path: logs }));
+
+      const capture = "no uuid or status line on this screen";
+      const resolved = run(["resolve", "--profile-path", profilePath, "--workspace", workspace, "--instruction-path", instructionPath], capture);
+      expect(resolved.out.at(0)).toBe(transcriptPath);
+      expect(run(["durable-marker", "--profile-path", profilePath, "--workspace", workspace, "--instruction-path", instructionPath], capture).code).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("fails closed when no identity anchor is supplied", () => {
     const { root, profilePath, capture } = fixture();
     try {

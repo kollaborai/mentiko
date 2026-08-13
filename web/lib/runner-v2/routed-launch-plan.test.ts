@@ -71,7 +71,7 @@ describe("runner-v2 routed launch plans", () => {
     });
   });
 
-  it("builds synchronous-acceptance fan-out plans with per-agent logs and fan metadata", () => {
+  it("builds one queued fan-out coordinator with shared fan metadata", () => {
     expect(buildRoutedLaunchPlans({
       action: "launch",
       agentIds: ["a", "b"],
@@ -81,17 +81,10 @@ describe("runner-v2 routed launch plans", () => {
     }, context)).toEqual([
       expect.objectContaining({
         kind: "fan-out",
-        agentIds: ["a"],
-        command: expect.stringMatching(/runner-v2-launch-agent.*'a'/),
-        env: expect.objectContaining({ MENTIKO_RUN_ID: "run-1", AGENT_FAN_GROUP_AGENT_ID: "a", AGENT_FAN_GROUP_ID: "draft-ready-20260626-1234" }),
-        logPath: "/runs/run-1/fanout-a.log",
-      }),
-      expect.objectContaining({
-        kind: "fan-out",
-        agentIds: ["b"],
-        command: expect.stringMatching(/runner-v2-launch-agent.*'b'/),
-        env: expect.objectContaining({ MENTIKO_RUN_ID: "run-1", AGENT_FAN_GROUP_AGENT_ID: "b", AGENT_FAN_GROUP_ID: "draft-ready-20260626-1234" }),
-        logPath: "/runs/run-1/fanout-b.log",
+        agentIds: ["a", "b"],
+        command: expect.stringMatching(/runner-v2-launch-agent.*'a' 'b'/),
+        env: expect.objectContaining({ MENTIKO_RUN_ID: "run-1", AGENT_FAN_GROUP_ID: "draft-ready-20260626-1234" }),
+        logPath: "/runs/run-1/fanout.log",
       }),
     ]);
   });

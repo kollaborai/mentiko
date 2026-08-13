@@ -77,6 +77,9 @@ agents/ratings.json
 # platform build output (local Docker builds)
 platform-build/
 
+# compiled server build output (ws-terminal.js, background-worker.js, etc.)
+/server/
+
 # temp
 /tmp/
 *.log

@@ -84,7 +84,12 @@ export async function runChainMonitor(
         return { reason: "complete", ticks: 0, finalState: io.loadState(session) };
       }
       log(`monitor: session '${session}' not found after ${SESSION_WAIT_RETRIES * 3}s`);
-      return { reason: "session-gone", ticks: 0, finalState: io.loadState(session) };
+      if (await io.onDied(session) === "complete") {
+        io.clearState(session);
+        return { reason: "complete", ticks: 0, finalState: io.loadState(session) };
+      }
+      io.clearState(session);
+      return { reason: "died", ticks: 0, finalState: io.loadState(session) };
     }
     await io.sleep(3);
   }
@@ -111,8 +116,12 @@ export async function runChainMonitor(
           io.clearState(session);
           return { reason: "complete", ticks, finalState: state };
         }
+        if (await io.onDied(session) === "complete") {
+          io.clearState(session);
+          return { reason: "complete", ticks, finalState: state };
+        }
         io.clearState(session);
-        return { reason: "session-gone", ticks, finalState: state };
+        return { reason: "died", ticks, finalState: state };
       case "died":
         if (await io.recheckCompletion(session)) {
           await io.onComplete(session);

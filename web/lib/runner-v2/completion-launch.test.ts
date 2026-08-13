@@ -63,6 +63,7 @@ describe("runner-v2 completion PTY launcher", () => {
         MENTIKO_AI_GATEWAY_LOCAL_TOKEN: token,
         MENTIKO_SESSION_ID: "chain-run-1",
         MENTIKO_SESSION_TOKEN: sessionToken,
+        MENTIKO_AGENT_ATTEMPT_ID: "run-1:writer:3",
       }),
     });
 
@@ -82,6 +83,7 @@ describe("runner-v2 completion PTY launcher", () => {
       MENTIKO_AI_GATEWAY_LOCAL_TOKEN: token,
       MENTIKO_SESSION_ID: "chain-run-1",
       MENTIKO_SESSION_TOKEN: sessionToken,
+      MENTIKO_AGENT_ATTEMPT_ID: "run-1:writer:3",
       MENTIKO_RUN_DIR: "/tmp/runs/run-1",
       MENTIKO_RUNNER_V2: "1",
       MENTIKO_RUNNER_V2_COMPLETION: "1",

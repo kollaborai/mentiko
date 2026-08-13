@@ -31,7 +31,13 @@ jest.mock("@/lib/api/audit-exec", () => ({ execAuditLog: jest.fn().mockResolvedV
 jest.mock("@/lib/api/audit-queue", () => ({ addAuditLog: jest.fn().mockResolvedValue(undefined) }));
 jest.mock("@/lib/api-errors", () => ({
   BadRequest: class BadRequest extends Error {},
-  ValidationError: class ValidationError extends Error {},
+  ValidationError: class ValidationError extends Error {
+    details: unknown;
+    constructor(message: string, details?: unknown) {
+      super(message);
+      this.details = details;
+    }
+  },
 }));
 jest.mock("@/lib/api-response", () => ({
   withErrorHandling: <T extends (...args: never[]) => unknown>(handler: T) => handler,
@@ -43,9 +49,21 @@ jest.mock("@/lib/agents/agent-loader", () => ({
 jest.mock("@/lib/agents/mcp-task-tool-contract", () => ({
   normalizeMcpTaskToolDeclarations: <T>(agent: T) => agent,
 }));
+const mockIsGeneratedChainContract = jest.fn(() => false);
 jest.mock("@/lib/chains/generated-chain-delivery-contract", () => ({
-  isGeneratedChainContract: jest.fn(() => false),
-  validateGeneratedChainDeliveryContract: jest.fn(() => []),
+  ...jest.requireActual("@/lib/chains/generated-chain-delivery-contract"),
+  isGeneratedChainContract: (...args: unknown[]) => mockIsGeneratedChainContract(...args as []),
+}));
+
+// The route's generated-chain path is a thin adapter over THE acceptance
+// service (B3); mock that boundary. The service itself is covered by
+// lib/chains/generated-chain-acceptance.test.ts against a real fs root.
+const mockAcceptGeneratedChain = jest.fn();
+const mockPersistAcceptedManifest = jest.fn();
+jest.mock("@/lib/chains/generated-chain-acceptance", () => ({
+  ...jest.requireActual("@/lib/chains/generated-chain-acceptance"),
+  acceptGeneratedChain: (...args: unknown[]) => mockAcceptGeneratedChain(...args),
+  persistAcceptedManifest: (...args: unknown[]) => mockPersistAcceptedManifest(...args),
 }));
 
 import { POST } from "./route";
@@ -209,5 +227,123 @@ describe("POST /api/chains/save inline agents", () => {
       timeout_agent: "final-verifier-2",
       timeout_handler: "worker",
     });
+  });
+});
+
+// B3 (chain-contract-plan-of-record.md): the save door is an adapter over
+// THE acceptance service — rejections carry its typed envelope, acceptance
+// persists the manifest chain + digest and skips the inline-agent migration
+// the service already performed.
+describe("POST /api/chains/save generated-chain acceptance", () => {
+  const { buildGeneratedChainRejectionEnvelope } =
+    jest.requireActual("@/lib/chains/generated-chain-rejections");
+  const { GeneratedChainRejectedError } =
+    jest.requireActual("@/lib/chains/generated-chain-acceptance");
+
+  const authoredChain = {
+    name: "generated-chain",
+    metadata: { generated_chain_contract: { version: 1, mode: "research", acceptance_criteria: "x" } },
+    agents: [{ id: "observer", name: "Observer", prompt: "Observe.", triggers: ["start"], emits: "observed" }],
+  };
+
+  const saveRequest = () => new Request("http://localhost/api/chains/save", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: "generated-chain", chain: authoredChain }),
+  });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    existsSync.mockReturnValue(false);
+    mockIsGeneratedChainContract.mockReturnValue(true);
+  });
+
+  it("persists the accepted manifest chain and records the digest binding", async () => {
+    const manifestChain = {
+      ...authoredChain,
+      agents: [{ $ref: "observer", triggers: ["start"], emits: "observed" }],
+    };
+    mockAcceptGeneratedChain.mockReturnValue({
+      authoredChain,
+      manifestChain,
+      digest: "sha256:accepted",
+      contractVersion: 1,
+      acceptanceRevision: "test-rev",
+      warnings: [],
+      createdAgents: [{ id: "observer", name: "Observer" }],
+      extractedCount: 1,
+    });
+
+    const response = await POST(saveRequest() as never);
+
+    expect(response.status).toBe(200);
+    expect(mockAcceptGeneratedChain).toHaveBeenCalledWith(expect.objectContaining({
+      namespaceId: "default",
+      orgId: "default",
+      phase: "save",
+    }));
+    const chainWrite = writeFileSync.mock.calls.find(([target]) =>
+      String(target).endsWith("/chains/generated-chain/chain.json"),
+    );
+    expect(chainWrite).toBeDefined();
+    const persisted = JSON.parse(chainWrite![1] as string);
+    // the service's materialized chain is persisted, version-stamped
+    expect(persisted.agents).toEqual(manifestChain.agents);
+    expect(persisted.version).toBe("1.0.0");
+    expect(mockPersistAcceptedManifest).toHaveBeenCalledWith(
+      "default",
+      "default",
+      "generated-chain",
+      expect.objectContaining({
+        digest: expect.stringMatching(/^sha256:/),
+        manifestChain: expect.objectContaining({ version: "1.0.0" }),
+      }),
+    );
+    // no second inline-agent migration: only the chain.json write happened
+    const agentWrites = writeFileSync.mock.calls.filter(([target]) =>
+      String(target).includes("/agents/"),
+    );
+    expect(agentWrites).toEqual([]);
+  });
+
+  it("maps a service rejection to the typed 422 envelope", async () => {
+    const envelope = buildGeneratedChainRejectionEnvelope({
+      phase: "save",
+      chain: authoredChain,
+      errors: ["the last generated-chain agent must declare final_verifier: true"],
+    });
+    mockAcceptGeneratedChain.mockImplementation(() => {
+      throw new GeneratedChainRejectedError([envelope.message], envelope);
+    });
+
+    await expect(POST(saveRequest() as never)).rejects.toMatchObject({
+      message: "Invalid generated chain delivery contract",
+      details: {
+        errors: [envelope.message],
+        rejection: expect.objectContaining({
+          phase: "save",
+          deterministic: true,
+          artifact_hash: expect.stringMatching(/^sha256:/),
+        }),
+      },
+    });
+    expect(writeFileSync).not.toHaveBeenCalled();
+    expect(mockPersistAcceptedManifest).not.toHaveBeenCalled();
+  });
+
+  it("marks a ledger-answered duplicate so retry loops stop immediately", async () => {
+    const envelope = buildGeneratedChainRejectionEnvelope({
+      phase: "save",
+      chain: authoredChain,
+      errors: ["the last generated-chain agent must declare final_verifier: true"],
+    });
+    mockAcceptGeneratedChain.mockImplementation(() => {
+      throw new GeneratedChainRejectedError([envelope.message], envelope, true);
+    });
+
+    await expect(POST(saveRequest() as never)).rejects.toMatchObject({
+      details: expect.objectContaining({ duplicate: true }),
+    });
+    expect(writeFileSync).not.toHaveBeenCalled();
   });
 });

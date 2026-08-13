@@ -119,6 +119,7 @@ describe("POST /api/chains/recommend", () => {
     const jobArg = mockCreateJob.mock.calls[0][1] as { prompt: string };
     expect(jobArg.prompt).toContain("PROFILE_CATALOG_DATA");
     expect(jobArg.prompt).toContain("AGENT_CATALOG_DATA");
+    expect(jobArg.prompt).toContain("TASK_LINKED_CHAIN_RUNTIME");
   });
 
   it("accepts direct workspacePath param", async () => {

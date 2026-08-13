@@ -65,6 +65,33 @@ describe("decision auto-advance", () => {
     expect(fetchMock.mock.calls[0][0]).toContain("/api/decisions/dec-deck-once/guided/questions");
   });
 
+  it("relaunches a dead research pointer through the research route", async () => {
+    const runsDir = mkdtempSync(join(tmpdir(), "decision-research-recovery-"));
+    const runDir = join(runsDir, "run-research-dead");
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(join(runDir, "run.json"), JSON.stringify({ status: "blocked" }));
+    jest.mocked(resolveLinkRunsDir).mockReturnValue(runsDir);
+    const fetchMock = jest.fn().mockResolvedValue(new Response(null, { status: 200 }));
+    global.fetch = fetchMock;
+
+    try {
+      const decision = {
+        id: "dec-research-recover",
+        status: "researching",
+        researchRunId: "run-research-dead",
+        options: [],
+      } as never;
+
+      advanceDecisionAfterPhase({ namespaceId: "ns", orgId: "org", decision });
+      await Promise.resolve();
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock.mock.calls[0][0]).toContain("/api/decisions/dec-research-recover/research");
+    } finally {
+      rmSync(runsDir, { recursive: true, force: true });
+    }
+  });
+
   it("automatically generates options once the deck is ready", async () => {
     const fetchMock = jest.fn().mockResolvedValue(new Response(null, { status: 200 }));
     global.fetch = fetchMock;

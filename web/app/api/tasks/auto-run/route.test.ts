@@ -170,6 +170,21 @@ jest.mock("@/lib/auth/workspace-auth", () => ({
   resolveAuthorizedWorkspacePath: jest.fn((_namespaceId, _orgId, workspacePath) => workspacePath),
 }));
 
+// Ledger IO mocked in-memory (real file ledger has its own suite); envelope
+// builder, hash, and fingerprint stay REAL so these tests prove the actual
+// deterministic-rejection flow.
+const mockFindGeneratedChainRejection = jest.fn();
+const mockRecordGeneratedChainRejection = jest.fn();
+jest.mock("@/lib/chains/generated-chain-rejections", () => ({
+  ...jest.requireActual("@/lib/chains/generated-chain-rejections"),
+  findGeneratedChainRejection: (...args: unknown[]) => mockFindGeneratedChainRejection(...args),
+  recordGeneratedChainRejection: (...args: unknown[]) => mockRecordGeneratedChainRejection(...args),
+}));
+import {
+  buildGeneratedChainRejectionEnvelope,
+  generatedChainRejectionFingerprint,
+} from "@/lib/chains/generated-chain-rejections";
+
 import { POST } from "./route";
 
 function makeRequest(body: Record<string, unknown>, headers?: Record<string, string>) {
@@ -220,6 +235,7 @@ describe("POST /api/tasks/auto-run", () => {
     mockResolveLinkRunsDir.mockReturnValue("/tmp/mentiko-test/default/orgs/default/runs");
     mockListWorkspaces.mockReturnValue([]);
     mockResolveAutoRunPolicy.mockReturnValue(true);
+    mockFindGeneratedChainRejection.mockReturnValue(undefined);
     global.fetch = jest.fn().mockResolvedValue(jsonResponse({
       success: true,
       data: { jobId: "job-analysis", status: "pending" },
@@ -994,6 +1010,65 @@ describe("POST /api/tasks/auto-run", () => {
     );
   });
 
+  it("preserves typed resolved-chain validation details when auto-run launch is rejected", async () => {
+    const validationDetail =
+      "agents[0] violates TASK_LINKED_CHAIN_RUNTIME: in-run agents execute after admission";
+    mockTaskGet.mockReturnValue({
+      id: "TASK-RUNTIME-CONTRACT",
+      title: "Reject impossible runtime contract",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      metadata: { auto_run: true, chain_id: "generated-chain" },
+    });
+    (global.fetch as jest.Mock).mockImplementation((url: string) => {
+      if (String(url).endsWith("/api/chains/generated-chain")) {
+        return Promise.resolve(jsonResponse({
+          success: true,
+          data: { chain: { name: "Generated Chain", config: {}, agents: [] } },
+        }));
+      }
+      if (String(url).endsWith("/api/chains/run")) {
+        return Promise.resolve(jsonResponse({
+          success: false,
+          error: {
+            code: "VALIDATION_ERROR",
+            message: "Invalid generated chain delivery contract",
+            details: { errors: [validationDetail] },
+          },
+        }, 422));
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    const res = await POST(makeRequest({ taskId: "TASK-RUNTIME-CONTRACT" }) as never);
+    const body = await res.json();
+    const expectedMessage = `Invalid generated chain delivery contract: ${validationDetail}`;
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      triggered: false,
+      taskId: "TASK-RUNTIME-CONTRACT",
+      action: "task_run_launch_failed",
+      error: expectedMessage,
+    });
+    expect(mockTaskUpdate).toHaveBeenLastCalledWith(
+      "default",
+      "TASK-RUNTIME-CONTRACT",
+      expect.objectContaining({
+        status: "blocked",
+        metadata: expect.objectContaining({
+          auto_run_paused: true,
+          auto_run_paused_reason: expectedMessage,
+          task_run_launch_failure: expect.objectContaining({
+            message: expectedMessage,
+          }),
+        }),
+      }),
+      "default",
+    );
+  });
+
   it("blocks and clears the provisional scope when chain launch confirms another id", async () => {
     mockTaskGet.mockReturnValue({
       id: "TASK-RUN-MISMATCH",
@@ -1220,6 +1295,246 @@ describe("POST /api/tasks/auto-run", () => {
             "delivery generated chains require an agent with edit_files authority",
           ),
           auto_run_retries: 2,
+        }),
+      },
+      "default",
+    );
+    expect(mockTriggerAutoRunScan).toHaveBeenCalledWith("default", "default");
+  });
+
+  // --- A4 deterministic-rejection policy (chain-contract-plan-of-record.md) ---
+
+  const generatedResultChain = (name: string) => ({
+    name,
+    metadata: {
+      generated_chain_contract: {
+        version: 1,
+        mode: "research",
+        acceptance_criteria: "evidence exists",
+      },
+    },
+    agents: [{ id: "observer", name: "Observer", prompt: "Observe", deliverable: "report", verification: "re-read" }],
+  });
+
+  const generationTask = (metadata: Record<string, unknown>) => ({
+    id: "TASK-DET",
+    title: "Deterministic policy",
+    status: "open",
+    issue_type: "task",
+    priority: 2,
+    metadata: {
+      auto_run: true,
+      analysis_job_id: "job-analysis",
+      analysis_status: "accepted",
+      generation_job_id: "job-generation",
+      generation_status: "complete",
+      ...metadata,
+    },
+  });
+
+  it("uses the guided-regeneration allowance for a typed save rejection without consuming transient retries", async () => {
+    mockTaskGet.mockReturnValue(generationTask({ auto_run_retries: 0 }));
+    mockGetJob.mockReturnValue({
+      id: "job-generation",
+      type: "generate",
+      status: "complete",
+      result: generatedResultChain("Fresh Rejection Chain"),
+    });
+    const envelope = buildGeneratedChainRejectionEnvelope({
+      phase: "save",
+      chain: generatedResultChain("Fresh Rejection Chain"),
+      errors: ["the last generated-chain agent must declare final_verifier: true"],
+    });
+    (global.fetch as jest.Mock).mockResolvedValue(jsonResponse({
+      success: false,
+      error: {
+        code: "VALIDATION_ERROR",
+        message: "Invalid generated chain delivery contract",
+        details: { errors: [envelope.message], rejection: envelope },
+      },
+    }, 422));
+
+    const response = await POST(makeRequest({ taskId: "TASK-DET" }) as never);
+    const body = await response.json();
+
+    expect(body.data).toMatchObject({
+      triggered: false,
+      taskId: "TASK-DET",
+      action: "generation_rejected_regenerating",
+      recoveryScheduled: true,
+    });
+    expect(mockTaskUpdate).toHaveBeenCalledWith(
+      "default",
+      "TASK-DET",
+      {
+        metadata: expect.objectContaining({
+          generation_job_id: undefined,
+          generation_status: "rejected",
+          generation_last_error: envelope.message,
+          generation_rejection_fingerprints: [generatedChainRejectionFingerprint(envelope)],
+          // The transient budget is untouched by a deterministic rejection.
+          auto_run_retries: 0,
+        }),
+      },
+      "default",
+    );
+    expect(mockTriggerAutoRunScan).toHaveBeenCalledWith("default", "default");
+  });
+
+  it("stops immediately when a save rejection repeats an already-seen fingerprint", async () => {
+    const envelope = buildGeneratedChainRejectionEnvelope({
+      phase: "save",
+      chain: generatedResultChain("Repeat Rejection Chain"),
+      errors: ["the last generated-chain agent must declare final_verifier: true"],
+    });
+    mockTaskGet.mockReturnValue(generationTask({
+      generation_rejection_fingerprints: [generatedChainRejectionFingerprint(envelope)],
+    }));
+    mockGetJob.mockReturnValue({
+      id: "job-generation",
+      type: "generate",
+      status: "complete",
+      result: generatedResultChain("Repeat Rejection Chain"),
+    });
+    (global.fetch as jest.Mock).mockResolvedValue(jsonResponse({
+      success: false,
+      error: {
+        code: "VALIDATION_ERROR",
+        message: "Invalid generated chain delivery contract",
+        details: { errors: [envelope.message], rejection: envelope, duplicate: true },
+      },
+    }, 422));
+
+    const response = await POST(makeRequest({ taskId: "TASK-DET" }) as never);
+    const body = await response.json();
+
+    expect(body.data).toMatchObject({
+      triggered: false,
+      taskId: "TASK-DET",
+      action: "generation_stopped",
+      reason: "deterministic_duplicate",
+    });
+    expect(mockTaskUpdate).toHaveBeenCalledWith(
+      "default",
+      "TASK-DET",
+      {
+        metadata: expect.objectContaining({
+          generation_status: "failed",
+          generation_stop_reason: "deterministic_duplicate",
+        }),
+      },
+      "default",
+    );
+    // An intentional stop schedules nothing further.
+    expect(mockTriggerAutoRunScan).not.toHaveBeenCalled();
+  });
+
+  it("stops a previously rejected artifact before resubmitting it to save (recovery loop killer)", async () => {
+    const chain = generatedResultChain("Recovered Rejected Chain");
+    const envelope = buildGeneratedChainRejectionEnvelope({
+      phase: "import",
+      chain,
+      errors: ["the last generated-chain agent must declare final_verifier: true"],
+    });
+    mockTaskGet.mockReturnValue(generationTask({
+      generation_rejection_fingerprints: [generatedChainRejectionFingerprint(envelope)],
+    }));
+    mockGetJob.mockReturnValue({
+      id: "job-generation",
+      type: "generate",
+      status: "complete",
+      result: chain,
+    });
+    mockFindGeneratedChainRejection.mockReturnValue(envelope);
+
+    const response = await POST(makeRequest({ taskId: "TASK-DET" }) as never);
+    const body = await response.json();
+
+    expect(body.data).toMatchObject({
+      triggered: false,
+      taskId: "TASK-DET",
+      action: "generation_stopped",
+      reason: "deterministic_duplicate",
+    });
+    // The known-rejected candidate never reached /api/chains/save.
+    const saveCalls = (global.fetch as jest.Mock).mock.calls
+      .filter(([url]) => String(url).endsWith("/api/chains/save"));
+    expect(saveCalls).toHaveLength(0);
+  });
+
+  it("refuses admission entirely for a task whose generation loop is stopped", async () => {
+    const chain = generatedResultChain("Import Rejected Chain");
+    const envelope = buildGeneratedChainRejectionEnvelope({
+      phase: "import",
+      chain,
+      errors: ["agents[0].deliverable must name the concrete output this agent hands off"],
+    });
+    mockTaskGet.mockReturnValue(generationTask({
+      auto_run_retries: 0,
+      generation_rejection: envelope,
+      generation_rejection_job_id: "job-generation",
+      generation_rejection_fingerprints: [generatedChainRejectionFingerprint(envelope)],
+      generation_stop_reason: "deterministic_duplicate",
+    }));
+    mockGetJob.mockReturnValue({
+      id: "job-generation",
+      type: "generate",
+      status: "failed",
+      error: `generated chain delivery contract invalid: ${envelope.message}`,
+    });
+
+    const response = await POST(makeRequest({ taskId: "TASK-DET" }) as never);
+    const body = await response.json();
+
+    // The single admission gate (canAdmitAutoRun) owns the stop: the failed
+    // job is never even inspected, nothing is updated, nothing is scheduled.
+    expect(body.data).toMatchObject({
+      triggered: false,
+      taskId: "TASK-DET",
+      action: "generation_stopped",
+      reason: expect.stringContaining("deterministic_duplicate"),
+    });
+    expect(mockTaskUpdate).not.toHaveBeenCalled();
+    expect(mockTriggerAutoRunScan).not.toHaveBeenCalled();
+  });
+
+  it("runs the one guided regeneration for a fresh import-door rejection", async () => {
+    const chain = generatedResultChain("Import Fresh Rejection");
+    const envelope = buildGeneratedChainRejectionEnvelope({
+      phase: "import",
+      chain,
+      errors: ["agents[0].deliverable must name the concrete output this agent hands off"],
+    });
+    mockTaskGet.mockReturnValue(generationTask({
+      auto_run_retries: 0,
+      generation_rejection: envelope,
+      generation_rejection_job_id: "job-generation",
+      generation_rejection_fingerprints: [generatedChainRejectionFingerprint(envelope)],
+    }));
+    mockGetJob.mockReturnValue({
+      id: "job-generation",
+      type: "generate",
+      status: "failed",
+      error: `generated chain delivery contract invalid: ${envelope.message}`,
+    });
+
+    const response = await POST(makeRequest({ taskId: "TASK-DET" }) as never);
+    const body = await response.json();
+
+    expect(body.data).toMatchObject({
+      triggered: false,
+      taskId: "TASK-DET",
+      action: "generation_rejected_regenerating",
+    });
+    expect(mockTaskUpdate).toHaveBeenCalledWith(
+      "default",
+      "TASK-DET",
+      {
+        metadata: expect.objectContaining({
+          generation_job_id: undefined,
+          generation_status: "rejected",
+          generation_last_error: envelope.message,
+          auto_run_retries: 0,
         }),
       },
       "default",

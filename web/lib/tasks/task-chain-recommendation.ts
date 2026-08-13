@@ -165,6 +165,7 @@ export function buildGenerationPromptFromTaskRecommendation(
     `GENERATED-CHAIN CONTRACT: include metadata.generated_chain_contract with exactly these fields: ${GENERATED_CHAIN_CONTRACT_SHAPE}. Set acceptance_criteria (that exact key) to a reusable assertion derived from the runtime task criteria.`,
     modeRequirement,
     "Every agent must declare a concrete deliverable and repeatable verification. The last agent must be the final verifier and declare final_verifier: true, verifies_acceptance_criteria: true, and an evidence-backed success_assertion. It must reject a result when criteria are not proven.",
+    "TASK-LINKED RUNTIME ORDER: agents run after admission, when the linked task can already be in_progress, metadata.chain_id is authoritative, assignee may be null, and last_run_id/task_run_scope identify the active run. No in-run agent may require pre-admission open/assignee state or require its own run/task to already be terminal or reconciled. Final task/run reconciliation is verified externally after the chain finishes.",
     task.acceptance_criteria ? `ACCEPTANCE CRITERIA TO SATISFY:\n${task.acceptance_criteria}` : "The task has no acceptance criteria; do not generate a chain until a verifiable criterion is supplied.",
   ].join("\n\n");
 

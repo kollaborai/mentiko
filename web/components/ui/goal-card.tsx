@@ -67,7 +67,7 @@ export function GoalCard({
       data-id={id}
       data-status={status}
       className={cn(
-        "group relative rounded-md p-4 transition-colors text-left",
+        "group relative rounded-md p-2.5 transition-colors text-left",
         "bg-card hover:bg-muted",
         onClick && "cursor-pointer",
         className
@@ -83,11 +83,11 @@ export function GoalCard({
         </div>
       )}
 
-      <div className="flex gap-3">
+      <div className="flex gap-2">
         <div className="shrink-0">
           {icon || (
-            <div className="h-8 w-8 rounded-md bg-accent flex items-center justify-center">
-              <Target className="h-4 w-4 text-foreground/60" />
+            <div className="h-6 w-6 rounded-md bg-accent flex items-center justify-center">
+              <Target className="h-3.5 w-3.5 text-foreground/60" />
             </div>
           )}
         </div>
@@ -99,7 +99,7 @@ export function GoalCard({
                 {title}
               </h4>
               {description && (
-                <p className="text-xs text-foreground/60 mt-1 leading-relaxed max-w-md">
+                <p className="text-xs text-foreground/60 mt-0.5 leading-snug max-w-md">
                   {description}
                 </p>
               )}
@@ -111,13 +111,13 @@ export function GoalCard({
           </div>
 
           {children && (
-            <div className="mt-3">
+            <div className="mt-2">
               {children}
             </div>
           )}
 
           {(meta || progress > 0) && (
-            <div className="flex items-center justify-between mt-2">
+            <div className="flex items-center justify-between mt-1.5">
               {meta && (
                 <span className="text-[10px] text-foreground/40 font-mono">
                   {meta}

@@ -146,13 +146,16 @@ describe("data shape catalog", () => {
     expect(shape?.runnerLineage?.legacyEquivalent?.summary).toMatch(/replaces shell path derivation, directory creation/i);
   });
 
-  it("documents pending handoff as read-and-retire pre-cutover evidence", () => {
+  it("documents the live routed fan-out coordinator handoff", () => {
     const shape = DATA_SHAPE_CATALOG.find((item) => item.id === "runner-v2-pending-handoff");
-    expect(shape?.writers).toEqual(["web/lib/runner-v2/run-state.ts"]);
+    expect(shape?.writers).toEqual([
+      "web/lib/runner-v2/launch-coordinator-state.ts",
+      "web/lib/runner-v2/run-state.ts",
+    ]);
     expect(shape?.writers).not.toContain("web/lib/runner-v2/routed-launch-plan.ts");
     expect(shape?.runnerLineage?.usage).toBe("runner-v2");
-    expect(shape?.runnerLineage?.legacyEquivalent?.summary).toMatch(/no new pending handoff receipt/i);
-    expect(shape?.notes?.join(" ")).toMatch(/verify run agent, session, and AgentAttempt state/i);
+    expect(shape?.runnerLineage?.legacyEquivalent?.summary).toMatch(/one heartbeat-tracked coordinator/i);
+    expect(shape?.notes?.join(" ")).toMatch(/heartbeats every 15 seconds/i);
     expect(runnerMigrationCoverage(shape!.runnerLineage!)).toMatchObject({
       typed: 2,
       legacy: 0,
@@ -246,9 +249,16 @@ describe("data shape catalog", () => {
       scope: "project",
       format: "json",
       assurance: "typed",
-      writers: ["web/lib/runner-v2/concurrency-admission.ts", "web/lib/runner-v2/file-claim.ts"],
+      writers: [
+        "web/lib/runner-v2/concurrency-admission.ts",
+        "web/lib/runner-v2/agent-capacity.ts",
+        "web/lib/runner-v2/file-claim.ts",
+      ],
     });
-    expect(admission?.storage).toEqual(["{projectRoot}/runs/.cap.lock/owner.json (ephemeral lock claim)"]);
+    expect(admission?.storage).toEqual([
+      "{projectRoot}/runs/.cap.lock/owner.json (ephemeral chain-cap claim)",
+      "{projectRoot}/runs/.agent-cap.lock/owner.json (ephemeral active-agent claim)",
+    ]);
     expect(admission?.readers).not.toContain("lib/concurrency-cap.sh");
     expect(admission?.runnerLineage?.usage).toBe("runner-v2");
   });

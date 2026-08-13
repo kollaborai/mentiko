@@ -15,16 +15,21 @@ Mentiko is designed for self-hosting. This guide covers deployment on common pla
 
 ## Quick Start (Docker)
 
+Use a strict release tag for a reproducible install. Replace `vX.Y.Z` with the
+release you intend to run; do not use `latest` for a production install.
+
 ### 1. Pull the Image
 
 ```bash
-docker pull ghcr.io/kollaborai/mentiko:latest
+export MENTIKO_VERSION=vX.Y.Z
+docker pull ghcr.io/kollaborai/mentiko:${MENTIKO_VERSION}
 ```
 
-### 2. Create Data Directory
+### 2. Create the Auth Secret
 
 ```bash
-mkdir -p ~/.mentiko/data
+# Generate this once and keep it stable for the lifetime of the install.
+export BETTER_AUTH_SECRET="$(openssl rand -hex 32)"
 ```
 
 ### 3. Run the Container
@@ -33,10 +38,18 @@ mkdir -p ~/.mentiko/data
 docker run -d \
   --name mentiko \
   -p 3000:3000 \
-  -v ~/.mentiko:/app/.mentiko \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  ghcr.io/kollaborai/mentiko:latest
+  -p 3099:3099 \
+  -v mentiko-data:/app \
+  -e BETTER_AUTH_SECRET="${BETTER_AUTH_SECRET}" \
+  -e BETTER_AUTH_URL="http://localhost:3000" \
+  ghcr.io/kollaborai/mentiko:${MENTIKO_VERSION}
 ```
+
+The image listens on container ports `3000` (web) and `3099` (terminal
+WebSocket). The left side of `-p HOST:CONTAINER` is the host port. For example,
+`-p 13000:3000` moves the web UI to host port `13000`; do not set
+`-e PORT=13000`, because the container's internal readiness and service wiring
+remain on port `3000`.
 
 ### 4. Access the UI
 
@@ -48,18 +61,18 @@ Open http://localhost:3000
 
 **docker-compose.yml:**
 ```yaml
-version: '3.8'
 services:
   mentiko:
-    image: ghcr.io/kollaborai/mentiko:latest
+    image: ghcr.io/kollaborai/mentiko:vX.Y.Z
     ports:
       - "3000:3000"
+      - "3099:3099"
     volumes:
-      - mentiko_data:/app/.mentiko
-      - /var/run/docker.sock:/var/run/docker.sock
+      - mentiko_data:/app
     environment:
-      - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
-      - BETTER_AUTH_URL=http://localhost:3000
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET}
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:3000}
+      DATABASE_URL: file:/app/data/auth.db
     restart: unless-stopped
 
 volumes:
@@ -68,36 +81,38 @@ volumes:
 
 **Start:**
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
 ### Using Podman (Quadlet)
 
-**mentiko.container:**
+Create a rootless named volume, then save this as
+`~/.config/containers/systemd/mentiko.container`:
+
 ```
 [Unit]
 Description=Mentiko Agent Orchestration
-Requires=mentiko-data.service
-After=mentiko-data.service
 
 [Container]
-Image=ghcr.io/kollaborai/mentiko:latest
-Volume=mentiko-data.volume:/app/.mentiko:Z
-Volume=/var/run/docker.sock:/var/run/docker.sock:Z
-Port=3000:3000
+Image=ghcr.io/kollaborai/mentiko:vX.Y.Z
+Volume=mentiko-data:/app:Z
+PublishPort=3000:3000
+PublishPort=3099:3099
 Environment=BETTER_AUTH_SECRET=CHANGE_ME
 Environment=BETTER_AUTH_URL=http://localhost:3000
+Environment=DATABASE_URL=file:/app/data/auth.db
 
 [Service]
 Restart=always
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
 ```
 
-**Enable:**
+**Create and enable:**
 ```bash
-podman generate kube --file mentiko.yaml
+podman volume create mentiko-data
+systemctl --user daemon-reload
 systemctl --user enable --now mentiko.service
 ```
 
@@ -108,9 +123,15 @@ systemctl --user enable --now mentiko.service
 **Caddyfile:**
 ```
 mentiko.example.com {
+  reverse_proxy /ws/terminal localhost:3099
   reverse_proxy localhost:3000
 }
 ```
+
+When using a domain, set `BETTER_AUTH_URL` and `WS_ALLOWED_ORIGINS` to the
+`https://mentiko.example.com` URL. Set `MENTIKO_TERMINAL_PROXY=true` and
+`WS_TERMINAL_PROXY_PATH=/ws/terminal` when the reverse proxy exposes the
+terminal WebSocket on that path.
 
 ### Using Nginx
 
@@ -121,6 +142,14 @@ server {
 
   ssl_certificate /path/to/cert.pem;
   ssl_certificate_key /path/to/key.pem;
+
+  location /ws/terminal {
+    proxy_pass http://localhost:3099;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+  }
 
   location / {
     proxy_pass http://localhost:3000;
@@ -135,8 +164,11 @@ server {
 
 **Daily backup:**
 ```bash
-# Backup data directory
-tar -czf mentiko-backup-$(date +%Y%m%d).tar.gz ~/.mentiko
+# Backup the persistent /app volume, including SQLite auth data.
+docker run --rm \
+  -v mentiko-data:/app:ro \
+  -v "$PWD":/backup \
+  alpine tar czf "/backup/mentiko-backup-$(date +%Y%m%d).tar.gz" -C /app .
 
 # Backup to remote
 rclone copy mentiko-backup-*.tar.gz remote:backups/
@@ -144,7 +176,11 @@ rclone copy mentiko-backup-*.tar.gz remote:backups/
 
 **Restore:**
 ```bash
-tar -xzf mentiko-backup-20260702.tar.gz -C ~/
+# Stop Mentiko first, then restore into the named volume.
+docker run --rm \
+  -v mentiko-data:/app \
+  -v "$PWD":/backup \
+  alpine tar xzf /backup/mentiko-backup-20260702.tar.gz -C /app
 ```
 
 ## Monitoring
@@ -158,8 +194,7 @@ curl http://localhost:3000/api/health
 **Expected response:**
 ```json
 {
-  "status": "ok",
-  "version": "v0.3.10"
+  "status": "ok"
 }
 ```
 
@@ -178,7 +213,8 @@ docker logs -f mentiko
 
 **Agents can't connect:**
 - Verify workspace configuration
-- Check Docker socket permissions
+- Verify both host ports `3000` and `3099` are published
+- If using a reverse proxy, verify the `/ws/terminal` WebSocket route and origin
 - Review agent profile settings
 
 **TODO:** VPS deployment, high availability setup, monitoring integration

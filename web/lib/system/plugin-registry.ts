@@ -95,6 +95,16 @@ function loadManifest(pluginDir: string): PluginManifest | null {
   return manifest;
 }
 
+// discovery must survive one bad plugin dir: skip + log instead of aborting the whole scan
+function safeLoadManifest(pluginDir: string): PluginManifest | null {
+  try {
+    return loadManifest(pluginDir);
+  } catch (error) {
+    console.error(`[plugin-registry] skipping plugin: ${error instanceof Error ? error.message : error}`);
+    return null;
+  }
+}
+
 export function loadPluginRegistry(namespaceId: string, orgId: string): PluginState {
   const registryPath = getRegistryPath(namespaceId, orgId);
   if (!existsSync(registryPath)) {
@@ -144,7 +154,7 @@ export function discoverPlugins(namespaceId: string, orgId: string): Array<{ man
     for (const entry of readdirSync(BUILTIN_PLUGINS_DIR, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
       const pluginDir = join(BUILTIN_PLUGINS_DIR, entry.name);
-      const manifest = loadManifest(pluginDir);
+      const manifest = safeLoadManifest(pluginDir);
       if (manifest) {
         discovered.push({ manifest: { ...manifest, builtin: true }, pluginDir, builtin: true });
       }
@@ -156,7 +166,7 @@ export function discoverPlugins(namespaceId: string, orgId: string): Array<{ man
     for (const entry of readdirSync(MARKETPLACE_PLUGINS_DIR, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
       const pluginDir = join(MARKETPLACE_PLUGINS_DIR, entry.name);
-      const manifest = loadManifest(pluginDir);
+      const manifest = safeLoadManifest(pluginDir);
       if (manifest) {
         discovered.push({ manifest: { ...manifest, builtin: false }, pluginDir, builtin: false });
       }
@@ -169,7 +179,7 @@ export function discoverPlugins(namespaceId: string, orgId: string): Array<{ man
     for (const entry of readdirSync(nsPluginsDir, { withFileTypes: true })) {
       if (!entry.isDirectory() || entry.name === "registry.json") continue;
       const pluginDir = join(nsPluginsDir, entry.name);
-      const manifest = loadManifest(pluginDir);
+      const manifest = safeLoadManifest(pluginDir);
       if (manifest) {
         discovered.push({ manifest, pluginDir, builtin: false });
       }

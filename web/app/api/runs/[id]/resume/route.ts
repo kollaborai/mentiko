@@ -9,7 +9,7 @@
  * - reuses the same run ID and directory
  */
 
-import { readFileSync, writeFileSync, existsSync, openSync, closeSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, openSync, closeSync, readdirSync } from "fs";
 import { join } from "path";
 import { spawn } from "child_process";
 import config, { nsPath, orgPath } from "@/lib/config";
@@ -24,7 +24,8 @@ import { getProfile } from "@/lib/agents/agent-profile-storage";
 import { checkRunAccess } from "@/lib/auth/run-acl";
 import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
 import { resolveInternalAuthSecret } from "@/lib/auth/internal-api-auth";
-import { hasCompletedTrigger, type RoutingAgent } from "@/lib/runner-v2/routing";
+import { hasCompletedTrigger, routingContextForEvents, type RoutingAgent } from "@/lib/runner-v2/routing";
+import { parseRunnerEvent, type RunnerEventRecord } from "@/lib/runner-v2/events";
 import { NotFound, Conflict, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { collectStaleRunSessionNames } from "@/lib/runs/stale-run-sessions";
@@ -57,6 +58,28 @@ interface RunJson {
   workspacePath?: string;
   debug?: boolean;
   [key: string]: unknown;
+}
+
+function readRoutingEvents(eventsDir: string, runId: string): RunnerEventRecord[] {
+  const events: RunnerEventRecord[] = [];
+  for (const directory of [eventsDir, join(eventsDir, "archive")]) {
+    let files: string[];
+    try {
+      files = readdirSync(directory);
+    } catch {
+      continue;
+    }
+    for (const file of files) {
+      if (!file.endsWith(".event")) continue;
+      try {
+        const event = parseRunnerEvent(readFileSync(join(directory, file), "utf8"));
+        if (event.runId === runId) events.push({ ...event, path: join(directory, file) });
+      } catch {
+        // Invalid physical files cannot prove a resume frontier.
+      }
+    }
+  }
+  return events;
 }
 
 export const POST = withErrorHandling(async (
@@ -127,16 +150,18 @@ export const POST = withErrorHandling(async (
   try {
     const chainForRouting = JSON.parse(readFileSync(chainPath, "utf-8"));
     const routingAgents: RoutingAgent[] = (chainForRouting.agents || []).map(
-      (a: { id: string; triggers?: string[]; emits?: string }) => ({
+      (a: { id: string; triggers?: string[]; emits?: string; wait_for_events?: RoutingAgent["wait_for_events"] }) => ({
         id: a.id,
         triggers: a.triggers,
         emits: a.emits,
+        wait_for_events: a.wait_for_events,
         status: run.agents.find((ra) => ra.id === a.id)?.status,
       }),
     );
+    const routingContext = routingContextForEvents(readRoutingEvents(config.eventsDir, run.id), run.id);
     frontierIds = new Set(
       routingAgents
-        .filter((a) => a.status !== "complete" && hasCompletedTrigger(a, routingAgents))
+        .filter((a) => a.status !== "complete" && hasCompletedTrigger(a, routingAgents, routingContext))
         .map((a) => a.id),
     );
   } catch { /* fall back to positional selection */ }

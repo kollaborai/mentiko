@@ -10,6 +10,7 @@ import { fanGroupPath } from "@/lib/runner-v2/fan-group-store";
 import { createRunRecord, readRunJson, updateRunJson, type RunAgentRecord } from "@/lib/runner-v2/run-state";
 import { planTerminalCompletion } from "@/lib/runner-v2/terminal-plan";
 import { runnerEventFixture } from "@/lib/runner-v2/test-support/runner-event-fixture";
+import { createAgentAttempt, transitionAgentAttempt } from "@/lib/runner-v2/agent-attempt";
 
 jest.mock("child_process", () => ({
   ...jest.requireActual("child_process"),
@@ -32,6 +33,27 @@ function seedRun(dir: string) {
     sessions: [],
   }));
   return runJsonPath;
+}
+
+function createSubmittedAttempt(runJsonPath: string, attemptId: string) {
+  const attempt = createAgentAttempt({
+    runJsonPath,
+    runId: "run-123",
+    agentId: "writer",
+    attemptId,
+    leaseId: `${attemptId}-session`,
+  });
+  for (const phase of [
+    "queued",
+    "lease_acquired",
+    "pty_allocated",
+    "process_spawned",
+    "ready_for_instructions",
+    "instructions_submitted",
+  ] as const) {
+    transitionAgentAttempt({ runJsonPath, attemptId: attempt.id, to: phase });
+  }
+  return attempt;
 }
 
 function eventFile(dir: string, name: string, content: string) {
@@ -533,6 +555,118 @@ describe("runner-v2 adapters", () => {
     });
   });
 
+  it("revalidates the exact attempt inside the adapter before terminal mutation or routing", () => {
+    const dir = tempDir();
+    const runJsonPath = seedRun(dir);
+    const stale = createSubmittedAttempt(runJsonPath, "run-123:writer:1");
+    const current = createSubmittedAttempt(runJsonPath, "run-123:writer:2");
+    jest.clearAllMocks();
+
+    expect(() => applyTypedExecutorPlan({
+      action: "route",
+      effects: [{ type: "run-terminal", status: "completed", reason: "stale completion" }],
+      launches: [{
+        kind: "single",
+        agentIds: ["reviewer"],
+        command: "echo should-not-launch",
+        env: { MENTIKO_RUN_ID: "run-123" },
+      }],
+    }, {
+      runJsonPath,
+      stateDir: dir,
+      attemptGuard: {
+        runId: "run-123",
+        agentId: "writer",
+        attemptId: stale.id,
+      },
+    })).toThrow(`stale completion AgentAttempt ${stale.id}`);
+
+    expect(spawnSync).not.toHaveBeenCalled();
+    expect(readRunJson(runJsonPath)).toMatchObject({ status: "running" });
+    expect(readRunJson(runJsonPath).runnerV2).toMatchObject({
+      attempts: [
+        expect.objectContaining({ id: stale.id, phase: "instructions_submitted" }),
+        expect.objectContaining({ id: current.id, phase: "instructions_submitted" }),
+      ],
+    });
+  });
+
+  it("revalidates the exact attempt after launch preflight and immediately before spawning", () => {
+    const dir = tempDir();
+    const runJsonPath = seedRun(dir);
+    const stale = createSubmittedAttempt(runJsonPath, "run-123:writer:1");
+    let currentId = "";
+    jest.clearAllMocks();
+
+    expect(() => startLaunch({
+      kind: "single",
+      agentIds: ["reviewer"],
+      command: "echo should-not-launch",
+      env: { MENTIKO_RUN_ID: "run-123" },
+    }, {
+      runJsonPath,
+      stateDir: dir,
+      attemptGuard: {
+        runId: "run-123",
+        agentId: "writer",
+        attemptId: stale.id,
+      },
+      beforeLaunchSpawn: () => {
+        currentId = createSubmittedAttempt(runJsonPath, "run-123:writer:2").id;
+      },
+    })).toThrow(`stale completion AgentAttempt ${stale.id}`);
+
+    expect(spawnSync).not.toHaveBeenCalled();
+    expect(readRunJson(runJsonPath).agents).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "reviewer" }),
+    ]));
+    expect(readRunJson(runJsonPath).runnerV2).toMatchObject({
+      attempts: [
+        expect.objectContaining({ id: stale.id }),
+        expect.objectContaining({ id: currentId }),
+      ],
+    });
+  });
+
+  it("guards launch-acceptance persistence when a retry becomes current during launch", () => {
+    const dir = tempDir();
+    const runJsonPath = seedRun(dir);
+    const stale = createSubmittedAttempt(runJsonPath, "run-123:writer:1");
+    let currentId = "";
+    jest.clearAllMocks();
+    mockAcceptedLaunch(runJsonPath, "reviewer", () => {
+      currentId = createSubmittedAttempt(runJsonPath, "run-123:writer:2").id;
+    });
+
+    expect(() => startLaunch({
+      kind: "single",
+      agentIds: ["reviewer"],
+      command: "echo launch-reviewer",
+      env: {
+        MENTIKO_RUN_ID: "run-123",
+        MENTIKO_COMPLETION_OCCURRENCE_ID: "run-123:writer:event-1",
+      },
+    }, {
+      runJsonPath,
+      stateDir: dir,
+      attemptGuard: {
+        runId: "run-123",
+        agentId: "writer",
+        attemptId: stale.id,
+      },
+    })).toThrow(`stale completion AgentAttempt ${stale.id}`);
+
+    expect(spawnSync).toHaveBeenCalledTimes(1);
+    expect(readRunJson(runJsonPath).runnerV2).toMatchObject({
+      attempts: expect.arrayContaining([
+        expect.objectContaining({ id: stale.id }),
+        expect.objectContaining({ id: currentId }),
+        expect.objectContaining({ agentId: "reviewer" }),
+      ]),
+    });
+    expect((readRunJson(runJsonPath).runnerV2 as Record<string, unknown>).launchAcceptances).toBeUndefined();
+  });
+
   it("starts launch plans through the process adapter", () => {
     const dir = tempDir();
     const runJsonPath = seedRun(dir);
@@ -694,6 +828,48 @@ describe("runner-v2 adapters", () => {
     expect(spawnSync).not.toHaveBeenCalled();
     expect(existsSync(triggeredPath)).toBe(false);
     expect(existsSync(join(eventsDir, "archive", "trigger.event"))).toBe(true);
+  });
+
+  it("refuses an unowned queued target with no reclaimable launch job", () => {
+    const dir = tempDir();
+    const runJsonPath = seedRun(dir);
+    updateRunJson(runJsonPath, (current) => ({
+      ...current!,
+      agents: [{
+        id: "reviewer",
+        name: "Reviewer",
+        status: "pending",
+        session: "reviewer-run-123",
+      }],
+      runnerV2: {
+        attempts: [{
+          id: "run-123:reviewer:1",
+          runId: "run-123",
+          agentId: "reviewer",
+          phase: "queued",
+          desiredPhase: "lease_acquired",
+          observedPhase: "queued",
+          instructionLedger: [],
+          recoveryDecisionCount: 0,
+          createdAt: "2026-08-09T20:00:00.000Z",
+          updatedAt: "2026-08-09T20:00:00.000Z",
+          transitions: [{
+            from: "created",
+            to: "queued",
+            at: "2026-08-09T20:00:00.000Z",
+          }],
+        }],
+      },
+    }));
+    (spawnSync as jest.Mock).mockClear();
+
+    expect(() => startLaunch({
+      kind: "single",
+      agentIds: ["reviewer"],
+      command: "echo launch-reviewer",
+      env: { MENTIKO_RUN_ID: "run-123" },
+    }, { runJsonPath, stateDir: dir })).toThrow(/acceptance_pending/);
+    expect(spawnSync).not.toHaveBeenCalled();
   });
 
   it("accepts a newly launched target that reaches terminal release and replays by exact receipt", () => {
@@ -1395,7 +1571,7 @@ describe("runner-v2 adapters", () => {
         plan: {
           reason: "no-downstream",
           steps: [
-            { type: "run-status", status: "completed" },
+            { type: "run-status", status: "completed", reason: "test terminal completion" },
             { type: "hook", event: "run-completed", runId: "run-123", details: { run_id: "run-123", task_id: "task-1" } },
           ],
         },
@@ -1446,7 +1622,7 @@ describe("runner-v2 adapters", () => {
         plan: {
           reason: "no-downstream",
           steps: [
-            { type: "run-status", status: "completed" },
+            { type: "run-status", status: "completed", reason: "test terminal completion" },
             { type: "session-policy", policy: "stop", sessions: ["writer-run-123", "monitor-writer-run-123"] },
           ],
         },
@@ -1494,7 +1670,7 @@ describe("runner-v2 adapters", () => {
         plan: {
           reason: "no-downstream",
           steps: [
-            { type: "run-status", status: "completed" },
+            { type: "run-status", status: "completed", reason: "test terminal completion" },
             { type: "next-chain", chainName: "deploy", parentRunId: "run-123" },
           ],
         },
@@ -1533,7 +1709,7 @@ describe("runner-v2 adapters", () => {
         plan: {
           reason: "no-downstream",
           steps: [
-            { type: "run-status", status: "completed" },
+            { type: "run-status", status: "completed", reason: "test terminal completion" },
             { type: "next-chain", chainName: "missing", parentRunId: "run-123" },
           ],
         },
@@ -1618,7 +1794,7 @@ describe("runner-v2 adapters", () => {
           plan: {
             reason: "no-downstream",
             steps: [
-              { type: "run-status", status: "completed" },
+              { type: "run-status", status: "completed", reason: "test terminal completion" },
               { type: "next-chain", chainName: "deploy", parentRunId: "run-123" },
             ],
           },
@@ -1644,7 +1820,7 @@ describe("runner-v2 adapters", () => {
         plan: {
           reason: "no-downstream",
           steps: [
-            { type: "run-status", status: "completed" },
+            { type: "run-status", status: "completed", reason: "test terminal completion" },
             { type: "task-status", status: "completed", taskId: "task-1" },
             { type: "webhook", event: "chain_complete", chainId: "build-chain", chainPath: join(dir, "chain.json"), lastEvent: "done", lastAgentId: "writer" },
             { type: "plugin", event: "chain-completed", chainName: "Build Chain", runId: "run-123", agentId: "writer" },
