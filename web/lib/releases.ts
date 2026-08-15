@@ -10,6 +10,15 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (2026) ---
   {
+    version: "v0.3.53",
+    date: "August 14, 2026",
+    title: "Nano Agent Execution Stability",
+    description:
+      "Nano tenants now enforce their one-active-agent limit inside detached chain runners instead of silently falling back to the three-agent default. When a run reaches completed, failed, cancelled, or stopped, the watchdog rechecks durable ownership and removes its still-live agent and monitor terminals, releasing the slot without touching a concurrently resumed run. Concurrent floating-input boots now join one Kollabor session creation, and a temporary session-lookup failure no longer spawns a replacement daemon. Agent instructions also use a bounded, verified composer submission so a pasted assignment cannot remain waiting for an unrelated keypress. Invalid plugin manifests are isolated to their own directory instead of stopping discovery for every plugin.",
+    category: "fix",
+    docsHref: "/runs",
+  },
+  {
     version: "v0.3.52",
     date: "August 12, 2026",
     title: "Decision Research Recovers Itself and Runs Open Live",
@@ -709,7 +718,7 @@ export const releases: Release[] = [
 
 // The build tag is tracked separately from the user-facing update feed.
 // Do not add an update card solely for internal release work.
-export const CURRENT_RELEASE_VERSION = "v0.3.51";
+export const CURRENT_RELEASE_VERSION = "v0.3.53";
 export const LATEST_VERSION = releases[0].version;
 export const UPDATES_STORAGE_KEY = "mentiko-last-seen-version";
 

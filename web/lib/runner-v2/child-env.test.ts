@@ -11,4 +11,29 @@ describe("runner-v2 child env propagation", () => {
       else process.env.MENTIKO_RUNNER_V2 = previous;
     }
   });
+
+  it("preserves tenant capacity limits through the detached runner boundary", () => {
+    const keys = {
+      MENTIKO_CAP_DISABLED: "0",
+      MENTIKO_MAX_CONCURRENT_CHAINS: "2",
+      MENTIKO_CAP_MAX_WAIT_SECS: "90",
+      MENTIKO_CAP_POLL_SECS: "1",
+      MENTIKO_CAP_POLL_MAX_SECS: "5",
+      MENTIKO_MAX_ACTIVE_AGENTS: "1",
+      MAX_CONCURRENT_AGENTS: "1",
+      MENTIKO_AGENT_CAP_MAX_WAIT_SECS: "90",
+      MENTIKO_AGENT_CAP_POLL_SECS: "1",
+      MENTIKO_AGENT_CAP_POLL_MAX_SECS: "5",
+    } as const;
+    const previous = new Map(Object.keys(keys).map((key) => [key, process.env[key]]));
+    Object.assign(process.env, keys);
+    try {
+      expect(buildChildEnv()).toEqual(expect.objectContaining(keys));
+    } finally {
+      for (const [key, value] of previous) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
 });

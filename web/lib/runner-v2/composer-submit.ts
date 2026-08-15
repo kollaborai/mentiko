@@ -87,7 +87,11 @@ export async function confirmComposerSubmission(
   if (!(await sleepBefore(pollMs, deadline))) return false;
 
   while (Date.now() < deadline) {
-    const output = await io.capture(captureLines).catch(() => null);
+    const output = await awaitBeforeDeadline(
+      () => io.capture(captureLines),
+      deadline,
+    ).catch(() => null);
+    if (output === SUBMISSION_DEADLINE_EXCEEDED) return false;
     // ONLY an empty rendered composer proves the CLI accepted the text. A
     // capture with no composer at all ("absent") is missing evidence, not
     // proof of delivery — treating it as success is what let a booting CLI
@@ -97,11 +101,44 @@ export async function confirmComposerSubmission(
     if (output !== null && composerState(output) === "empty") return true;
     if (enterRetries < maxEnterRetries) {
       enterRetries += 1;
-      await io.sendEnter().catch(() => undefined);
+      const enterResult = await awaitBeforeDeadline(
+        () => io.sendEnter(),
+        deadline,
+      ).catch(() => undefined);
+      if (enterResult === SUBMISSION_DEADLINE_EXCEEDED) return false;
     }
     if (!(await sleepBefore(pollMs, deadline))) return false;
   }
   return false;
+}
+
+const SUBMISSION_DEADLINE_EXCEEDED = Symbol("submission deadline exceeded");
+
+/**
+ * Keep the advertised deadline authoritative even when the PTY transport has
+ * a longer socket timeout. A late transport result is ignored; without
+ * positive composer evidence the caller must remain fail-closed.
+ */
+async function awaitBeforeDeadline<T>(
+  operation: () => Promise<T>,
+  deadline: number,
+): Promise<T | typeof SUBMISSION_DEADLINE_EXCEEDED> {
+  const remainingMs = deadline - Date.now();
+  if (remainingMs <= 0) return SUBMISSION_DEADLINE_EXCEEDED;
+
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await new Promise<T | typeof SUBMISSION_DEADLINE_EXCEEDED>((resolve, reject) => {
+      timeout = setTimeout(() => resolve(SUBMISSION_DEADLINE_EXCEEDED), remainingMs);
+      try {
+        void operation().then(resolve, reject);
+      } catch (error) {
+        reject(error);
+      }
+    });
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 }
 
 async function sleepBefore(delayMs: number, deadline: number): Promise<boolean> {

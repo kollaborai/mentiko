@@ -358,7 +358,7 @@ describe("typed runner watchdog", () => {
     expect(JSON.parse(readFileSync(runPath, "utf8")).status).toBe("running");
   });
 
-  it("reaps only dead sessions proven to belong exclusively to terminal scoped runs", async () => {
+  it("reaps live agent and monitor sessions owned exclusively by terminal scoped runs", async () => {
     const root = tempRoot();
     writeRun(root, runRecord(now, {
       id: "run-done",
@@ -376,7 +376,7 @@ describe("typed runner watchdog", () => {
       agents: [{ id: "term", name: "Term", status: "failed", session: "term-user-owned" }],
     }));
     const transport = new FakeTransport([
-      { name: "done-agent", alive: false },
+      { name: "done-agent", alive: true },
       { name: "complete-done-agent-1784102007", alive: false },
       { name: "complete-done-agent-review-1784102007", alive: false },
       { name: "complete-unreferenced-agent-1784102007", alive: false },
@@ -394,16 +394,51 @@ describe("typed runner watchdog", () => {
 
     expect(result.orphanSessionsRemoved).toEqual([
       "done-agent",
+      "monitor-done-agent",
       "complete-done-agent-1784102007",
     ]);
-    expect(result.sessionRemovalFailures).toContain("monitor-done-agent");
     expect(transport.removed).toContain("done-agent");
-    expect(transport.removed).not.toContain("monitor-done-agent");
+    expect(transport.removed).toContain("monitor-done-agent");
     expect(transport.removed).not.toContain("active-agent");
     expect(transport.removed).not.toContain("unreferenced-agent");
     expect(transport.removed).not.toContain("term-user-owned");
     expect(transport.removed).not.toContain("complete-done-agent-review-1784102007");
     expect(transport.removed).not.toContain("complete-unreferenced-agent-1784102007");
+  });
+
+  it("preserves an alive session when its terminal run resumes before removal", async () => {
+    const root = tempRoot();
+    const runPath = writeRun(root, runRecord(now, {
+      id: "run-resumed-during-cleanup",
+      status: "completed",
+      agents: [{ id: "writer", name: "Writer", status: "complete", session: "writer-resumed" }],
+    }));
+    let listCalls = 0;
+    const transport: WatchdogTransport = {
+      async list() {
+        listCalls += 1;
+        if (listCalls === 3) {
+          const resumed = JSON.parse(readFileSync(runPath, "utf8"));
+          resumed.status = "running";
+          resumed.agents[0].status = "running";
+          writeFileSync(runPath, JSON.stringify(resumed));
+        }
+        return [{ name: "writer-resumed", alive: true }];
+      },
+      async remove() {
+        throw new Error("resumed session must not be removed");
+      },
+    };
+
+    const result = await runTypedWatchdogScan({
+      runsDir: join(root, "runs"),
+      now,
+      dependencies: { transport },
+    });
+
+    expect(result.orphanSessionsRemoved).toEqual([]);
+    expect(result.sessionRemovalFailures).toEqual(["writer-resumed"]);
+    expect(JSON.parse(readFileSync(runPath, "utf8")).status).toBe("running");
   });
 
   it("reaps a dead prior-agent completion PTY while a mid-chain run stays live", async () => {

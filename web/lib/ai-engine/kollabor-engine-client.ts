@@ -232,6 +232,7 @@ let cachedToken: { token: string; baseUrl: string } | null = null;
 let inflightTokenFetch: Promise<{ token: string; baseUrl: string }> | null =
   null;
 let inflightMentikoSetup: Promise<MentikoAgentInstallResult> | null = null;
+const inflightSessionBootstraps = new Map<string, Promise<SessionResult>>();
 
 /** Drop the cached token so the next fetchToken() re-fetches from the server. */
 export function clearTokenCache(): void {
@@ -244,8 +245,11 @@ function normalizeStorageScope(scope?: string | null): string {
   return value || DEFAULT_STORAGE_SCOPE;
 }
 
-function scopedStorageKey(baseKey: string): string {
-  return `${baseKey}:${kollaborEngineStorageScope}`;
+function scopedStorageKey(
+  baseKey: string,
+  scope = kollaborEngineStorageScope,
+): string {
+  return `${baseKey}:${scope}`;
 }
 
 export function setKollaborEngineStorageScope(scope?: string | null): void {
@@ -368,13 +372,13 @@ function sessionMatchesRequest(info: SessionInfo, opts: CreateSessionRequest): b
   return true;
 }
 
-function clearStoredSession(): void {
+function clearStoredSession(scope = kollaborEngineStorageScope): void {
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.removeItem(scopedStorageKey(LEGACY_SESSION_ID_KEY));
-    window.localStorage.removeItem(scopedStorageKey(LEGACY_SESSION_REQUIREMENTS_KEY));
-    window.localStorage.removeItem(scopedStorageKey(SESSION_ID_KEY));
-    window.localStorage.removeItem(scopedStorageKey(SESSION_REQUIREMENTS_KEY));
+    window.localStorage.removeItem(scopedStorageKey(LEGACY_SESSION_ID_KEY, scope));
+    window.localStorage.removeItem(scopedStorageKey(LEGACY_SESSION_REQUIREMENTS_KEY, scope));
+    window.localStorage.removeItem(scopedStorageKey(SESSION_ID_KEY, scope));
+    window.localStorage.removeItem(scopedStorageKey(SESSION_REQUIREMENTS_KEY, scope));
     window.localStorage.removeItem(LEGACY_SESSION_ID_KEY);
     window.localStorage.removeItem(LEGACY_SESSION_REQUIREMENTS_KEY);
     window.localStorage.removeItem(SESSION_ID_KEY);
@@ -546,19 +550,22 @@ async function ensureMentikoRuntimeSetup(): Promise<MentikoAgentInstallResult> {
  * Returns { sessionId, sessionToken } — sessionToken is only present on
  * freshly-created sessions (minted by the web proxy).
  */
-export async function getOrCreateSession(
+async function getOrCreateSessionOnce(
   opts: CreateSessionRequest = {},
   signal?: AbortSignal,
+  storageScope = kollaborEngineStorageScope,
 ): Promise<SessionResult> {
   await ensureMentikoRuntimeSetup();
   let existing: string | null = null;
   const requiredSignature = requiredSessionSignature(opts);
   if (typeof window !== "undefined") {
     try {
-      existing = window.localStorage.getItem(scopedStorageKey(SESSION_ID_KEY));
-      const existingSignature = window.localStorage.getItem(scopedStorageKey(SESSION_REQUIREMENTS_KEY));
+      existing = window.localStorage.getItem(scopedStorageKey(SESSION_ID_KEY, storageScope));
+      const existingSignature = window.localStorage.getItem(
+        scopedStorageKey(SESSION_REQUIREMENTS_KEY, storageScope),
+      );
       if (existing && requiredSignature && existingSignature !== requiredSignature) {
-        clearStoredSession();
+        clearStoredSession(storageScope);
         existing = null;
       }
     } catch {
@@ -566,37 +573,40 @@ export async function getOrCreateSession(
     }
   }
   if (existing) {
-    try {
-      const info = await getSession(existing, signal);
-      if (info && sessionMatchesRequest(info, opts)) {
-        // Refresh the session token so sessionStorage and subprocess env stay current.
-        // Fire-and-forget: failure is non-fatal — bar reconnects via MCPBarClient on 401.
-        const tokenRes = await fetch(
-          `/api/kollabor/engine/sessions/${encodeURIComponent(info.session_id)}/refresh-token`,
-          { method: "POST", credentials: "same-origin", signal: signal ?? undefined },
-        ).catch(() => null);
-        const sessionToken = tokenRes?.ok
-          ? (await tokenRes.json().catch(() => null))?.session_token as string | undefined
-          : undefined;
-        // A failed refresh is a health problem, not a reason to throw away a
-        // session that already matched. Reuse it — the bar re-auths on 401.
-        // Abandoning here spawned a second daemon for a perfectly good session.
-        return { sessionId: info.session_id, sessionToken };
-      } else {
-        clearStoredSession();
-      }
-    } catch {
-      // network/auth error — fall through and create fresh
+    const info = await getSession(existing, signal);
+    if (info && sessionMatchesRequest(info, opts)) {
+      // Refresh the session token so sessionStorage and subprocess env stay current.
+      // Fire-and-forget: failure is non-fatal — bar reconnects via MCPBarClient on 401.
+      const tokenRes = await fetch(
+        `/api/kollabor/engine/sessions/${encodeURIComponent(info.session_id)}/refresh-token`,
+        { method: "POST", credentials: "same-origin", signal: signal ?? undefined },
+      ).catch(() => null);
+      const sessionToken = tokenRes?.ok
+        ? (await tokenRes.json().catch(() => null))?.session_token as string | undefined
+        : undefined;
+      // A failed refresh is a health problem, not a reason to throw away a
+      // session that already matched. Reuse it — the bar re-auths on 401.
+      // Abandoning here spawned a second daemon for a perfectly good session.
+      return { sessionId: info.session_id, sessionToken };
     }
+    clearStoredSession(storageScope);
   }
   const created = await createSession(opts, signal, false);
   if (typeof window !== "undefined") {
     try {
-      window.localStorage.setItem(scopedStorageKey(SESSION_ID_KEY), created.session_id);
+      window.localStorage.setItem(
+        scopedStorageKey(SESSION_ID_KEY, storageScope),
+        created.session_id,
+      );
       if (requiredSignature) {
-        window.localStorage.setItem(scopedStorageKey(SESSION_REQUIREMENTS_KEY), requiredSignature);
+        window.localStorage.setItem(
+          scopedStorageKey(SESSION_REQUIREMENTS_KEY, storageScope),
+          requiredSignature,
+        );
       } else {
-        window.localStorage.removeItem(scopedStorageKey(SESSION_REQUIREMENTS_KEY));
+        window.localStorage.removeItem(
+          scopedStorageKey(SESSION_REQUIREMENTS_KEY, storageScope),
+        );
       }
     } catch {
       // ignore
@@ -606,6 +616,32 @@ export async function getOrCreateSession(
     sessionId: created.session_id,
     sessionToken: created.session_token,
   };
+}
+
+/**
+ * Return the persisted session id if still alive, otherwise create a new one.
+ * Concurrent floating-bar boots for the same storage scope and requirements
+ * join one bootstrap so a React effect restart cannot spawn duplicate daemons.
+ * A caller-owned abort signal stays independent and therefore bypasses sharing.
+ */
+export function getOrCreateSession(
+  opts: CreateSessionRequest = {},
+  signal?: AbortSignal,
+): Promise<SessionResult> {
+  if (signal) return getOrCreateSessionOnce(opts, signal);
+
+  const storageScope = kollaborEngineStorageScope;
+  const bootstrapKey = `${storageScope}:${requiredSessionSignature(opts) ?? "default"}`;
+  const inflight = inflightSessionBootstraps.get(bootstrapKey);
+  if (inflight) return inflight;
+
+  const bootstrap = getOrCreateSessionOnce(opts, undefined, storageScope).finally(() => {
+    if (inflightSessionBootstraps.get(bootstrapKey) === bootstrap) {
+      inflightSessionBootstraps.delete(bootstrapKey);
+    }
+  });
+  inflightSessionBootstraps.set(bootstrapKey, bootstrap);
+  return bootstrap;
 }
 
 /**

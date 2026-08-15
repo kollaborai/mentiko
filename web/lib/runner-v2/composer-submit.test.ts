@@ -98,4 +98,42 @@ describe("confirmComposerSubmission", () => {
     );
     expect(ok).toBe(false);
   });
+
+  it("bounds a stalled capture by the shared submission deadline", async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-08-14T00:00:00.000Z"));
+    try {
+      const confirmation = confirmComposerSubmission(
+        {
+          capture: () => new Promise<string>(() => {}),
+          sendEnter: async () => undefined,
+        },
+        { pollMs: 5, deadlineMs: 20 },
+      );
+      await jest.advanceTimersByTimeAsync(20);
+      await expect(confirmation).resolves.toBe(false);
+    } finally {
+      jest.clearAllTimers();
+      jest.useRealTimers();
+    }
+  });
+
+  it("bounds a stalled bare-enter retry by the shared submission deadline", async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-08-14T00:00:00.000Z"));
+    try {
+      const confirmation = confirmComposerSubmission(
+        {
+          capture: async () => HOLDING,
+          sendEnter: () => new Promise<void>(() => {}),
+        },
+        { pollMs: 5, deadlineMs: 20 },
+      );
+      await jest.advanceTimersByTimeAsync(20);
+      await expect(confirmation).resolves.toBe(false);
+    } finally {
+      jest.clearAllTimers();
+      jest.useRealTimers();
+    }
+  });
 });

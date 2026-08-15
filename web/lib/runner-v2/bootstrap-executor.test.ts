@@ -276,6 +276,7 @@ describe("runner-v2 bootstrap executor", () => {
     const root = tempDir();
     writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
     const calls: Array<{ op: string; args: unknown[] }> = [];
+    let instructionPointerSent = false;
     const executor = {
       remove: jest.fn(async (...args: unknown[]) => { calls.push({ op: "remove", args }); }),
       list: jest.fn(async () => []),
@@ -283,8 +284,11 @@ describe("runner-v2 bootstrap executor", () => {
         calls.push({ op: "spawn", args });
         return { name: String(args[0]), pid: 123 };
       }),
-      sendKeys: jest.fn(async (...args: unknown[]) => { calls.push({ op: "sendKeys", args }); }),
-      capture: jest.fn(async () => "claude ready >"),
+      sendKeys: jest.fn(async (...args: unknown[]) => {
+        calls.push({ op: "sendKeys", args });
+        if (String(args[1]).includes("-instructions.md")) instructionPointerSent = true;
+      }),
+      capture: jest.fn(async () => instructionPointerSent ? "claude ready >\n❯ " : "claude ready >"),
     };
     const runJsonPath = seedRunJson(root);
 
@@ -585,12 +589,8 @@ describe("runner-v2 bootstrap executor", () => {
     writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
     seedRunJson(root);
     const executor = {
+      ...executorWithCapture("claude ready >"),
       has: jest.fn(async () => false),
-      remove: jest.fn(async () => {}),
-      list: jest.fn(async () => []),
-      spawn: jest.fn(async (name: string) => ({ name, pid: 123 })),
-      sendKeys: jest.fn(async () => {}),
-      capture: jest.fn(async () => "claude ready >"),
     };
 
     await executeLocalBootstrap(plan(root), context(root), executor);
@@ -909,6 +909,44 @@ describe("runner-v2 bootstrap executor", () => {
     expect(attempts[0]?.phase).toBe("instructions_submitted");
   });
 
+  it("does not record submission while the composer is absent during startup", async () => {
+    const root = tempDir();
+    writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
+    const runJsonPath = seedRunJson(root);
+    let instructionPointerSent = false;
+    let phaseWhileComposerAbsent: string | undefined;
+    const postSendCaptures = [
+      "claude: finishing startup...",
+      "❯ Read the instructions file",
+      "❯ ",
+    ];
+    const executor = {
+      remove: jest.fn(async () => {}),
+      list: jest.fn(async () => []),
+      spawn: jest.fn(async (name: string) => ({ name, pid: 123 })),
+      sendKeys: jest.fn(async (_name: string, text: string) => {
+        if (text.includes("-instructions.md")) instructionPointerSent = true;
+      }),
+      sendRaw: jest.fn(async () => {}),
+      capture: jest.fn(async () => {
+        if (!instructionPointerSent) return "claude ready >";
+        const output = postSendCaptures.shift() || "❯ ";
+        if (output === "claude: finishing startup...") {
+          phaseWhileComposerAbsent = JSON.parse(readFileSync(runJsonPath, "utf8"))
+            .runnerV2.attempts[0].phase;
+        }
+        return output;
+      }),
+    };
+
+    await executeLocalBootstrap(plan(root), context(root), executor);
+
+    expect(phaseWhileComposerAbsent).toBe("ready_for_instructions");
+    expect(executor.sendRaw).toHaveBeenCalledTimes(2);
+    const attempts = (JSON.parse(readFileSync(runJsonPath, "utf8")).runnerV2 || {}).attempts || [];
+    expect(attempts[0]?.phase).toBe("instructions_submitted");
+  });
+
   it("marks the attempt stuck when the composer never accepts the paste", async () => {
     const root = tempDir();
     writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
@@ -1156,13 +1194,17 @@ describe("runner-v2 bootstrap executor", () => {
     writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
     const runJsonPath = seedRunJson(root);
     let captureCount = 0;
+    let instructionPointerSent = false;
     const executor = {
       remove: jest.fn(async () => {}),
       list: jest.fn(async () => []),
       spawn: jest.fn(async (name: string) => ({ name, pid: 123 })),
-      sendKeys: jest.fn(async () => {}),
+      sendKeys: jest.fn(async (_name: string, text: string) => {
+        if (text.includes("-instructions.md")) instructionPointerSent = true;
+      }),
       sendRaw: jest.fn(async () => {}),
       capture: jest.fn(async () => {
+        if (instructionPointerSent) return "Provider boot complete\n❯ ";
         captureCount += 1;
         return captureCount === 1 ? "Press Enter to continue" : "Provider boot complete";
       }),
@@ -1325,6 +1367,7 @@ function writeProfile(root: string, readiness: unknown) {
 }
 
 function executorWithCapture(output: string) {
+  let instructionPointerSent = false;
   return {
     remove: jest.fn(async () => {}),
     list: jest.fn(async () => []),
@@ -1334,9 +1377,11 @@ function executorWithCapture(output: string) {
       _args?: string[],
       _opts?: { cwd?: string; env?: Record<string, string> },
     ) => ({ name, pid: 123 })),
-    sendKeys: jest.fn(async () => {}),
+    sendKeys: jest.fn(async (_name: string, text: string) => {
+      if (text.includes("-instructions.md")) instructionPointerSent = true;
+    }),
     sendRaw: jest.fn(async () => {}),
-    capture: jest.fn(async () => output),
+    capture: jest.fn(async () => instructionPointerSent ? `${output}\n❯ ` : output),
   };
 }
 

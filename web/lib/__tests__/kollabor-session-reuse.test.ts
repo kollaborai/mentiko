@@ -10,8 +10,8 @@
  *     hardcodes to [] — so the check could never pass.
  *  2. a failed token refresh abandoned a session that had already matched.
  *
- * Both tests assert the same thing: POST /sessions is never called, i.e. no new
- * daemon. They fail on the pre-fix client.
+ * Reuse and concurrency tests assert the same thing: POST /sessions is never
+ * duplicated, i.e. the floating bar cannot leak another daemon.
  */
 
 const SESSION_KEY = "mentiko-kollabor-session-id-v2:user-a";
@@ -43,7 +43,12 @@ const LIVE_SESSION_SHAPE = {
   active: true,
 };
 
-function buildFetchMock(opts: { refreshTokenOk: boolean; active?: boolean }) {
+function buildFetchMock(opts: {
+  refreshTokenOk: boolean;
+  active?: boolean;
+  existingStatus?: number;
+  createGate?: Promise<void>;
+}) {
   return jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const json = (body: unknown, status = 200) =>
@@ -57,6 +62,9 @@ function buildFetchMock(opts: { refreshTokenOk: boolean; active?: boolean }) {
       return json({ token: "engine-token", baseUrl: "http://engine.test" });
     }
     if (url === "http://engine.test/sessions/sess_existing") {
+      if (opts.existingStatus && opts.existingStatus !== 200) {
+        return json({ error: "engine unavailable" }, opts.existingStatus);
+      }
       return json({ ...LIVE_SESSION_SHAPE, active: opts.active ?? true });
     }
     if (url.endsWith("/sessions/sess_existing/refresh-token")) {
@@ -66,7 +74,8 @@ function buildFetchMock(opts: { refreshTokenOk: boolean; active?: boolean }) {
     }
     if (url === "http://engine.test/sessions" && init?.method === "POST") {
       // Reaching here means a daemon was spawned — the bug.
-      return json({ session_id: "LEAKED_NEW_SESSION" });
+      await opts.createGate;
+      return json({ session_id: "LEAKED_NEW_SESSION", session_token: "new-token" });
     }
     return new Response("not found", { status: 404 });
   });
@@ -126,6 +135,45 @@ describe("kollabor session reuse (daemon leak regression)", () => {
 
     expect(result.sessionId).toBe("sess_existing");
     expect(result.sessionToken).toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      "http://engine.test/sessions",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(localStorage.getItem(SESSION_KEY)).toBe("sess_existing");
+  });
+
+  it("joins concurrent boots so only one daemon is created", async () => {
+    localStorage.clear();
+    let releaseCreate!: () => void;
+    const createGate = new Promise<void>((resolve) => {
+      releaseCreate = resolve;
+    });
+    const fetchMock = buildFetchMock({ refreshTokenOk: true, createGate });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const { getOrCreateSession } = await loadClient();
+    const firstBoot = getOrCreateSession(OPTS);
+    const secondBoot = getOrCreateSession(OPTS);
+    releaseCreate();
+
+    const [first, second] = await Promise.all([firstBoot, secondBoot]);
+    expect(first.sessionId).toBe("LEAKED_NEW_SESSION");
+    expect(second.sessionId).toBe(first.sessionId);
+    expect(
+      fetchMock.mock.calls.filter(
+        ([input, init]) =>
+          String(input) === "http://engine.test/sessions" && init?.method === "POST",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("does not replace a stored session when its lookup fails transiently", async () => {
+    const fetchMock = buildFetchMock({ refreshTokenOk: true, existingStatus: 503 });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const { getOrCreateSession } = await loadClient();
+    await expect(getOrCreateSession(OPTS)).rejects.toThrow("getSession: 503");
+
     expect(fetchMock).not.toHaveBeenCalledWith(
       "http://engine.test/sessions",
       expect.objectContaining({ method: "POST" }),

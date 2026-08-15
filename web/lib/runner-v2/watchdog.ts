@@ -289,6 +289,7 @@ export async function runTypedWatchdogScan(
         readScopedRuns(runsDir, result.errors),
         currentSessions,
         dependencies.transport,
+        () => readScopedRuns(runsDir, result.errors),
       );
       result.orphanSessionsRemoved.push(...orphanCleanup.removed);
       result.sessionRemovalFailures.push(...orphanCleanup.failed);
@@ -831,23 +832,9 @@ async function reapProvableScopedOrphans(
   runs: ScopedRun[],
   sessions: WatchdogSession[],
   transport: WatchdogTransport,
+  refreshRuns: () => ScopedRun[],
 ): Promise<{ removed: string[]; failed: string[] }> {
-  const activeReferences = new Set<string>();
-  const terminalReferences = new Set<string>();
-  const agentSessionReferences = new Set<string>();
-  for (const { run } of runs) {
-    const target = TERMINAL_RUN_STATUSES.has(String(run.status)) ? terminalReferences : activeReferences;
-    for (const agent of run.agents || []) {
-      const name = stringValue(agent.session);
-      if (!name) continue;
-      agentSessionReferences.add(name);
-      target.add(name);
-      target.add(`monitor-${name}`);
-      const agentId = stringValue(agent.id);
-      if (agentId) target.add(`monitor-${run.id}-${agentId}`);
-    }
-    if (target === terminalReferences) target.add(`monitor-${run.id}`);
-  }
+  const { activeReferences, terminalReferences, agentSessionReferences } = scopedSessionReferences(runs);
 
   const existing = new Set(sessions.map((session) => session.name));
   const terminalCandidates = [...terminalReferences].filter((name) => (
@@ -864,15 +851,55 @@ async function reapProvableScopedOrphans(
         isCompletionSessionForAgent(name, agentSession)
       ))
     ));
-  return removeVerifiedSessions(
-    [...terminalCandidates, ...completionCandidates],
+
+  // An alive process owned exclusively by a terminal run is the orphan we
+  // need to stop. Re-read durable run ownership immediately before allowing
+  // that destructive action so a concurrent resume or session reuse wins.
+  const terminalCleanup = await removeVerifiedSessions(
+    terminalCandidates,
     transport,
+    (name) => {
+      const fresh = scopedSessionReferences(refreshRuns());
+      return fresh.terminalReferences.has(name)
+        && !fresh.activeReferences.has(name)
+        && !isProtectedStandaloneSession(name, fresh.terminalReferences);
+    },
   );
+  const completionCleanup = await removeVerifiedSessions(completionCandidates, transport);
+  return {
+    removed: [...terminalCleanup.removed, ...completionCleanup.removed],
+    failed: [...terminalCleanup.failed, ...completionCleanup.failed],
+  };
+}
+
+function scopedSessionReferences(runs: ScopedRun[]): {
+  activeReferences: Set<string>;
+  terminalReferences: Set<string>;
+  agentSessionReferences: Set<string>;
+} {
+  const activeReferences = new Set<string>();
+  const terminalReferences = new Set<string>();
+  const agentSessionReferences = new Set<string>();
+  for (const { run } of runs) {
+    const target = TERMINAL_RUN_STATUSES.has(String(run.status)) ? terminalReferences : activeReferences;
+    for (const agent of run.agents || []) {
+      const name = stringValue(agent.session);
+      if (!name) continue;
+      agentSessionReferences.add(name);
+      target.add(name);
+      target.add(`monitor-${name}`);
+      const agentId = stringValue(agent.id);
+      if (agentId) target.add(`monitor-${run.id}-${agentId}`);
+    }
+    if (target === terminalReferences) target.add(`monitor-${run.id}`);
+  }
+  return { activeReferences, terminalReferences, agentSessionReferences };
 }
 
 async function removeVerifiedSessions(
   names: string[],
   transport: WatchdogTransport,
+  allowLiveRemoval?: (name: string) => boolean,
 ): Promise<{ removed: string[]; failed: string[] }> {
   const removed: string[] = [];
   const failed: string[] = [];
@@ -880,9 +907,11 @@ async function removeVerifiedSessions(
     try {
       // The assessment snapshot is not permission to kill. A monitor, handoff,
       // or agent can become live after that snapshot, so every destructive
-      // removal gets a fresh transport read and fails closed on live evidence.
+      // removal gets a fresh transport read. Live removal is allowed only when
+      // the caller has just re-proven exclusive terminal-run ownership.
       const beforeRemoval = await transport.list();
-      if (beforeRemoval.some((session) => session.name === name && session.alive)) {
+      const isLive = beforeRemoval.some((session) => session.name === name && session.alive);
+      if (isLive && !allowLiveRemoval?.(name)) {
         failed.push(name);
         continue;
       }
