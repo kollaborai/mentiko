@@ -79,6 +79,24 @@ describe("confirmComposerSubmission", () => {
     expect(sendEnter).toHaveBeenCalled();
   });
 
+  it("confirms an execute-and-exit CLI from caller-scoped durable evidence", async () => {
+    const sendEnter = jest.fn().mockResolvedValue(undefined);
+    const hasAcceptedExecutionEvidence = jest.fn().mockResolvedValue(true);
+    const ok = await confirmComposerSubmission(
+      {
+        capture: async () => "work complete\nAGENT_COMPLETE",
+        sendEnter,
+        hasAcceptedExecutionEvidence,
+      },
+      fast,
+    );
+    expect(ok).toBe(true);
+    expect(hasAcceptedExecutionEvidence).toHaveBeenCalledWith(
+      "work complete\nAGENT_COMPLETE",
+    );
+    expect(sendEnter).not.toHaveBeenCalled();
+  });
+
   it("confirms once a booting CLI finally renders an empty composer", async () => {
     let calls = 0;
     const ok = await confirmComposerSubmission(

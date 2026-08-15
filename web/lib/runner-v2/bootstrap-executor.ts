@@ -17,7 +17,11 @@ import {
   routedLaunchJobLeaseOwned,
 } from "@/lib/runner-v2/launch-job";
 import { classifyCliReadiness, type CliReadinessResult } from "@/lib/runner-v2/readiness-policy";
-import { confirmComposerSubmission } from "@/lib/runner-v2/composer-submit";
+import { composerState, confirmComposerSubmission } from "@/lib/runner-v2/composer-submit";
+import {
+  captureAssertsAgentComplete,
+  findCompletionEventFile,
+} from "@/lib/runner-v2/monitor-io";
 import {
   captureAgentWorkspaceHandoff,
   ensureRunWorkspaceBaseline,
@@ -1220,6 +1224,16 @@ async function confirmInstructionSubmission(
     sendEnter: () => executor.sendRaw
       ? executor.sendRaw(plan.sessionName, "\r")
       : executor.sendKeys(plan.sessionName, ""),
+    hasAcceptedExecutionEvidence: (capture) => (
+      (composerState(capture) === "absent" && captureAssertsAgentComplete(capture))
+      || Boolean(findCompletionEventFile({
+        eventsDir: plan.eventsDir,
+        runId: plan.monitorSpec.runId,
+        agentId: plan.agentId,
+        expectedEvent: plan.monitorSpec.emits,
+        sessionName: plan.sessionName,
+      }))
+    ),
   }, {
     pollMs,
     deadlineMs,

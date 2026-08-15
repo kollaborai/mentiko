@@ -56,6 +56,13 @@ export interface ConfirmSubmissionIO {
   capture(lines: number): Promise<string>;
   /** send a bare enter with no daemon-appended enter of its own */
   sendEnter(): Promise<void>;
+  /**
+   * Optional caller-scoped durable proof that the submitted work already ran.
+   * This must be stronger than screen shape (for example, an exact run-owned
+   * completion event), because an execute-and-exit CLI has no composer left to
+   * render after accepting the assignment.
+   */
+  hasAcceptedExecutionEvidence?(capture: string): boolean | Promise<boolean>;
 }
 
 export interface ConfirmSubmissionOptions {
@@ -92,13 +99,20 @@ export async function confirmComposerSubmission(
       deadline,
     ).catch(() => null);
     if (output === SUBMISSION_DEADLINE_EXCEEDED) return false;
-    // ONLY an empty rendered composer proves the CLI accepted the text. A
-    // capture with no composer at all ("absent") is missing evidence, not
-    // proof of delivery — treating it as success is what let a booting CLI
-    // be recorded as instructions_submitted while the agent sat there having
-    // received nothing, produced no artifacts, and emitted no event, until
-    // the monitor gave up 5 nudges later.
+    // An empty rendered composer proves the CLI accepted the text. A capture
+    // with no composer at all ("absent") remains missing evidence unless the
+    // caller can prove this exact execution already produced a durable handoff.
+    // That second branch covers execute-and-exit CLIs without reintroducing the
+    // booting-CLI false positive.
     if (output !== null && composerState(output) === "empty") return true;
+    if (io.hasAcceptedExecutionEvidence) {
+      const evidence = await awaitBeforeDeadline(
+        () => Promise.resolve(io.hasAcceptedExecutionEvidence!(output ?? "")),
+        deadline,
+      ).catch(() => false);
+      if (evidence === SUBMISSION_DEADLINE_EXCEEDED) return false;
+      if (evidence === true) return true;
+    }
     if (enterRetries < maxEnterRetries) {
       enterRetries += 1;
       const enterResult = await awaitBeforeDeadline(
