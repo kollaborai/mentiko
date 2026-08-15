@@ -619,6 +619,7 @@ RUN if [ -f /build/web/lib/process-manager.ts ] && [ ! -f /context/lib/process-m
         lib/process-manager-env.ts lib/process-manager.ts && \
       cp /tmp/pm-out/process-manager.js /context/lib/process-manager.js && \
       cp /tmp/pm-out/process-manager-env.js /context/lib/process-manager-env.js && \
+      cp /tmp/pm-out/runner-control-env.js /context/lib/runner-control-env.js && \
       cp /tmp/pm-out/pm-types.js /context/lib/pm-types.js && \
       cp /tmp/pm-out/kollabor-mcp-server-env.js /context/lib/kollabor-mcp-server-env.js && \
       cp /tmp/pm-out/kollabor-mcp-settings.js /context/lib/kollabor-mcp-settings.js && \

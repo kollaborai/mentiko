@@ -67,6 +67,9 @@ function env(input: ReturnType<typeof fixture>) {
     STATE_DIR: input.stateDir,
     MENTIKO_RUNNER_V2: "1",
     MENTIKO_RUNNER_V2_COMPLETION: "1",
+    MENTIKO_MAX_CONCURRENT_CHAINS: "2",
+    MENTIKO_MAX_ACTIVE_AGENTS: "1",
+    MENTIKO_AGENT_CAP_MAX_WAIT_SECS: "90",
   };
 }
 
@@ -215,6 +218,13 @@ describe("runner-v2 routed launch durable acceptance", () => {
     const input = fixture();
     mockSpawnSync.mockImplementation((...args) => {
       if (isRoutedLaunch(args)) {
+        expect(args[2]).toEqual(expect.objectContaining({
+          env: expect.objectContaining({
+            MENTIKO_MAX_CONCURRENT_CHAINS: "2",
+            MENTIKO_MAX_ACTIVE_AGENTS: "1",
+            MENTIKO_AGENT_CAP_MAX_WAIT_SECS: "90",
+          }),
+        }));
         expect(existsSync(input.eventPath)).toBe(true);
         recordAcceptedTarget(input.runJsonPath);
         return { status: 0, pid: 4242, stdout: "accepted", stderr: "" } as ReturnType<typeof spawnSync>;

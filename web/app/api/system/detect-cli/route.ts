@@ -7,15 +7,35 @@ import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { Unauthorized } from "@/lib/api-errors";
 import { buildChildEnv } from "@/lib/runs/child-env";
 import { getCliBinary, getDetectableCliTools } from "@/lib/agents/agent-provider-catalog";
+import {
+  readCliDetectionCache,
+  writeCliDetectionCache,
+  type CachedCliTool,
+} from "@/lib/system/cli-detection-cache";
 
 export const dynamic = "force-dynamic";
 
-interface CliTool {
-  name: string;
-  found: boolean;
-  version?: string;
-  path?: string;
-  authenticated?: boolean;
+const DETECTION_CACHE_TTL_MS = 60_000;
+
+type CliTool = CachedCliTool;
+
+function liveClaudeProcessExists(env: NodeJS.ProcessEnv): boolean {
+  try {
+    const output = execSync("ps -eo comm=,stat=", {
+      encoding: "utf-8",
+      timeout: 2000,
+      stdio: ["pipe", "pipe", "pipe"],
+      env,
+    });
+    return output.split("\n").some((line) => {
+      const match = line.trim().match(/^(\S+)\s+(\S+)/);
+      return match?.[1] === "claude" && !match[2].startsWith("Z");
+    });
+  } catch {
+    // A failed process probe must never authorize a second heavyweight Claude
+    // process on a constrained tenant.
+    return true;
+  }
 }
 
 // GET /api/system/detect-cli - detect installed AI CLI tools
@@ -32,7 +52,14 @@ export const GET = withErrorHandling(async (request: Request) => {
   // clean env: CLAUDECODE not in allowlist, so buildChildEnv drops it
   const env = buildChildEnv();
 
+  const now = Date.now();
+  const cachedDetection = readCliDetectionCache();
+  if (cachedDetection && now - cachedDetection.checkedAt < DETECTION_CACHE_TTL_MS) {
+    return apiSuccess({ tools: cachedDetection.tools });
+  }
+
   const tools: CliTool[] = [];
+  const claudeBusy = liveClaudeProcessExists(env);
 
   for (const tool of getDetectableCliTools()) {
     const cli = tool.id;
@@ -57,6 +84,22 @@ export const GET = withErrorHandling(async (request: Request) => {
 
     // if found, try to get version
     if (found) {
+      // `claude --version` and `claude auth status` each boot the full CLI and
+      // can consume hundreds of MB. Generic UI/MCP discovery must not run them
+      // beside a live agent; keep prior metadata (if any) and report presence.
+      if (cli === "claude" && claudeBusy) {
+        const previous = cachedDetection?.tools.find((candidate) => candidate.name === cli);
+        tools.push({
+          name: cli,
+          found: true,
+          path,
+          ...(previous?.version ? { version: previous.version } : {}),
+          ...(previous?.authenticated !== undefined
+            ? { authenticated: previous.authenticated }
+            : {}),
+        });
+        continue;
+      }
       try {
         const output = execSync(`${binary} --version`, {
           encoding: "utf-8",
@@ -119,5 +162,9 @@ export const GET = withErrorHandling(async (request: Request) => {
     tools.push({ name: cli, found, version, path, authenticated });
   }
 
+  // Do not cache a deliberately partial busy-state response. The next idle
+  // request may refresh version/auth metadata; successful results collapse all
+  // incidental callers for one minute.
+  if (!claudeBusy) writeCliDetectionCache({ checkedAt: now, tools });
   return apiSuccess({ tools });
 });

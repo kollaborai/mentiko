@@ -10,6 +10,15 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (2026) ---
   {
+    version: "v0.3.60",
+    date: "August 14, 2026",
+    title: "Production Agent Cap Enforcement",
+    description:
+      "Production-managed server and worker processes now inherit the same runner controls as direct launches, and routed handoffs preserve those controls through completion. Nano tenants therefore enforce one active agent across handoffs instead of briefly overlapping Claude processes. CLI discovery also reuses recent metadata and will not launch Claude version or authentication probes while an agent is active.",
+    category: "fix",
+    docsHref: "/runs",
+  },
+  {
     version: "v0.3.59",
     date: "August 14, 2026",
     title: "Scoped Cleanup Proof",

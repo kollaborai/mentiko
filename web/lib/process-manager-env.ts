@@ -1,5 +1,6 @@
 import { join } from "path";
 import type { ProcessConfig } from "./pm-types";
+import { RUNNER_CONTROL_ENV_KEYS } from "./runner-control-env";
 
 export const MANAGED_PROCESS_ENV_WHITELIST = [
   "PATH", "HOME", "USER", "LANG", "LC_ALL", "TERM",
@@ -36,6 +37,11 @@ export const MANAGED_PROCESS_ENV_WHITELIST = [
   // to lock public signup and accept the control-plane bootstrap token.
   "MENTIKO_DISABLE_PUBLIC_SIGNUP", "MENTIKO_PROVISIONING_TOKEN",
   "MENTIKO_OWNER_EMAIL",
+  // One shared list owns every safe runner policy variable. Production starts
+  // Next.js and the worker through this supervisor; omitting a key here makes
+  // production silently diverge from local dev even when the container env is
+  // correct.
+  ...RUNNER_CONTROL_ENV_KEYS,
   // version-skew protection: next.js encrypts server-action closures with this
   // key at build time. the runtime container needs the SAME key to decrypt
   // actions invoked by clients. without it, every deploy invalidates in-flight

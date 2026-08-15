@@ -8,6 +8,7 @@ import {
   resolveManagedDevGlobalRoot,
   shouldReplaceUnavailableDevContainerRoot,
 } from "../process-manager-env";
+import { RUNNER_CONTROL_ENV_KEYS } from "../runner-control-env";
 
 describe("process manager environment", () => {
   it("uses the config.ts local root only when no explicit managed root exists", () => {
@@ -38,6 +39,23 @@ describe("process manager environment", () => {
     expect(MANAGED_PROCESS_ENV_WHITELIST).toContain("PTY_MGR_BIN");
     expect(MANAGED_PROCESS_ENV_WHITELIST).toContain("MENTIKO_PTY_MGR_BIN");
     expect(MANAGED_PROCESS_ENV_WHITELIST).toContain("PTY_DAEMON");
+  });
+
+  it("passes every runner control to both production server processes", () => {
+    const sourceEnv = Object.fromEntries(
+      RUNNER_CONTROL_ENV_KEYS.map((key) => [key, key === "MENTIKO_MAX_ACTIVE_AGENTS" ? "1" : "test-value"]),
+    );
+
+    for (const name of ["platform", "worker"]) {
+      const managed = buildManagedProcessEnv({ name, env: {} }, sourceEnv);
+      for (const key of RUNNER_CONTROL_ENV_KEYS) {
+        expect(managed[key]).toBe(sourceEnv[key]);
+      }
+      expect(managed.MENTIKO_MAX_ACTIVE_AGENTS).toBe("1");
+    }
+
+    const dockerfile = readFileSync(join(process.cwd(), "..", "Dockerfile"), "utf8");
+    expect(dockerfile).toContain("cp /tmp/pm-out/runner-control-env.js /context/lib/runner-control-env.js");
   });
 
   it("loads the web-local env file and assigns the typed dev root before spawning managed children", () => {

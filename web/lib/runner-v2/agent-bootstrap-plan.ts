@@ -5,6 +5,7 @@ import config, { ptyDaemonEnv } from "@/lib/config";
 import { shellEscape } from "@/lib/api/audit-exec";
 import { runnerAgentStatePath } from "@/lib/runner-v2/agent-state";
 import { resolveAgentProfile as resolveTypedAgentProfile } from "@/lib/runner-v2/agent-profile";
+import { pickRunnerControlEnv } from "@/lib/runner-control-env";
 import type { AgentProfileReadinessConfig } from "@/lib/types";
 
 export interface BootstrapChainAgent {
@@ -106,6 +107,7 @@ export function buildAgentBootstrapPlan(input: AgentBootstrapPlanInput): AgentBo
   const instructionPath = join(artifactsDir, `${agent.id}-instructions.md`);
   const profile = resolveAgentProfile(input.chainPath, agent.id || "", sourceWorkspacePath, input.env);
   const gatewayEnv = resolveLocalAiGatewayProxyEnv(input.env);
+  const runnerControlEnv = pickRunnerControlEnv(input.env, process.env);
   const runContextExports = {
     PATH: `${join(config.codeRoot, "bin")}:${input.env?.PATH || process.env.PATH || ""}`,
     MENTIKO_BIN: join(config.codeRoot, "bin", "mentiko"),
@@ -151,30 +153,9 @@ export function buildAgentBootstrapPlan(input: AgentBootstrapPlanInput): AgentBo
     TASK_CONTEXT_JSON: input.env?.TASK_CONTEXT_JSON || "",
     ...gatewayEnv,
     ...ptyDaemonEnv(),
-    MENTIKO_READINESS_FAIL_CLOSED: input.env?.MENTIKO_READINESS_FAIL_CLOSED || "",
-    MENTIKO_CLI_READY_TIMEOUT: input.env?.MENTIKO_CLI_READY_TIMEOUT || "",
-    MENTIKO_CLI_READY_POLL: input.env?.MENTIKO_CLI_READY_POLL || "",
-    MENTIKO_STARTUP_RECOVERY: input.env?.MENTIKO_STARTUP_RECOVERY || "",
-    MENTIKO_STARTUP_RECOVERY_MAX: input.env?.MENTIKO_STARTUP_RECOVERY_MAX || "",
-    MENTIKO_ADVISOR_STALE_COUNT: input.env?.MENTIKO_ADVISOR_STALE_COUNT || "",
-    MENTIKO_MONITOR_MAX_NUDGES: input.env?.MENTIKO_MONITOR_MAX_NUDGES || "",
-    MENTIKO_MONITOR_NEVER_ARMED_GRACE: input.env?.MENTIKO_MONITOR_NEVER_ARMED_GRACE || "",
-    // The monitor owns completion and launches every downstream agent. Preserve
-    // the tenant limits across that PTY boundary; otherwise the first agent sees
-    // the nano cap while handoffs silently fall back to the global default (3).
-    MAX_CONCURRENT_AGENTS: input.env?.MAX_CONCURRENT_AGENTS || "",
-    MENTIKO_CAP_DISABLED: input.env?.MENTIKO_CAP_DISABLED || "",
-    MENTIKO_MAX_CONCURRENT_CHAINS: input.env?.MENTIKO_MAX_CONCURRENT_CHAINS || "",
-    MENTIKO_CAP_MAX_WAIT_SECS: input.env?.MENTIKO_CAP_MAX_WAIT_SECS || "",
-    MENTIKO_CAP_POLL_SECS: input.env?.MENTIKO_CAP_POLL_SECS || "",
-    MENTIKO_CAP_POLL_MAX_SECS: input.env?.MENTIKO_CAP_POLL_MAX_SECS || "",
-    MENTIKO_MAX_ACTIVE_AGENTS: input.env?.MENTIKO_MAX_ACTIVE_AGENTS || "",
-    MENTIKO_AGENT_CAP_MAX_WAIT_SECS: input.env?.MENTIKO_AGENT_CAP_MAX_WAIT_SECS || "",
-    MENTIKO_AGENT_CAP_POLL_SECS: input.env?.MENTIKO_AGENT_CAP_POLL_SECS || "",
-    MENTIKO_AGENT_CAP_POLL_MAX_SECS: input.env?.MENTIKO_AGENT_CAP_POLL_MAX_SECS || "",
-    // The monitor inherits these exports and hands them to typed completion.
-    MENTIKO_RUNNER_V2: input.env?.MENTIKO_RUNNER_V2 || "",
-    MENTIKO_RUNNER_V2_COMPLETION: input.env?.MENTIKO_RUNNER_V2_COMPLETION || "",
+    // The monitor owns completion and launches every downstream agent. Carry
+    // every safe runner control across the PTY boundary as one indivisible set.
+    ...runnerControlEnv,
   };
   const instructionPointer = buildInstructionPointer(agent.id || "", instructionPath);
   const monitorSpec: AgentBootstrapMonitorSpec = {

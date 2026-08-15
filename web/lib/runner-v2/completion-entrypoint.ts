@@ -49,6 +49,7 @@ import type {
   GitRunWorkspacePublicationResult,
 } from "@/lib/runner-v2/workspace-isolation";
 import { waitForProcessSessionQuiescence } from "@/lib/runner-v2/process-session";
+import { pickRunnerControlEnv } from "@/lib/runner-control-env";
 
 export interface RunnerV2CompletionEntrypointInput {
   sessionName: string;
@@ -436,6 +437,10 @@ export function runRunnerV2CompletionEntrypoint(
         taskId: run.taskId,
         runDir,
         env: {
+          // Routed launch jobs are detached from this monitor. Persist the same
+          // tenant policy that admitted the current agent, including the nano
+          // one-agent cap, before any downstream process can be accepted.
+          ...pickRunnerControlEnv(env, process.env),
           MENTIKO_RUN_ID: runId,
           RUN_ID: runId,
           NAMESPACE_ID: env.NAMESPACE_ID,

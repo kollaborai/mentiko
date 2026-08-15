@@ -8,6 +8,8 @@
  * of the allowlisted base env.
  */
 
+import { RUNNER_CONTROL_ENV_KEYS } from "@/lib/runner-control-env";
+
 const ALLOWED_KEYS = [
   // runtime
   "PATH",
@@ -48,45 +50,9 @@ const ALLOWED_KEYS = [
   // from an explicit agent profile, never inherited from the server process.
   "CLAUDE_CONFIG_DIR",
 
-  // startup readiness + bounded recovery toggles. Typed bootstrap reads these;
-  // forwarding them lets a deployment turn fail-closed readiness on
-  // via env (e.g. web/.env.local or the tenant container) without code changes.
-  "MENTIKO_READINESS_FAIL_CLOSED",
-  "MENTIKO_STARTUP_RECOVERY",
-  "MENTIKO_STARTUP_RECOVERY_MAX",
-  "MENTIKO_CLI_READY_TIMEOUT",
-  "MENTIKO_CLI_READY_POLL",
-
-  // runner liveness policy. These numeric/toggle controls are safe to inherit
-  // and must cross the server -> detached runner boundary; otherwise the web
-  // process advertises one monitor policy while the actual run silently falls
-  // back to typed-runner defaults.
-  "MENTIKO_MONITOR_INTERVAL",
-  "MENTIKO_MONITOR_MAX_STALE",
-  "MENTIKO_ADVISOR_STALE_COUNT",
-  "MENTIKO_MONITOR_MAX_NUDGES",
-  "MENTIKO_MONITOR_NEVER_ARMED_GRACE",
-  "MENTIKO_RUNNER_V2_SUBMISSION_POLL_MS",
-  "MENTIKO_RUNNER_V2_SUBMISSION_DEADLINE_MS",
-
-  // tenant execution capacity. These limits are set by the control plane for
-  // each hosting tier and must survive the server -> detached runner boundary.
-  // Dropping them makes typed bootstrap silently use its larger defaults.
-  "MENTIKO_CAP_DISABLED",
-  "MENTIKO_MAX_CONCURRENT_CHAINS",
-  "MENTIKO_CAP_MAX_WAIT_SECS",
-  "MENTIKO_CAP_POLL_SECS",
-  "MENTIKO_CAP_POLL_MAX_SECS",
-  "MENTIKO_MAX_ACTIVE_AGENTS",
-  "MAX_CONCURRENT_AGENTS",
-  "MENTIKO_AGENT_CAP_MAX_WAIT_SECS",
-  "MENTIKO_AGENT_CAP_POLL_SECS",
-  "MENTIKO_AGENT_CAP_POLL_MAX_SECS",
-
-  // side-by-side migration flag for the typescript orchestration controller.
-  // checked by the web launch service before spawning the runner process.
-  "MENTIKO_RUNNER_V2",
-  "MENTIKO_RUNNER_V2_COMPLETION",
+  // Safe runner policy shared with the production process supervisor. Keeping
+  // one list prevents local and container launches from drifting again.
+  ...RUNNER_CONTROL_ENV_KEYS,
 ];
 
 type ChildEnvOverrides = Record<string, string | undefined>;
