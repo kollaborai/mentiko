@@ -99,6 +99,53 @@ describe("typed agent capacity queue", () => {
     })).toMatchObject({ status: "admitted" });
   });
 
+  it("does not let a queued attempt from a terminal run block launchable work", () => {
+    const stalePath = seedRun(root, "run-stale-terminal");
+    const stale = queueAttempt(stalePath, "run-stale-terminal", "stale", 0);
+    updateRunJson(stalePath, (run) => ({ ...run!, status: "failed" }));
+    const currentPath = seedRun(root, "run-current");
+    const current = queueAttempt(currentPath, "run-current", "current", 1);
+
+    expect(admitQueuedAgentAttempt({
+      runJsonPath: currentPath,
+      runId: "run-current",
+      attemptId: current.id,
+      cap: 1,
+    })).toMatchObject({ status: "admitted", active: 1, cap: 1 });
+    expect(readRunnerV2AttemptState(stalePath).attempts.find(
+      (attempt) => attempt.id === stale.id,
+    )).toMatchObject({ phase: "queued" });
+  });
+
+  it("keeps a terminal run's acquired slot counted until cleanup releases it", () => {
+    const terminalPath = seedRun(root, "run-terminal-held");
+    const held = queueAttempt(terminalPath, "run-terminal-held", "held", 0);
+    expect(admitQueuedAgentAttempt({
+      runJsonPath: terminalPath,
+      runId: "run-terminal-held",
+      attemptId: held.id,
+      cap: 1,
+    })).toMatchObject({ status: "admitted" });
+    updateRunJson(terminalPath, (run) => ({ ...run!, status: "stopped" }));
+
+    const currentPath = seedRun(root, "run-after-terminal");
+    const current = queueAttempt(currentPath, "run-after-terminal", "current", 1);
+    expect(admitQueuedAgentAttempt({
+      runJsonPath: currentPath,
+      runId: "run-after-terminal",
+      attemptId: current.id,
+      cap: 1,
+    })).toMatchObject({ status: "queued", active: 1, position: 1 });
+
+    releaseAgentCapacitySlot({ runJsonPath: terminalPath, attemptId: held.id });
+    expect(admitQueuedAgentAttempt({
+      runJsonPath: currentPath,
+      runId: "run-after-terminal",
+      attemptId: current.id,
+      cap: 1,
+    })).toMatchObject({ status: "admitted", active: 1, cap: 1 });
+  });
+
   it("fails closed when any run record in the capacity domain is corrupt", () => {
     const runJsonPath = seedRun(root, "run-good");
     const attempt = queueAttempt(runJsonPath, "run-good", "agent", 0);

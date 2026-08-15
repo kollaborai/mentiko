@@ -10,6 +10,15 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (2026) ---
   {
+    version: "v0.3.56",
+    date: "August 14, 2026",
+    title: "Terminal Queue Recovery",
+    description:
+      "A queued agent attempt left behind by a failed, stopped, cancelled, or completed run can no longer remain at the head of the tenant-wide capacity queue and prevent every later task from launching. Only launchable runs participate in FIFO ordering, while an agent slot that was actually acquired continues to count until terminal cleanup proves the process is gone and releases it.",
+    category: "fix",
+    docsHref: "/runs",
+  },
+  {
     version: "v0.3.55",
     date: "August 14, 2026",
     title: "Nano Agent Execution Stability",

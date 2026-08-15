@@ -48,6 +48,10 @@ function capacitySlotHeld(attempt: AgentAttemptRecord): boolean {
   return Boolean(attempt.capacitySlotAcquiredAt) && !attempt.capacitySlotReleasedAt;
 }
 
+function runAcceptsQueuedAttempts(status: string): boolean {
+  return status === "pending" || status === "running";
+}
+
 function scanCapacity(scopeRoot: string, explicitRunJsonPath?: string): CapacityScan {
   let active = 0;
   const queued: QueuedAttempt[] = [];
@@ -61,7 +65,11 @@ function scanCapacity(scopeRoot: string, explicitRunJsonPath?: string): Capacity
         active += 1;
         capacityAgentIds.add(attempt.agentId);
       }
-      if (attempt.phase === "queued") {
+      // A terminal run can retain a historical queued attempt when its detached
+      // launcher disappears before observing terminalization. It must not stay
+      // at the head of the shared FIFO forever. Held slots still count above
+      // until cleanup proves the corresponding live agent is absent.
+      if (attempt.phase === "queued" && runAcceptsQueuedAttempts(String(run.status))) {
         queued.push({ runJsonPath, runId: run.id, attempt });
       }
       if (Number.isSafeInteger(attempt.queueSequence)) {
