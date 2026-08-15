@@ -57,6 +57,18 @@ const ALLOWED_KEYS = [
   "MENTIKO_CLI_READY_TIMEOUT",
   "MENTIKO_CLI_READY_POLL",
 
+  // runner liveness policy. These numeric/toggle controls are safe to inherit
+  // and must cross the server -> detached runner boundary; otherwise the web
+  // process advertises one monitor policy while the actual run silently falls
+  // back to typed-runner defaults.
+  "MENTIKO_MONITOR_INTERVAL",
+  "MENTIKO_MONITOR_MAX_STALE",
+  "MENTIKO_ADVISOR_STALE_COUNT",
+  "MENTIKO_MONITOR_MAX_NUDGES",
+  "MENTIKO_MONITOR_NEVER_ARMED_GRACE",
+  "MENTIKO_RUNNER_V2_SUBMISSION_POLL_MS",
+  "MENTIKO_RUNNER_V2_SUBMISSION_DEADLINE_MS",
+
   // tenant execution capacity. These limits are set by the control plane for
   // each hosting tier and must survive the server -> detached runner boundary.
   // Dropping them makes typed bootstrap silently use its larger defaults.

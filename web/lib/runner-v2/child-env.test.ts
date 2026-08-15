@@ -36,4 +36,26 @@ describe("runner-v2 child env propagation", () => {
       }
     }
   });
+
+  it("preserves runner liveness policy through the detached runner boundary", () => {
+    const keys = {
+      MENTIKO_MONITOR_INTERVAL: "2",
+      MENTIKO_MONITOR_MAX_STALE: "30",
+      MENTIKO_ADVISOR_STALE_COUNT: "1",
+      MENTIKO_MONITOR_MAX_NUDGES: "2",
+      MENTIKO_MONITOR_NEVER_ARMED_GRACE: "4",
+      MENTIKO_RUNNER_V2_SUBMISSION_POLL_MS: "250",
+      MENTIKO_RUNNER_V2_SUBMISSION_DEADLINE_MS: "5000",
+    } as const;
+    const previous = new Map(Object.keys(keys).map((key) => [key, process.env[key]]));
+    Object.assign(process.env, keys);
+    try {
+      expect(buildChildEnv()).toEqual(expect.objectContaining(keys));
+    } finally {
+      for (const [key, value] of previous) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
 });

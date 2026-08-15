@@ -70,6 +70,13 @@ export interface ConfirmSubmissionOptions {
   deadlineMs?: number;
   maxEnterRetries?: number;
   captureLines?: number;
+  /**
+   * Return false as soon as the first successful capture has no recognizable
+   * composer. Use this for an already-running agent where waiting and sending
+   * blind Enter retries cannot create stronger submission evidence. Bootstrap
+   * leaves this disabled because an absent composer can still mean "booting".
+   */
+  stopOnAbsentComposer?: boolean;
 }
 
 /**
@@ -104,7 +111,8 @@ export async function confirmComposerSubmission(
     // caller can prove this exact execution already produced a durable handoff.
     // That second branch covers execute-and-exit CLIs without reintroducing the
     // booting-CLI false positive.
-    if (output !== null && composerState(output) === "empty") return true;
+    const state = output === null ? null : composerState(output);
+    if (state === "empty") return true;
     if (io.hasAcceptedExecutionEvidence) {
       const evidence = await awaitBeforeDeadline(
         () => Promise.resolve(io.hasAcceptedExecutionEvidence!(output ?? "")),
@@ -113,6 +121,7 @@ export async function confirmComposerSubmission(
       if (evidence === SUBMISSION_DEADLINE_EXCEEDED) return false;
       if (evidence === true) return true;
     }
+    if (state === "absent" && options.stopOnAbsentComposer === true) return false;
     if (enterRetries < maxEnterRetries) {
       enterRetries += 1;
       const enterResult = await awaitBeforeDeadline(

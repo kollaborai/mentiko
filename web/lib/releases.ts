@@ -10,7 +10,7 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (2026) ---
   {
-    version: "v0.3.54",
+    version: "v0.3.55",
     date: "August 14, 2026",
     title: "Nano Agent Execution Stability",
     description:
@@ -718,7 +718,7 @@ export const releases: Release[] = [
 
 // The build tag is tracked separately from the user-facing update feed.
 // Do not add an update card solely for internal release work.
-export const CURRENT_RELEASE_VERSION = "v0.3.54";
+export const CURRENT_RELEASE_VERSION = "v0.3.55";
 export const LATEST_VERSION = releases[0].version;
 export const UPDATES_STORAGE_KEY = "mentiko-last-seen-version";
 

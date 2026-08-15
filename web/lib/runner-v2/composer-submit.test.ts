@@ -97,6 +97,18 @@ describe("confirmComposerSubmission", () => {
     expect(sendEnter).not.toHaveBeenCalled();
   });
 
+  it("fails fast without blind enter retries when a running CLI has no composer", async () => {
+    const capture = jest.fn().mockResolvedValue("agent output with no composer");
+    const sendEnter = jest.fn().mockResolvedValue(undefined);
+    const ok = await confirmComposerSubmission(
+      { capture, sendEnter },
+      { ...fast, stopOnAbsentComposer: true },
+    );
+    expect(ok).toBe(false);
+    expect(capture).toHaveBeenCalledTimes(1);
+    expect(sendEnter).not.toHaveBeenCalled();
+  });
+
   it("confirms once a booting CLI finally renders an empty composer", async () => {
     let calls = 0;
     const ok = await confirmComposerSubmission(

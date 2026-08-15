@@ -199,6 +199,7 @@ export function createLiveMonitorIO(context: LiveMonitorContext): MonitorDriverI
         sendEnter: () => pty.sendRaw(session, "\r"),
       }, {
         deadlineMs: positiveInt(context.env.MENTIKO_MONITOR_NUDGE_SUBMIT_DEADLINE_MS, 12_000),
+        stopOnAbsentComposer: true,
       });
       if (!submitted) {
         // Not terminal: the next tick re-evaluates and may nudge again. Log it
