@@ -24,6 +24,7 @@ import {
   readRunnerV2AttemptState,
   releaseRunAgentCapacitySlots,
 } from "@/lib/runner-v2/agent-attempt";
+import { processSessionIsQuiescent } from "@/lib/runner-v2/process-session";
 
 const RESUME_GRACE_MS = 120_000;
 const MISSING_SESSION_STARTUP_GRACE_MS = 10_000;
@@ -69,6 +70,7 @@ export interface WatchdogHookInput {
 export interface WatchdogDependencies {
   transport: WatchdogTransport;
   processAlive: (pid: number) => boolean;
+  processSessionQuiescent: (sessionId: number) => boolean;
   dispatchHooks: (input: WatchdogHookInput) => void | Promise<void>;
 }
 
@@ -134,6 +136,7 @@ interface TerminalizeResult {
 const defaultDependencies: WatchdogDependencies = {
   transport: pty,
   processAlive: processIsAlive,
+  processSessionQuiescent: processSessionIsQuiescent,
   dispatchHooks: dispatchExecutableWatchdogHooks,
 };
 
@@ -305,7 +308,12 @@ export async function runTypedWatchdogScan(
   try {
     const currentSessions = await dependencies.transport.list();
     for (const scopedRun of readScopedRuns(runsDir, result.errors)) {
-      const releasable = releasableCapacityAttemptIds(scopedRun.runJsonPath, scopedRun.run, currentSessions);
+      const releasable = releasableCapacityAttemptIds(
+        scopedRun.runJsonPath,
+        scopedRun.run,
+        currentSessions,
+        dependencies.processSessionQuiescent,
+      );
       if (releasable.size === 0) continue;
       result.capacitySlotsReleased += releaseRunAgentCapacitySlots({
         runJsonPath: scopedRun.runJsonPath,
@@ -816,6 +824,7 @@ function releasableCapacityAttemptIds(
   runJsonPath: string,
   run: RunRecord,
   sessions: WatchdogSession[],
+  processSessionQuiescent: (sessionId: number) => boolean,
 ): Set<string> {
   const live = new Set(sessions.filter((session) => session.alive).map((session) => session.name));
   const agentSessionById = new Map((run.agents || []).map((agent) => [agent.id, agent.session]));
@@ -824,7 +833,10 @@ function releasableCapacityAttemptIds(
     if (!attempt.capacitySlotAcquiredAt || attempt.capacitySlotReleasedAt) return [];
     if (!runTerminal && !isTerminalAgentAttemptPhase(attempt.phase)) return [];
     const sessionName = attempt.processEvidence?.ptySessionId || agentSessionById.get(attempt.agentId) || "";
-    return !sessionName || !live.has(sessionName) ? [attempt.id] : [];
+    if (sessionName && live.has(sessionName)) return [];
+    const processSessionId = attempt.processEvidence?.processPid;
+    if (processSessionId !== undefined && !processSessionQuiescent(processSessionId)) return [];
+    return [attempt.id];
   }));
 }
 

@@ -48,6 +48,7 @@ import type {
   GitNodeIntegrationResult,
   GitRunWorkspacePublicationResult,
 } from "@/lib/runner-v2/workspace-isolation";
+import { waitForProcessSessionQuiescence } from "@/lib/runner-v2/process-session";
 
 export interface RunnerV2CompletionEntrypointInput {
   sessionName: string;
@@ -622,7 +623,10 @@ function removeAgentSessionsAndReleaseCapacity(input: {
   env: NodeJS.ProcessEnv | Record<string, string | undefined>;
   now?: Date;
 }): void {
-  const competingAttempt = readRunnerV2AttemptState(input.runJsonPath).attempts.find((attempt) => (
+  const attempts = readRunnerV2AttemptState(input.runJsonPath).attempts;
+  const completedAttempt = attempts.find((attempt) => attempt.id === input.attemptId);
+  const processSessionId = completedAttempt?.processEvidence?.processPid;
+  const competingAttempt = attempts.find((attempt) => (
     attempt.id !== input.attemptId
     && attempt.runId === input.runId
     && !isTerminalAgentAttemptPhase(attempt.phase)
@@ -634,18 +638,22 @@ function removeAgentSessionsAndReleaseCapacity(input: {
   if (competingAttempt) {
     // A stale completion may replay after a retry or loop occurrence reused the
     // same deterministic PTY name. Release only the exact completed attempt's
-    // capacity; the newer occurrence owns the live session.
-    releaseAgentCapacitySlot({
-      runJsonPath: input.runJsonPath,
-      attemptId: input.attemptId,
-      now: input.now,
-    });
+    // capacity; the newer occurrence owns the live session. The old process
+    // session must still be quiescent before its slot can be released.
+    if (processSessionId === undefined || waitForProcessSessionQuiescence({ sessionId: processSessionId })) {
+      releaseAgentCapacitySlot({
+        runJsonPath: input.runJsonPath,
+        attemptId: input.attemptId,
+        now: input.now,
+      });
+    }
     return;
   }
   const cleanup = killAgentSessions(input.sessionName, {
     stateDir: input.stateDir,
     runId: input.runId,
     env: input.env,
+    processSessionId,
   });
   // The monitor does not consume an active-agent slot. Release only after the
   // agent PTY itself is proven absent; a failed removal stays durably counted

@@ -69,6 +69,16 @@ describe("runner-v2 agent bootstrap plan", () => {
         EVENTS_DIR: join(root, "events"),
         STATE_DIR: join(root, "state"),
         PATH: "/bin",
+        MENTIKO_CAP_DISABLED: "0",
+        MENTIKO_MAX_CONCURRENT_CHAINS: "2",
+        MENTIKO_CAP_MAX_WAIT_SECS: "90",
+        MENTIKO_CAP_POLL_SECS: "1",
+        MENTIKO_CAP_POLL_MAX_SECS: "5",
+        MENTIKO_MAX_ACTIVE_AGENTS: "1",
+        MAX_CONCURRENT_AGENTS: "1",
+        MENTIKO_AGENT_CAP_MAX_WAIT_SECS: "90",
+        MENTIKO_AGENT_CAP_POLL_SECS: "1",
+        MENTIKO_AGENT_CAP_POLL_MAX_SECS: "5",
         MENTIKO_RUNNER_V2: "1",
         MENTIKO_RUNNER_V2_COMPLETION: "1",
         MENTIKO_AI_GATEWAY_LOCAL_PROXY_ENABLED: "true",
@@ -101,6 +111,10 @@ describe("runner-v2 agent bootstrap plan", () => {
       MENTIKO_AI_GATEWAY_LOCAL_PROXY_ENABLED: "true",
       MENTIKO_AI_GATEWAY_LOCAL_BASE_URL: "http://127.0.0.1:3200/api/ai-gateway/local/v1",
       MENTIKO_AI_GATEWAY_LOCAL_TOKEN: "internal-proxy-token",
+      MENTIKO_MAX_ACTIVE_AGENTS: "1",
+      MAX_CONCURRENT_AGENTS: "1",
+      MENTIKO_MAX_CONCURRENT_CHAINS: "2",
+      MENTIKO_AGENT_CAP_MAX_WAIT_SECS: "90",
     });
     expect(plan.instructionPath).toBe(join(runDir, "artifacts", "writer-instructions.md"));
     expect(plan.instructionPointer).toContain("You are Mentiko agent: writer.");
@@ -115,6 +129,9 @@ describe("runner-v2 agent bootstrap plan", () => {
     });
     expect(plan.monitorCommand).toContain("export MENTIKO_RUNNER_V2='1'");
     expect(plan.monitorCommand).toContain("export MENTIKO_RUNNER_V2_COMPLETION='1'");
+    expect(plan.monitorCommand).toContain("export MENTIKO_MAX_ACTIVE_AGENTS='1'");
+    expect(plan.monitorCommand).toContain("export MENTIKO_MAX_CONCURRENT_CHAINS='2'");
+    expect(plan.monitorCommand).toContain("export MENTIKO_AGENT_CAP_MAX_WAIT_SECS='90'");
     expect(plan.monitorCommand).toContain(`export AGENT_PROFILES_DIR='${profilesDir}'`);
     expect(plan.monitorCommand).toContain("exec node '/repo/lib/monitor-v2.js'");
     expect(plan.monitorCommand).toContain("MENTIKO_AI_GATEWAY_LOCAL_TOKEN='internal-proxy-token'");

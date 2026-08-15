@@ -33,6 +33,7 @@ import {
   routedLaunchJobIsAccepted,
 } from "@/lib/runner-v2/launch-job";
 import { currentGitRunIntegrationCommitFromRunDir } from "@/lib/runner-v2/workspace-isolation";
+import { waitForProcessSessionQuiescence } from "@/lib/runner-v2/process-session";
 
 type AdapterOperationPayload =
   | { type: "task-status"; status: string; taskId?: string; runId?: string }
@@ -1173,10 +1174,26 @@ export interface PtyCleanupResult {
   failed: string[];
 }
 
+interface PtyCleanupDependencies {
+  waitForProcessSession: typeof waitForProcessSessionQuiescence;
+}
+
+const defaultPtyCleanupDependencies: PtyCleanupDependencies = {
+  waitForProcessSession: waitForProcessSessionQuiescence,
+};
+
 export function killAgentSessions(
   sessionName: string,
-  options: { stateDir?: string; runId?: string; env?: RunnerV2Environment } = {},
+  options: {
+    stateDir?: string;
+    runId?: string;
+    env?: RunnerV2Environment;
+    /** PTY child PID; pty-bridge makes it the OS session id via setsid(). */
+    processSessionId?: number;
+  } = {},
+  dependencyOverrides: Partial<PtyCleanupDependencies> = {},
 ): PtyCleanupResult {
+  const dependencies = { ...defaultPtyCleanupDependencies, ...dependencyOverrides };
   const removed: string[] = [];
   const failed: string[] = [];
   const transport = join(config.codeRoot, "bin", "p");
@@ -1193,7 +1210,11 @@ export function killAgentSessions(
         stdio: "ignore",
         env: scopedEnv,
       });
-      if (alive.status !== 0) removed.push(name);
+      const registryAbsent = alive.status !== 0;
+      const processSessionQuiescent = name !== sessionName
+        || options.processSessionId === undefined
+        || dependencies.waitForProcessSession({ sessionId: options.processSessionId });
+      if (registryAbsent && processSessionQuiescent) removed.push(name);
       else failed.push(name);
     } catch {
       failed.push(name);
@@ -1204,6 +1225,7 @@ export function killAgentSessions(
       event: "pty-cleanup-failed",
       runId: options.runId,
       sessionName,
+      processSessionId: options.processSessionId,
       failed,
       retryable: true,
       timestamp: new Date().toISOString(),

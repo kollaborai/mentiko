@@ -2190,4 +2190,31 @@ describe("runner-v2 adapters", () => {
 
     (spawnSync as jest.Mock).mockReturnValue({ status: 0, stdout: "import ok", stderr: "" });
   });
+
+  it("does not report the agent removed until its OS process session is quiescent", async () => {
+    const { killAgentSessions } = await import("@/lib/runner-v2/adapters");
+    (spawnSync as jest.Mock).mockClear();
+    (spawnSync as jest.Mock).mockImplementation((_cmd: string, args: string[]) => (
+      args[0] === "alive"
+        ? { status: 1, stdout: "", stderr: "not found" }
+        : { status: 0, stdout: "removed", stderr: "" }
+    ));
+    const waitForProcessSession = jest.fn(() => false);
+
+    expect(killAgentSessions("workspace-writer-run-9", {
+      processSessionId: 4100,
+    }, { waitForProcessSession })).toEqual(expect.objectContaining({
+      removed: ["monitor-workspace-writer-run-9"],
+      failed: ["workspace-writer-run-9"],
+    }));
+    expect(waitForProcessSession).toHaveBeenCalledWith({ sessionId: 4100 });
+
+    waitForProcessSession.mockReturnValue(true);
+    expect(killAgentSessions("workspace-writer-run-9", {
+      processSessionId: 4100,
+    }, { waitForProcessSession })).toEqual(expect.objectContaining({
+      removed: ["monitor-workspace-writer-run-9", "workspace-writer-run-9"],
+      failed: [],
+    }));
+  });
 });

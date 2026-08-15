@@ -10,6 +10,15 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (2026) ---
   {
+    version: "v0.3.57",
+    date: "August 14, 2026",
+    title: "Strict Nano Handoff Capacity",
+    description:
+      "Nano tenants now carry their one-active-agent limit through every agent PTY, monitor, completion, and routed handoff instead of letting downstream agents fall back to the three-agent default. Completion also keeps the capacity slot until the old PTY's operating-system process session has no live members; removing a terminal name while its Claude process is still shutting down can no longer admit the next agent early. Watchdog reconciliation applies the same fail-closed process proof before releasing a stranded slot.",
+    category: "fix",
+    docsHref: "/runs",
+  },
+  {
     version: "v0.3.56",
     date: "August 14, 2026",
     title: "Terminal Queue Recovery",

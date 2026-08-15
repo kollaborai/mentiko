@@ -884,4 +884,64 @@ describe("typed runner watchdog", () => {
     expect(acknowledgedRecovery.hookDispatches).toBe(1);
     expect(readFileSync(invocationPath, "utf8").trim().split("\n")).toHaveLength(2);
   });
+
+  it("holds terminal attempt capacity until the recorded OS process session is quiescent", async () => {
+    const root = tempRoot();
+    const run = runRecord(now, {
+      id: "run-process-session-cleanup",
+      status: "failed",
+      completed: now.toISOString(),
+      runnerV2: {
+        attempts: [{
+          id: "attempt-writer",
+          runId: "run-process-session-cleanup",
+          agentId: "writer",
+          phase: "completion_failed",
+          observedPhase: "completion_failed",
+          desiredPhase: "completion_failed",
+          capacitySlotAcquiredAt: new Date(now.getTime() - 60_000).toISOString(),
+          processEvidence: {
+            processPid: 4100,
+            processSpawnedAt: new Date(now.getTime() - 60_000).toISOString(),
+            ptySessionId: "writer-run",
+          },
+          instructionLedger: [],
+          recoveryDecisionCount: 0,
+          createdAt: new Date(now.getTime() - 60_000).toISOString(),
+          updatedAt: now.toISOString(),
+          transitions: [],
+        }],
+      },
+      agents: [{ id: "writer", name: "Writer", status: "failed", session: "writer-run" }],
+    });
+    const runPath = writeRun(root, run);
+    const base = {
+      runsDir: join(root, "runs"),
+      eventsDir: join(root, "events"),
+      stateDir: join(root, "state"),
+      reapOrphans: false,
+      dependencies: {
+        transport: new FakeTransport(),
+        dispatchHooks: () => undefined,
+      },
+    };
+
+    const held = await runTypedWatchdogScan({
+      ...base,
+      dependencies: { ...base.dependencies, processSessionQuiescent: () => false },
+      now,
+    });
+    expect(held.capacitySlotsReleased).toBe(0);
+    expect(JSON.parse(readFileSync(runPath, "utf8")).runnerV2.attempts[0].capacitySlotReleasedAt)
+      .toBeUndefined();
+
+    const released = await runTypedWatchdogScan({
+      ...base,
+      dependencies: { ...base.dependencies, processSessionQuiescent: () => true },
+      now: new Date(now.getTime() + 1_000),
+    });
+    expect(released.capacitySlotsReleased).toBe(1);
+    expect(JSON.parse(readFileSync(runPath, "utf8")).runnerV2.attempts[0].capacitySlotReleasedAt)
+      .toBe(new Date(now.getTime() + 1_000).toISOString());
+  });
 });
