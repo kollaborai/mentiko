@@ -28,6 +28,7 @@ set -uo pipefail
 # -------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+source "$SCRIPT_DIR/scoped-pty-daemon.sh"
 MENTIKO_BIN="$REPO_ROOT/bin/mentiko"
 PTY_MGR_BIN_DEFAULT="$HOME/.pty-mgr/bin/pty-mgr"
 
@@ -94,20 +95,10 @@ trap cleanup EXIT INT TERM
 # MENTIKO_GLOBAL_ROOT (the data-root var config.sh honours) at a temp dir.
 export MENTIKO_GLOBAL_ROOT="$DATA_ROOT"
 export NAMESPACE_ID="default" ORG_ID="default"
-PTY_DAEMON_NAME="$(
-  env -u PTY_DAEMON \
-    MENTIKO_CODE_ROOT="$REPO_ROOT" \
-    MENTIKO_GLOBAL_ROOT="$MENTIKO_GLOBAL_ROOT" \
-    NAMESPACE_ID="$NAMESPACE_ID" \
-    ORG_ID="$ORG_ID" \
-    node "$REPO_ROOT/lib/runner-runtime-paths.js" shell-exports \
-    | sed -n "s/^export PTY_DAEMON='\([^']*\)'$/\1/p"
-)"
-if [[ -z "$PTY_DAEMON_NAME" ]]; then
+if ! configure_scoped_pty_daemon "$REPO_ROOT" "$MENTIKO_GLOBAL_ROOT" "$NAMESPACE_ID" "$ORG_ID"; then
   printf '%sFATAL: unable to resolve scoped PTY daemon%s\n' "$C_RED" "$C_NC"
   exit 2
 fi
-export PTY_DAEMON="$PTY_DAEMON_NAME"
 export STUB_CLI="$SCRIPT_DIR/fixtures/stub-agent-cli.sh"
 PROFILES_DIR="$DATA_ROOT/namespaces/default/agent-profiles"
 mkdir -p "$PROFILES_DIR"

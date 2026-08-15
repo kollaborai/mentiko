@@ -10,6 +10,15 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (2026) ---
   {
+    version: "v0.3.59",
+    date: "August 14, 2026",
+    title: "Scoped Cleanup Proof",
+    description:
+      "Every Linux engine integration suite now resolves its isolated PTY daemon through the same typed data-root, namespace, and organization scope used by runtime cleanup. Lifecycle, monitor recovery, concurrency caps, event fan-out, and standalone execution all exercise real terminal cleanup without hiding leaked capacity behind a second daemon.",
+    category: "fix",
+    docsHref: "/runs",
+  },
+  {
     version: "v0.3.58",
     date: "August 14, 2026",
     title: "Verified Nano Handoff Cleanup",

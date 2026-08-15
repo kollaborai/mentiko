@@ -43,6 +43,7 @@ set -uo pipefail
 # -------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+source "$SCRIPT_DIR/scoped-pty-daemon.sh"
 MENTIKO_BIN="$REPO_ROOT/bin/mentiko"
 RUN_LIB="$REPO_ROOT/lib/run-lib.sh"
 METRICS_LIB="$REPO_ROOT/lib/metrics.sh"
@@ -81,7 +82,7 @@ WORKSPACE="$TMP_ROOT/ws"
 STUB_LOG_HOME="$TMP_ROOT/stub-log-home"
 mkdir -p "$DATA_ROOT" "$WORKSPACE" "$STUB_LOG_HOME"
 
-PTY_DAEMON_NAME="mentiko-e2e-caps-$$-$RANDOM"
+PTY_DAEMON_NAME=""
 
 PTY_MGR_BIN=""
 if command -v pty-mgr >/dev/null 2>&1; then PTY_MGR_BIN="$(command -v pty-mgr)";
@@ -100,7 +101,10 @@ trap cleanup EXIT INT TERM
 
 export MENTIKO_GLOBAL_ROOT="$DATA_ROOT"
 export NAMESPACE_ID="default" ORG_ID="default"
-export PTY_DAEMON="$PTY_DAEMON_NAME"
+if ! configure_scoped_pty_daemon "$REPO_ROOT" "$MENTIKO_GLOBAL_ROOT" "$NAMESPACE_ID" "$ORG_ID"; then
+  printf '%sFATAL: unable to resolve scoped PTY daemon%s\n' "$C_RED" "$C_NC"
+  exit 2
+fi
 export STUB_CLI="$SCRIPT_DIR/fixtures/stub-agent-cli.sh"
 PROFILES_DIR="$DATA_ROOT/namespaces/default/agent-profiles"
 RUNS_DIR_REAL="$DATA_ROOT/namespaces/default/runs"
