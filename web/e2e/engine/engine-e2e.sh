@@ -67,8 +67,11 @@ STUB_LOG_HOME="$TMP_ROOT/stub-log-home"   # bogus, non-empty log_path for profil
 RUN_LOG_DIR="$TMP_ROOT/run-logs"
 mkdir -p "$DATA_ROOT" "$WORKSPACE" "$LOG_DIR" "$STUB_LOG_HOME" "$RUN_LOG_DIR"
 
-# unique pty daemon so we never collide with the developer's dev sessions.
-PTY_DAEMON_NAME="mentiko-e2e-engine-$$-$RANDOM"
+# The PTY daemon is resolved after the isolated data root is exported below.
+# It must use the same scoped derivation as typed cleanup; an arbitrary name
+# would launch sessions on one daemon and ask completion to remove them from
+# another.
+PTY_DAEMON_NAME=""
 
 # pty-mgr binary (the symlink bin/p points at it; resolve a usable one for cleanup).
 PTY_MGR_BIN=""
@@ -91,6 +94,19 @@ trap cleanup EXIT INT TERM
 # MENTIKO_GLOBAL_ROOT (the data-root var config.sh honours) at a temp dir.
 export MENTIKO_GLOBAL_ROOT="$DATA_ROOT"
 export NAMESPACE_ID="default" ORG_ID="default"
+PTY_DAEMON_NAME="$(
+  env -u PTY_DAEMON \
+    MENTIKO_CODE_ROOT="$REPO_ROOT" \
+    MENTIKO_GLOBAL_ROOT="$MENTIKO_GLOBAL_ROOT" \
+    NAMESPACE_ID="$NAMESPACE_ID" \
+    ORG_ID="$ORG_ID" \
+    node "$REPO_ROOT/lib/runner-runtime-paths.js" shell-exports \
+    | sed -n "s/^export PTY_DAEMON='\([^']*\)'$/\1/p"
+)"
+if [[ -z "$PTY_DAEMON_NAME" ]]; then
+  printf '%sFATAL: unable to resolve scoped PTY daemon%s\n' "$C_RED" "$C_NC"
+  exit 2
+fi
 export PTY_DAEMON="$PTY_DAEMON_NAME"
 export STUB_CLI="$SCRIPT_DIR/fixtures/stub-agent-cli.sh"
 PROFILES_DIR="$DATA_ROOT/namespaces/default/agent-profiles"

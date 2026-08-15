@@ -10,6 +10,15 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (2026) ---
   {
+    version: "v0.3.58",
+    date: "August 14, 2026",
+    title: "Verified Nano Handoff Cleanup",
+    description:
+      "The strict one-active-agent handoff fix now ships with a Linux lifecycle proof that uses the same data-root-scoped PTY daemon as production cleanup. The gate exercises successful handoffs, startup crashes, and quality-gate failures without leaking terminal ownership or exhausting agent capacity.",
+    category: "fix",
+    docsHref: "/runs",
+  },
+  {
     version: "v0.3.57",
     date: "August 14, 2026",
     title: "Strict Nano Handoff Capacity",
