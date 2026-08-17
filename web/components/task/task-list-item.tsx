@@ -136,11 +136,12 @@ function TaskOperationalMeta({
       {hasRecentRun && task.chainBinding?.last_run_id ? (
         <a
           href={`/runs?runId=${task.chainBinding.last_run_id}`}
-          className="inline-flex shrink-0 items-center gap-1 rounded-full bg-sky-500/10 px-2 py-0.5 text-sky-300 hover:bg-sky-500/15"
+          className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full bg-sky-500/10 px-2 py-0.5 text-sky-300 hover:bg-sky-500/15"
           onClick={(event) => event.stopPropagation()}
+          title={task.chainBinding.last_run_id}
         >
           <PlayFilled className="h-2.5 w-2.5" />
-          {task.chainBinding.last_run_id}
+          view run
         </a>
       ) : null}
       {needsRunReview && task.chainBinding?.last_run_id ? (
@@ -327,11 +328,12 @@ export function TaskListItem({
               {hasRecentRun && task.chainBinding?.last_run_id && (
                 <a
                   href={`/runs?runId=${task.chainBinding.last_run_id}`}
-                  className="inline-flex items-center gap-1 rounded-full bg-sky-500/10 px-2 py-0.5 text-sky-300 hover:bg-sky-500/15"
+                  className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full bg-sky-500/10 px-2 py-0.5 text-sky-300 hover:bg-sky-500/15"
                   onClick={(event) => event.stopPropagation()}
+                  title={task.chainBinding.last_run_id}
                 >
                   <PlayFilled className="h-2.5 w-2.5" />
-                  {task.chainBinding.last_run_id}
+                  view run
                 </a>
               )}
               {needsRunReview && task.chainBinding?.last_run_id && (
