@@ -1,0 +1,32 @@
+{
+  "name": "daily-digest",
+  "version": "1.0.0",
+  "description": "Dogfood chain. Reads today's git activity across ~/dev/platform sub-repos, groups by concern, writes a markdown digest. Runs daily on cron on the arch box. If it jams, we find the platform bug before a customer does.",
+  "config": {
+    "monitor": true,
+    "monitor_interval": 60,
+    "max_rounds": 1
+  },
+  "agents": [
+    {
+      "id": "collector",
+      "cli": "claude",
+      "task": "Run: for repo in mentiko mentiko-control-plane mentiko-www mentiko-marketplace mentiko-ai-gateway; do (cd ~/dev/platform/$repo && git log --since='24 hours ago' --oneline --all 2>/dev/null); done. Write the combined output to commits.txt. Then emit event commits-collected.",
+      "emits": "commits-collected"
+    },
+    {
+      "id": "grouper",
+      "cli": "claude",
+      "triggers": ["commits-collected"],
+      "task": "Read commits.txt. Group commits into buckets: feat, fix, chore, docs, test. Write groups.md with one section per bucket, bullets per commit. Emit grouped.",
+      "emits": "grouped"
+    },
+    {
+      "id": "writer",
+      "cli": "claude",
+      "triggers": ["grouped"],
+      "task": "Read groups.md. Write a 200-word narrative summary to digest.md: what shipped, what was fixed, what's in-flight. Prepend the date. Emit digest-ready.",
+      "emits": "digest-ready"
+    }
+  ]
+}

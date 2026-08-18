@@ -11,12 +11,18 @@ on:
         options:
           - qa
           - prod
+  workflow_run:
+    workflows: ["build mentiko platform"]
+    types: [completed]
+    branches: [main]
 
 jobs:
   smoke-test:
-    name: Smoke Test (${{ github.event.inputs.environment || 'dev' }})
+    name: Smoke Test (${{ github.event.inputs.environment || 'qa' }})
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # workflow_run fires even on failure — gate on success so we don't smoke a broken build
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
 
     steps:
       - name: Checkout
@@ -31,8 +37,8 @@ jobs:
         id: target
         run: |
           if [ "${{ github.event.inputs.environment }}" = "prod" ]; then
-            echo "url=https://app.example.com" >> $GITHUB_OUTPUT
-          elif [ "${{ github.event.inputs.environment }}" = "qa" ]; then
+            echo "url=https://app.mentiko.com" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event_name }}" = "workflow_run" ] || [ "${{ github.event.inputs.environment }}" = "qa" ]; then
             echo "url=https://qa.mentiko.com" >> $GITHUB_OUTPUT
           else
             echo "url=http://localhost:3000" >> $GITHUB_OUTPUT

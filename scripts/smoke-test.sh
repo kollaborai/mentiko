@@ -210,6 +210,130 @@ test_api_envelope() {
 }
 
 # ============================================================================
+# GOLDEN PATH TEST — the ship gate (see docs/GOLDEN_PATH.md)
+# ============================================================================
+# Posts the two-agent golden-path chain, starts a run, polls to completion,
+# asserts run.status == complete, both agents complete, draft.md contains
+# APPROVED on its last line.
+#
+# Gated by SMOKE_GOLDEN_PATH=1 until real API routes + auth token are wired.
+# ponytail: stub gated behind env var so shipping this doesn't break the
+# existing green while routes are being verified. flip on when SMOKE_AUTH_TOKEN
+# is set in secrets and the chain-run endpoints are confirmed.
+# ============================================================================
+
+test_golden_path() {
+    if [ "${SMOKE_GOLDEN_PATH:-0}" != "1" ]; then
+        log_warn "test_golden_path: skipped (set SMOKE_GOLDEN_PATH=1 to enable)"
+        WARNINGS=$((WARNINGS + 1))
+        return 0
+    fi
+
+    log_info "Golden path: submitting chain..."
+
+    local auth_token="${SMOKE_AUTH_TOKEN:-}"
+    if [ -z "$auth_token" ]; then
+        log_error "SMOKE_AUTH_TOKEN required for golden path (mint via /account/api-keys or reuse session)"
+        FAILED=$((FAILED + 1))
+        return 1
+    fi
+
+    local chain_file
+    chain_file="$(dirname "$0")/golden-path-chain.json"
+    if [ ! -f "$chain_file" ]; then
+        log_error "chain file missing: $chain_file"
+        FAILED=$((FAILED + 1))
+        return 1
+    fi
+
+    local chain_body
+    chain_body=$(cat "$chain_file")
+
+    # 1) submit chain + start run
+    local start_resp
+    start_resp=$(curl -sS -w "\n%{http_code}" \
+        -X POST "${SMOKE_BASE_URL}/api/runs" \
+        -H "Authorization: Bearer $auth_token" \
+        -H "Content-Type: application/json" \
+        -d "{\"chain\": $chain_body, \"goal\": \"golden-path smoke\"}" 2>&1)
+    local start_code
+    start_code=$(echo "$start_resp" | tail -n1)
+    local start_body
+    start_body=$(echo "$start_resp" | sed '$d')
+    echo "$start_body" > "${SMOKE_OUTPUT_DIR}/golden_start.json"
+
+    if [ "$start_code" != "200" ] && [ "$start_code" != "201" ]; then
+        log_error "Golden path: start returned $start_code"
+        FAILED=$((FAILED + 1))
+        return 1
+    fi
+
+    local run_id
+    run_id=$(echo "$start_body" | jq -r '.runId // .id // .run.id // empty')
+    if [ -z "$run_id" ]; then
+        log_error "Golden path: no runId in response"
+        FAILED=$((FAILED + 1))
+        return 1
+    fi
+    log_success "Golden path: run started ($run_id)"
+
+    # 2) poll for completion (180s budget)
+    local deadline=$((START_TIME + 180))
+    local status="unknown"
+    while [ "$(date +%s)" -lt "$deadline" ]; do
+        local poll_resp
+        poll_resp=$(curl -sS "${SMOKE_BASE_URL}/api/runs/${run_id}" \
+            -H "Authorization: Bearer $auth_token" 2>&1)
+        echo "$poll_resp" > "${SMOKE_OUTPUT_DIR}/golden_poll.json"
+        status=$(echo "$poll_resp" | jq -r '.status // .run.status // "unknown"')
+        case "$status" in
+            complete|completed|success) break ;;
+            failed|error|cancelled) log_error "Golden path: run terminal-failed ($status)"; FAILED=$((FAILED + 1)); return 1 ;;
+        esac
+        sleep 3
+    done
+
+    if [ "$status" != "complete" ] && [ "$status" != "completed" ] && [ "$status" != "success" ]; then
+        log_error "Golden path: timed out (status=$status after 180s)"
+        FAILED=$((FAILED + 1))
+        return 1
+    fi
+    log_success "Golden path: run terminal ($status)"
+
+    # 3) verify both agents complete + reviewed event present
+    local writer_status reviewer_status
+    writer_status=$(echo "$poll_resp" | jq -r '(.agents // .run.agents)[] | select(.id=="writer") | .status // empty')
+    reviewer_status=$(echo "$poll_resp" | jq -r '(.agents // .run.agents)[] | select(.id=="reviewer") | .status // empty')
+
+    if [ "$writer_status" != "complete" ]; then
+        log_error "Golden path: writer status=$writer_status (want complete)"
+        FAILED=$((FAILED + 1))
+        return 1
+    fi
+    if [ "$reviewer_status" != "complete" ]; then
+        log_error "Golden path: reviewer status=$reviewer_status (want complete)"
+        FAILED=$((FAILED + 1))
+        return 1
+    fi
+    log_success "Golden path: writer + reviewer both complete"
+
+    # 4) draft.md artifact contains APPROVED
+    local artifact_resp
+    artifact_resp=$(curl -sS "${SMOKE_BASE_URL}/api/runs/${run_id}/artifacts/draft.md" \
+        -H "Authorization: Bearer $auth_token" 2>&1)
+    echo "$artifact_resp" > "${SMOKE_OUTPUT_DIR}/golden_draft.md"
+
+    if ! echo "$artifact_resp" | tail -n1 | grep -q "APPROVED"; then
+        log_error "Golden path: draft.md missing APPROVED on last line"
+        FAILED=$((FAILED + 1))
+        return 1
+    fi
+    log_success "Golden path: draft.md contains APPROVED"
+
+    return 0
+}
+
+# ============================================================================
 # PUPPETEER UI TESTS
 # ============================================================================
 
@@ -447,6 +571,7 @@ main() {
     test_api_envelope
     test_ui_pages
     test_authenticated_api
+    test_golden_path
 
     # Calculate elapsed time
     local end_time

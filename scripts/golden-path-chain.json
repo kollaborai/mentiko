@@ -1,0 +1,25 @@
+{
+  "name": "golden-path",
+  "version": "1.0.0",
+  "description": "Post-deploy smoke chain. Two agents, one handoff, one artifact.",
+  "config": {
+    "monitor": true,
+    "monitor_interval": 30,
+    "max_rounds": 1
+  },
+  "agents": [
+    {
+      "id": "writer",
+      "cli": "claude",
+      "task": "Write a 3-sentence markdown blurb about canary run to draft.md, then emit event draft-ready.",
+      "emits": "draft-ready"
+    },
+    {
+      "id": "reviewer",
+      "cli": "claude",
+      "triggers": ["draft-ready"],
+      "task": "Read draft.md. Append a single line 'APPROVED' at the end. Emit event reviewed.",
+      "emits": "reviewed"
+    }
+  ]
+}
