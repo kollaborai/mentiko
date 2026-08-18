@@ -11,14 +11,6 @@
  * esbuild, so this module must not reach into config, storage, or secrets.
  */
 
-/**
- * Claude Code accepts `--dangerously-skip-permissions` as the explicit
- * non-interactive bypass. Older Mentiko profiles stored the two-flag
- * `--allow-dangerously-skip-permissions --permission-mode bypassPermissions`
- * form, which Claude 2.1.129 gates behind a first-run consent screen. Normalize
- * both forms to the direct flag so autonomous PTY launches cannot stop at that
- * modal.
- */
 export function normalizePermissionFlag(cli: string, permissionFlag: string | undefined): string | undefined {
   if (
     cli === "claude"

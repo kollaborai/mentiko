@@ -267,7 +267,16 @@ export function runRunnerV2CompletionEntrypoint(
     attemptId: completionAttempt.id,
     loopRound: readLoopState(runDir).round,
   });
-  const qualityGate = maybeHandleQualityGateFailure({
+  // A decision core-chain run whose phase artifact (decision-result.json) is on
+  // disk delivers via the decision-terminal path in completion-runner: it
+  // completes the run and fires the server-side import even though the agent's
+  // in-PTY `mentiko decision import` 401s (the PTY env excludes the derived token
+  // by design, so the agent self-reports "blocked"). That real deliverable must
+  // not be discarded by the quality gate keying off the "blocked" summary, so
+  // when a decision deliverable is present skip the gate and let the pipeline's
+  // decision-terminal path complete it. Reused as `decision:` in the pipeline.
+  const decisionPlan = decisionCompletionPlan(run, runDir, agent.id);
+  const qualityGate = decisionPlan ? null : maybeHandleQualityGateFailure({
     run,
     runDir,
     runJsonPath,
@@ -342,7 +351,7 @@ export function runRunnerV2CompletionEntrypoint(
       now: input.now,
       terminal,
       generation: generationImportPlan(run, runDir, agent.id, env),
-      decision: decisionCompletionPlan(run, runDir, agent.id),
+      decision: decisionPlan,
       completionRecoveryEvidence: monitorCompletionRecoveryEvidence(env),
       fanGroup,
       liveness,
@@ -514,7 +523,7 @@ export function runRunnerV2CompletionEntrypoint(
       maybeTriggerDecisionImportOnCompletion({
         namespaceId: env.NAMESPACE_ID || "default",
         orgId: env.ORG_ID || "default",
-        metadata: run.metadata,
+        run,
         runId,
         runDir,
         webUrl: env.MENTIKO_WEB_URL,
@@ -922,28 +931,24 @@ function runBecameCompletedInPlan(plan: TypedExecutorPlan): boolean {
 function maybeTriggerDecisionImportOnCompletion(input: {
   namespaceId: string;
   orgId: string;
-  metadata: RunRecord["metadata"];
+  run: RunRecord;
   runId: string;
   runDir: string;
   webUrl?: string;
 }): void {
-  const decisionId = typeof input.metadata?.decisionId === "string" ? input.metadata.decisionId : undefined;
-  const phase = typeof input.metadata?.decisionPhase === "string" ? input.metadata.decisionPhase : undefined;
-  if (!decisionId || !phase) return;
+  const identity = resolveDecisionIdentity(input.run);
+  if (!identity) return;
   if (!existsSync(join(input.runDir, "artifacts", "decision-result.json"))) return;
 
-  const selectedOptionId = typeof input.metadata?.selectedOptionId === "string"
-    ? input.metadata.selectedOptionId
-    : undefined;
-  const workspacePath = typeof input.metadata?.workspacePath === "string"
-    ? input.metadata.workspacePath
-    : undefined;
+  const metadata = objectValue(input.run.metadata);
+  const selectedOptionId = stringValue(metadata?.selectedOptionId);
+  const workspacePath = stringValue(metadata?.workspacePath);
 
   triggerDecisionImportReplay({
     namespaceId: input.namespaceId,
     orgId: input.orgId,
-    decisionId,
-    phase,
+    decisionId: identity.decisionId,
+    phase: identity.phase,
     runId: input.runId,
     workspacePath,
     selectedOptionId,
@@ -1181,28 +1186,56 @@ function hasImportableGenerationPayload(input: {
 }
 
 /**
+ * Parse a leading `KEY: value` line out of a run goal. decision-chain-dispatch.ts
+ * writes `DECISION_ID:`/`DECISION_PHASE:` as the first goal lines, so a relaunch
+ * or recovery that rebuilds run.json with an empty metadata object still exposes
+ * the decision identity here.
+ */
+function goalField(goal: string | undefined, key: string): string {
+  if (!goal) return "";
+  for (const line of goal.split("\n")) {
+    const idx = line.indexOf(":");
+    if (idx > 0 && line.slice(0, idx).trim() === key) return line.slice(idx + 1).trim();
+  }
+  return "";
+}
+
+/**
+ * Resolve a decision run's identity from run.metadata, falling back to run.goal.
+ * Shared by decisionCompletionPlan (the completeAgent decision-terminal gate) and
+ * maybeTriggerDecisionImportOnCompletion (the post-completion import) so the two
+ * doors can never disagree about whether a run is an importable decision phase.
+ */
+function resolveDecisionIdentity(run: RunRecord): { decisionId: string; phase: string } | undefined {
+  const metadata = objectValue(run.metadata);
+  const decisionId = stringValue(metadata?.decisionId) || goalField(run.goal, "DECISION_ID");
+  const phase = stringValue(metadata?.decisionPhase) || goalField(run.goal, "DECISION_PHASE");
+  if (!decisionId || !phase) return undefined;
+  return { decisionId, phase };
+}
+
+/**
  * Decision-phase counterpart to generationImportPlan (C3).
  *
  * A decision core-chain run's real deliverable is `artifacts/decision-result.json`.
  * The `mentiko decision import` CLI call that applies it is the LAST thing the
- * agent does, and four runs died exactly there: valid artifact on disk, valid
- * run-scoped import token, and a failed run because the model flubbed the final
- * command. Completion must own that, with the CLI as an accelerant.
+ * agent does, and runs died exactly there: valid artifact on disk and a failed
+ * run because the in-PTY CLI import 401s (the agent env excludes the derived
+ * token by design). Completion must own the import, with the CLI as an accelerant.
  *
- * Same identity discipline as the generation side — decision id, phase, the
- * run-scoped token chain-run-service wrote, and an artifact written after this
- * attempt started. A filename alone is never authoritative.
+ * Identity comes from run.metadata or, for a lost-metadata relaunch, run.goal.
+ * The run-scoped token file is NOT required: triggerDecisionImportReplay recomputes
+ * the derived decision-import secret in-process when it is absent
+ * (decision-auto-advance.ts). Only the identity and a real, post-attempt artifact
+ * are load-bearing — a filename alone is never authoritative.
  */
 function decisionCompletionPlan(
   run: RunRecord,
   runDir: string,
   agentId: string,
 ): { decisionId: string; phase: string; artifactPath: string } | undefined {
-  const metadata = objectValue(run.metadata);
-  const decisionId = stringValue(metadata?.decisionId);
-  const phase = stringValue(metadata?.decisionPhase);
-  if (!decisionId || !phase) return undefined;
-  if (!existsSync(join(runDir, ".internal", "decision-import-token"))) return undefined;
+  const identity = resolveDecisionIdentity(run);
+  if (!identity) return undefined;
 
   const artifactPath = join(runDir, "artifacts", "decision-result.json");
   if (!existsSync(artifactPath)) return undefined;
@@ -1219,7 +1252,7 @@ function decisionCompletionPlan(
     return undefined;
   }
 
-  return { decisionId, phase, artifactPath };
+  return { decisionId: identity.decisionId, phase: identity.phase, artifactPath };
 }
 
 function generationArtifactNotBeforeMs(run: RunRecord, agentId: string): number | undefined {
