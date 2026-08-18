@@ -16,7 +16,7 @@ import {
   withExclusiveFileClaim,
 } from "@/lib/runner-v2/file-claim";
 
-const childFixture = join(__dirname, "test-support", "file-claim-child.fixture.ts");
+const childFixture = join(__dirname, "..", "test-support", "file-claim-child.fixture.ts");
 const jestBin = join(process.cwd(), "node_modules", "jest", "bin", "jest.js");
 const fixtureChildren = new Set<ChildProcess>();
 

@@ -10,7 +10,7 @@
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, utimesSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { withRunJsonLock, writeRunJsonAtomic } from "./run-json-lock";
+import { withRunJsonLock, writeRunJsonAtomic } from "../run-json-lock";
 
 function makeRunJson(initial: unknown = { id: "run-1", status: "running", agents: [] }): string {
   const dir = mkdtempSync(join(tmpdir(), "mentiko-runjson-lock-"));
@@ -141,7 +141,7 @@ describe("withRunJsonLock", () => {
     process.env.RUN_LOCK_WAIT_SECS = "0";
     jest.resetModules();
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { withRunJsonLock: lockFresh } = require("./run-json-lock") as typeof import("./run-json-lock");
+    const { withRunJsonLock: lockFresh } = require("../run-json-lock") as typeof import("../run-json-lock");
     const path = makeRunJson();
     const lockDir = `${path}.lock`;
     const claimDir = `${lockDir}.takeover`;
@@ -167,7 +167,7 @@ describe("withRunJsonLock", () => {
     process.env.RUN_LOCK_WAIT_SECS = "0";
     jest.resetModules();
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { withRunJsonLock: lockFresh } = require("./run-json-lock") as typeof import("./run-json-lock");
+    const { withRunJsonLock: lockFresh } = require("../run-json-lock") as typeof import("../run-json-lock");
 
     const path = makeRunJson();
     const lockDir = `${path}.lock`;
@@ -231,7 +231,7 @@ describe("withRunJsonLock", () => {
     process.env.RUN_LOCK_WAIT_SECS = "0";
     jest.resetModules();
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { withRunJsonLock: lockFresh } = require("./run-json-lock") as typeof import("./run-json-lock");
+    const { withRunJsonLock: lockFresh } = require("../run-json-lock") as typeof import("../run-json-lock");
 
     const path = makeRunJson();
     const lockDir = `${path}.lock`;

@@ -10,7 +10,7 @@ import {
   taskContextEnvironment,
   validateRawTaskEnvelope,
   writeTaskContextEnv,
-} from "./task-context";
+} from "../task-context";
 
 function response(body: string, status = 200): Response {
   return {

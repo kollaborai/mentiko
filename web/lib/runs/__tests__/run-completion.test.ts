@@ -5,7 +5,7 @@
 import { mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { allDeclaredAgentsComplete, latestAgentCompletion } from "./run-completion";
+import { allDeclaredAgentsComplete, latestAgentCompletion } from "../run-completion";
 
 function makeRunDir(chainAgents: Array<{ id?: string; $ref?: string }>) {
   const runDir = mkdtempSync(join(tmpdir(), "mentiko-run-completion-"));

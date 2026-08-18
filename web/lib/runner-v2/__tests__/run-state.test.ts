@@ -8,7 +8,7 @@ import {
   updateRunAgent,
   updateRunJson,
   updateRunStatus,
-} from "./run-state";
+} from "../run-state";
 
 describe("runner-v2 run-state", () => {
   function runPath() {

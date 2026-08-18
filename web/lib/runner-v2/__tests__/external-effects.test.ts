@@ -54,6 +54,7 @@ function writeOutbox(dir: string, records: unknown[]) {
 
 const externalEffectsChildFixture = join(
   __dirname,
+  "..",
   "test-support",
   "external-effects-child.fixture.ts",
 );

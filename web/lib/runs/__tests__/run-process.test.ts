@@ -20,10 +20,10 @@ describe("run-scoped chain-runner process identity", () => {
       "web/app/api/runs/[id]/stop/route.ts",
       "web/app/api/runs/[id]/resume/route.ts",
     ]) {
-      const source = readFileSync(new URL(`../../../${route}`, import.meta.url), "utf8");
+      const source = readFileSync(new URL(`../../../../${route}`, import.meta.url), "utf8");
       expect(source).toContain("terminateRunProcess(runId)");
     }
-    const resumeSource = readFileSync(new URL("../../../web/app/api/runs/[id]/resume/route.ts", import.meta.url), "utf8");
+    const resumeSource = readFileSync(new URL("../../../../web/app/api/runs/[id]/resume/route.ts", import.meta.url), "utf8");
     expect(resumeSource).toContain("delete run.blockedAt");
     expect(resumeSource).toContain("delete run.status_message");
   });

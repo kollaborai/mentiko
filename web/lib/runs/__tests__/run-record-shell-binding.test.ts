@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { sweepGdprUserData } from "@/lib/runs/gdpr-user-sweep";
 
-const codeRoot = resolve(__dirname, "../../..");
+const codeRoot = resolve(__dirname, "../../../..");
 const webRoot = join(codeRoot, "web");
 const compiledRunRecord = join(codeRoot, "lib", "runner-run-record.js");
 const sourceRunRecord = join(webRoot, "lib", "runner-v2", "run-record-cli.ts");

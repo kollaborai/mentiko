@@ -11,7 +11,7 @@ import {
   runnerAgentStateKey,
   runnerAgentStatePath,
   transitionRunnerAgentState,
-} from "./agent-state";
+} from "../agent-state";
 
 describe("runner agent state", () => {
   it("uses one normalized TypeScript-owned key for every caller", () => {

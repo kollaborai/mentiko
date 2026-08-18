@@ -29,7 +29,7 @@ import {
   buildLocalAiGatewayProxyEnv,
   resolveJobRunnerRoots,
   resolveJobWorkspaceCwd,
-} from "./job-runner-launch";
+} from "../job-runner-launch";
 import { resolveInternalAuthSecret } from "@/lib/auth/internal-api-auth";
 
 describe("job-runner-launch", () => {

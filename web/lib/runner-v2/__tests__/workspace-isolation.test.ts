@@ -15,8 +15,8 @@ import {
   publishGitRunWorkspaceResult,
   readGitNodeIntegrationResult,
   removeIntegratedGitNodeWorkspace,
-} from "./workspace-isolation";
-import { captureGitWorkspaceSnapshot } from "./workspace-snapshot";
+} from "../workspace-isolation";
+import { captureGitWorkspaceSnapshot } from "../workspace-snapshot";
 
 function git(cwd: string, ...args: string[]): string {
   return execFileSync("git", args, {

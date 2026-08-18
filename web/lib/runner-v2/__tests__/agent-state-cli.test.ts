@@ -1,7 +1,7 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runRunnerAgentStateCli } from "./agent-state-cli";
+import { runRunnerAgentStateCli } from "../agent-state-cli";
 
 describe("runner agent state CLI", () => {
   it("exposes only named typed operations", () => {

@@ -3,7 +3,7 @@
 import { mkdtempSync, readFileSync, realpathSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { configuredRunsDir, runRunRecordCli } from "./run-record-cli";
+import { configuredRunsDir, runRunRecordCli } from "../run-record-cli";
 
 describe("runner run record CLI", () => {
   it("requires one canonical explicit configured runs root", () => {

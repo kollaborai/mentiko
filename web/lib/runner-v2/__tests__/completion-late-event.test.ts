@@ -207,7 +207,7 @@ function runRecoveryChild(
       String(holdMs),
       commitMarkerPath,
     ], {
-      cwd: join(__dirname, "../.."),
+      cwd: join(__dirname, "../../.."),
       env: {
         ...process.env,
         TS_NODE_BASEURL: ".",
@@ -251,7 +251,7 @@ function runDeliveryChild(
       String(holdMs),
       ...(deadClaimGraceMs === undefined ? [] : [String(deadClaimGraceMs)]),
     ], {
-      cwd: join(__dirname, "../.."),
+      cwd: join(__dirname, "../../.."),
       env: {
         ...process.env,
         TS_NODE_BASEURL: ".",

@@ -9,7 +9,7 @@ import { join } from "node:path";
 import {
   captureGitWorkspaceSnapshot,
   compareGitWorkspaceSnapshots,
-} from "./workspace-snapshot";
+} from "../workspace-snapshot";
 
 function git(cwd: string, ...args: string[]): string {
   return execFileSync("git", args, {

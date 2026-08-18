@@ -10,7 +10,7 @@ import {
   parseSemver,
   rollback,
   versionPath,
-} from "./version-control";
+} from "../version-control";
 
 describe("typed chain version contract", () => {
   let root: string;

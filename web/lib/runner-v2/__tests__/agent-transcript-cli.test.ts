@@ -1,7 +1,7 @@
 import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runRunnerAgentTranscriptCli } from "./agent-transcript-cli";
+import { runRunnerAgentTranscriptCli } from "../agent-transcript-cli";
 
 const DECOY = "11111111-1111-4111-8111-111111111111";
 const REAL = "22222222-2222-4222-8222-222222222222";

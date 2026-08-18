@@ -13,8 +13,8 @@ import { join } from "node:path";
 // the shell boundary lib/slack-integration.sh no longer parses JSON or builds a
 // payload — it only forwards to the typed owner.
 
-const modulePath = fileURLToPath(new URL("../../../lib/slack-notification.mjs", import.meta.url));
-const shellPath = fileURLToPath(new URL("../../../lib/slack-integration.sh", import.meta.url));
+const modulePath = fileURLToPath(new URL("../../../../lib/slack-notification.mjs", import.meta.url));
+const shellPath = fileURLToPath(new URL("../../../../lib/slack-integration.sh", import.meta.url));
 
 async function loadModule() {
   return import(modulePath);

@@ -18,7 +18,7 @@ import {
   validateRunRecord,
   type RunRecord,
   type RunStatus,
-} from "./run-record";
+} from "../run-record";
 
 function record(overrides: Partial<RunRecord> = {}): RunRecord {
   return {
@@ -141,7 +141,7 @@ describe("run record validation", () => {
     const schemaSchemaDir = join(schemaDir, "schemas");
     mkdirSync(schemaSchemaDir, { recursive: true });
     const schemaPath = join(schemaSchemaDir, "run.schema.json");
-    const sourceSchemaPath = join(__dirname, "../../../lib/schemas/run.schema.json");
+    const sourceSchemaPath = join(__dirname, "../../../../lib/schemas/run.schema.json");
     const schema = JSON.parse(readFileSync(sourceSchemaPath, "utf8")) as {
       definitions: { agentAttempt: { properties: Record<string, unknown> } };
     };

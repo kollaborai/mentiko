@@ -1,4 +1,4 @@
-import { mergeAgentStates } from "./run-state";
+import { mergeAgentStates } from "../run-state";
 
 describe("mergeAgentStates", () => {
   it("overlays blocked state from live agent state files", () => {
