@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { checkAuth } from "@/lib/auth/api-auth";
+import { getSessionUser } from "@/lib/auth/auth-bridge";
 import { getNamespaceIdFromRequest } from "@/lib/namespace-config";
 import {
   loadOrg,
@@ -20,6 +21,11 @@ type RouteCtx = { params: Promise<{ id: string }> };
 export const POST = withErrorHandling(
   async (request: NextRequest, context: RouteCtx) => {
     if (!(await checkAuth(request))) {
+      throw new Unauthorized();
+    }
+
+    const sessionUser = await getSessionUser(request);
+    if (!sessionUser) {
       throw new Unauthorized();
     }
 
@@ -75,7 +81,7 @@ export const POST = withErrorHandling(
       token,
       createdAt: now,
       expiresAt,
-      invitedBy: "user", // TODO: get from auth session
+      invitedBy: sessionUser.id,
       status: "pending",
     };
 

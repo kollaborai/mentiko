@@ -352,7 +352,7 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
         id: "typed-event-archive-receipt",
         label: "Typed pre-launch file-generation identity, exact raw/normalized/archive hash proof, and consume-last crash retry",
         owner: "runner-v2",
-        paths: ["web/lib/runner-v2/event-lifecycle.ts", "web/lib/runner-v2/event-lifecycle.test.ts"],
+        paths: ["web/lib/runner-v2/event-lifecycle.ts", "web/lib/runner-v2/__tests__/event-lifecycle.test.ts"],
       },
     ],
   },

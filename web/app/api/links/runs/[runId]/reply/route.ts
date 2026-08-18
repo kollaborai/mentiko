@@ -71,7 +71,5 @@ export const POST = withErrorHandling(async (
   run.status = "running";
   writeFileSync(runPath, JSON.stringify(run, null, 2));
 
-  // TODO: telegram notification once we store telegram_chat_id in runs
-
   return apiSuccess({ ok: true });
 });

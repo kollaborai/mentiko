@@ -71,13 +71,15 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   // pty-manager runs as mentiko, which has NOPASSWD sudo
   const linuxUser = sessionUser?.linuxUsername;
 
-  // VPS deployments require linuxUsername for isolation
-  // local dev can use fallback (shared account acceptable for single-user dev)
+  // VPS deployments require linuxUsername for per-user isolation. Without it,
+  // the spawned shell inherits the shared `mentiko` account (which has NOPASSWD
+  // sudo) and any interactive command runs across the tenant's trust boundary.
+  // local dev can use fallback (shared account acceptable for single-user dev).
   const isVps = process.env.NODE_ENV === "production";
   if (isVps && !linuxUser) {
-    // TODO: enforce once linuxUsername is populated for all users
-    // for now, allow with warning for backwards compatibility
-    console.warn(`[terminal/spawn] VPS spawn without linuxUsername for user ${sessionUser?.id}. This will be enforced in future.`);
+    throw new Forbidden(
+      "linux user account not provisioned for this account; contact admin to backfill linux_username",
+    );
   }
 
   const spawnCmd = linuxUser ? "sudo" : shellName;

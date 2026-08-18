@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { checkAuth } from "@/lib/auth/api-auth";
+import { getSessionUser } from "@/lib/auth/auth-bridge";
 import { getNamespaceIdFromRequest } from "@/lib/namespace-config";
 import { loadOrg, loadInvites, saveInvites, orgMatchesId } from "@/lib/orgs/org-storage";
 import { Unauthorized, NotFound, BadRequest, Conflict } from "@/lib/api-errors";
@@ -33,6 +34,11 @@ export const GET = withErrorHandling(
 export const POST = withErrorHandling(
   async (request: NextRequest, context: RouteCtx) => {
     if (!(await checkAuth(request))) {
+      throw new Unauthorized();
+    }
+
+    const sessionUser = await getSessionUser(request);
+    if (!sessionUser) {
       throw new Unauthorized();
     }
 
@@ -74,7 +80,7 @@ export const POST = withErrorHandling(
       status: "pending" as const,
       createdAt: new Date().toISOString(),
       expiresAt: expiresAt.toISOString(),
-      invitedBy: "current-user",
+      invitedBy: sessionUser.id,
     };
 
     invites.push(newInvite);
