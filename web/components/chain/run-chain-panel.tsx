@@ -584,8 +584,15 @@ export function RunChainPanel({ chainId, onClose }: { chainId: string; onClose: 
     }) || "");
   }, [chain, selectedWorkspaceDefaultProfileId, profiles]);
 
-  const { connected, events, sessionStatus, chainComplete } = useEventStream(run?.id || null);
+  const { connected, events, sessionStatus, chainComplete, newEvents, clearNewEvents } = useEventStream(run?.id || null);
   useRunNotifications(run?.id || null);
+
+  // clear the "new events" indicator once the user views the events tab
+  useEffect(() => {
+    if (activeTab === "events" && newEvents.length > 0) {
+      clearNewEvents();
+    }
+  }, [activeTab, newEvents.length, clearNewEvents]);
 
   // update run status when chain completes
   useEffect(() => {
@@ -858,6 +865,11 @@ export function RunChainPanel({ chainId, onClose }: { chainId: string; onClose: 
                   <Badge variant="secondary" className="ml-1.5 h-4 px-1 text-[10px]">
                     {chainEvents.length}
                   </Badge>
+                  {newEvents.length > 0 ? (
+                    <Badge className="ml-1 h-4 px-1 text-[10px]">
+                      +{newEvents.length}
+                    </Badge>
+                  ) : null}
                 </TabsTrigger>
                 <TabsTrigger
                   value="metrics"

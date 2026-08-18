@@ -40,6 +40,7 @@ export function useEventStream(runId: string | null) {
       setChainComplete(false);
       setSessionStatus({});
       setEvents([]);
+      setNewEvents([]);
     });
 
     const connect = () => {
