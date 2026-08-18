@@ -353,10 +353,6 @@ export default function RunDetailPage() {
     copyToClipboard(output);
   };
 
-  const handleRetryAgent = async (_agentId: string) => {
-    // TODO: implement retry logic
-  };
-
   const handleApplyEventArtifact = async (executionId: string) => {
     if (!run?.taskId) {
       setEventArtifactError("run has no task id");
@@ -581,20 +577,6 @@ export default function RunDetailPage() {
                             <span className="text-[10px] text-foreground/40 font-mono">
                               {formatDuration(agent.started, agent.completed)}
                             </span>
-                            {agent.status === "error" && (
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                className="h-6 text-[9px]"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleRetryAgent(agent.id);
-                                }}
-                              >
-                                <RotateCcw className="h-3 w-3 mr-1" />
-                                retry
-                              </Button>
-                            )}
                           </div>
                         </div>
                         {timeline.length > 2 && !isExpanded && (
