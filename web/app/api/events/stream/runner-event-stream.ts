@@ -21,6 +21,24 @@ export function runnerEventBelongsToStream(event: RunnerEventStreamFile, runId: 
   return event.runId === runId;
 }
 
+/**
+ * A runner agent .state record belongs to a stream when its durable session key
+ * carries the stream's runId. stateDir is the shared execution root (every org's
+ * agents), so the SSE watcher must scope broadcasts through this. Matches the
+ * session-includes-runId filter in readRunnerAgentStateDirectory.
+ */
+export function runnerStateBelongsToStream(state: { session: string }, runId: string): boolean {
+  return state.session.includes(runId);
+}
+
+/**
+ * A job belongs to a stream when it IS the subscribed job (job-id mode) or is
+ * owned by the subscribed run (run-id mode). jobsDir is shared across orgs.
+ */
+export function jobBelongsToStream(jobId: string, job: { runId?: string }, runId: string): boolean {
+  return jobId === runId || job.runId === runId;
+}
+
 export function parseRunnerEventStreamFile(
   filename: string,
   content: string,

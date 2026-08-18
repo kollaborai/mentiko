@@ -3,8 +3,15 @@ import { randomBytes } from "node:crypto";
 import { watch, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import config from "@/lib/config";
-import { checkAuth } from "@/lib/auth/api-auth";
-import { parseRunnerEventStreamFile, runnerEventBelongsToStream } from "./runner-event-stream";
+import { checkRunAccess } from "@/lib/auth/run-acl";
+import { getSessionUser } from "@/lib/auth/auth-bridge";
+import { readJobRecord } from "@/lib/runs/job-record";
+import {
+  parseRunnerEventStreamFile,
+  runnerEventBelongsToStream,
+  runnerStateBelongsToStream,
+  jobBelongsToStream,
+} from "./runner-event-stream";
 import { readRunnerAgentState, type RunnerAgentState } from "@/lib/runner-v2/agent-state";
 
 export const dynamic = "force-dynamic";
@@ -87,6 +94,9 @@ function setupWatchers(streamId: string): () => void {
       try {
         const newState = readRunnerAgentState(filePath);
         if (!newState) return;
+        // Only this stream's run. stateDir is the shared execution root — it holds
+        // every org's agent .state files — so an unscoped broadcast leaks them all.
+        if (!runnerStateBelongsToStream(newState, current.runId)) return;
         const oldState = current.lastStates.get(filename);
 
         if (!oldState ||
@@ -165,6 +175,8 @@ function setupWatchers(streamId: string): () => void {
         try {
           const content = readFileSync(jobPath, "utf-8");
           const job = JSON.parse(content);
+          // Only this stream's target. jobsDir is shared across every org.
+          if (!jobBelongsToStream(jobId, job, current.runId)) return;
           const lastStatus = current.lastJobStatus.get(jobId);
 
           if (!lastStatus || job.status !== lastStatus) {
@@ -195,16 +207,50 @@ function setupWatchers(streamId: string): () => void {
   };
 }
 
-export async function GET(request: NextRequest) {
-  if (!(await checkAuth(request))) {
-    return new Response("Unauthorized", { status: 401 });
-  }
+/**
+ * A stream may only be opened by someone who can read its target. checkAuth
+ * alone == "any logged-in user", and the watchers above trust the caller's id,
+ * so without this a tenant could subscribe to another org's run/job.
+ *
+ * run-not-found is allowed on purpose: the id names nothing yet (a just-started
+ * run whose record hasn't landed), so there is nothing to leak and failing
+ * closed would break the subscribe-on-start race. "denied" (exists, not yours)
+ * is blocked.
+ */
+async function canReadRun(request: Request, runId: string): Promise<boolean> {
+  const res = await checkRunAccess(request, runId);
+  return res.ok || res.reason === "run-not-found";
+}
 
+async function authorizeJobStream(request: Request, jobId: string): Promise<boolean> {
+  const session = await getSessionUser(request);
+  if (!session?.id) return false;
+  let job;
+  try {
+    job = readJobRecord(config.jobsDir, jobId);
+  } catch {
+    return false; // malformed job id
+  }
+  if (!job) return true; // not created yet — the scoped watcher limits exposure to this exact id
+  if (job.runId) return canReadRun(request, job.runId);
+  return job.createdBy === session.id;
+}
+
+export async function GET(request: NextRequest) {
   const url = new URL(request.url);
-  const runId = url.searchParams.get("run-id") || url.searchParams.get("job-id") || "";
+  const runIdParam = url.searchParams.get("run-id");
+  const jobIdParam = url.searchParams.get("job-id");
+  const runId = runIdParam || jobIdParam || "";
 
   if (!runId) {
     return new Response("run-id or job-id required", { status: 400 });
+  }
+
+  const authorized = runIdParam
+    ? await canReadRun(request, runIdParam)
+    : await authorizeJobStream(request, jobIdParam as string);
+  if (!authorized) {
+    return new Response("Unauthorized", { status: 401 });
   }
 
   const streamId = randomBytes(16).toString("hex");
