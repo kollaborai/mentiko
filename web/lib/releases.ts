@@ -10,6 +10,15 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (2026) ---
   {
+    version: "v0.3.61",
+    date: "August 17, 2026",
+    title: "Server-Owned Decision Delivery",
+    description:
+      "Guided decision runs now deliver their generated options through the platform even when the agent's in-run import command cannot authenticate. Completion imports the decision directly from the run's own result artifact and recovers the decision identity from the run goal when run metadata is absent, so a valid set of options always reaches the human selection gate instead of parking the run as blocked and stalling every task behind it.",
+    category: "fix",
+    docsHref: "/docs/decisions",
+  },
+  {
     version: "v0.3.60",
     date: "August 14, 2026",
     title: "Production Agent Cap Enforcement",
@@ -763,7 +772,7 @@ export const releases: Release[] = [
 
 // The build tag is tracked separately from the user-facing update feed.
 // Do not add an update card solely for internal release work.
-export const CURRENT_RELEASE_VERSION = "v0.3.60";
+export const CURRENT_RELEASE_VERSION = "v0.3.61";
 export const LATEST_VERSION = releases[0].version;
 export const UPDATES_STORAGE_KEY = "mentiko-last-seen-version";
 
