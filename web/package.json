@@ -10,6 +10,7 @@
     "dev:next": "next dev",
     "build": "next build --webpack",
     "build:analyze": "ANALYZE=true next build --webpack",
+    "build:bundles": "npx --yes esbuild lib/system/system-log-cli.ts --bundle --platform=node --target=node20 --outfile=../lib/runner-system-log.js && npx --yes esbuild lib/runner-v2/run-record-cli.ts --bundle --platform=node --target=node20 --outfile=../lib/runner-run-record.js && npx --yes esbuild lib/runner-v2/existing-run-launch-cli.ts --bundle --platform=node --target=node20 --outfile=../lib/runner-v2-existing-run.js",
     "start": "next start",
     "demo:gif": "node scripts/capture-readme-demo.mjs",
     "generate:payload-contract": "ts-node --compiler-options '{\"module\":\"commonjs\",\"moduleResolution\":\"node\"}' scripts/generate-payload-contract-runtime.ts",
