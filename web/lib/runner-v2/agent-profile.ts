@@ -137,9 +137,32 @@ export function buildAgentProfileCommand(input: ProfileCommandInput): string {
     envFile && !Object.hasOwn(profile.env ?? {}, "ANTHROPIC_API_KEY") ? "unset ANTHROPIC_API_KEY" : "",
     profile.pre_exec ?? "",
     ...(codex ? [buildCodexSetup()] : []),
+    ...(profile.cli === "claude" && input.interactive ? [buildClaudeTrustSetup()] : []),
     command,
   ].filter(Boolean);
   return setup.join("; ");
+}
+
+/**
+ * Claude Code stores workspace-trust acceptance per-cwd in ~/.claude.json. Every
+ * run spawns claude in a fresh worktree cwd, so the interactive "Bypass
+ * Permissions mode / trust this folder" acceptance prompt fires every time and
+ * stalls the PTY. Pre-write the project entry with trust accepted, same as
+ * buildCodexSetup does for Codex. Non-interactive (-p) launches skip the
+ * dialog on their own and don't need this.
+ */
+function buildClaudeTrustSetup(): string {
+  const script = "const fs=require('fs'),os=require('os'),path=require('path');"
+    + "const cfg=path.join(os.homedir(),'.claude.json');"
+    + "let d={};try{d=JSON.parse(fs.readFileSync(cfg,'utf8'))}catch{}"
+    + "d.projects=d.projects||{};"
+    + "const c=process.cwd();"
+    + "d.projects[c]={...(d.projects[c]||{}),"
+    + "hasTrustDialogAccepted:true,hasCompletedProjectOnboarding:true,"
+    + "projectOnboardingSeenCount:Math.max(1,(d.projects[c]||{}).projectOnboardingSeenCount||0)};"
+    + "const t=cfg+'.mentiko.'+process.pid;"
+    + "fs.writeFileSync(t,JSON.stringify(d));fs.renameSync(t,cfg);";
+  return `node -e ${shellQuote(script)} 2>/dev/null || true`;
 }
 
 /**
