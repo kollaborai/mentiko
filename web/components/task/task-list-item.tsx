@@ -93,7 +93,7 @@ function TaskOperationalMeta({
   needsRunReview: boolean;
 }) {
   return (
-    <div className="mt-1 flex min-w-0 items-center gap-1.5 overflow-hidden text-[10px] text-foreground/40">
+    <div className="flex min-w-0 items-center gap-1.5 overflow-hidden text-[10px] text-foreground/40">
       {op && !task.completed ? (
         <TaskOpIndicator state={op} hide={["running", "paused"]} />
       ) : null}
@@ -205,9 +205,10 @@ export function TaskListItem({
       selected={!selectMode && selected}
       onClick={() => onSelect(task)}
       className={cn(
-        "rounded-md px-3 py-2",
-        task.type === "decision" && "bg-blue-500/5",
-        selected && task.type === "decision" && "bg-blue-500/10",
+        editorState
+          ? "rounded-md bg-transparent p-0 hover:bg-transparent"
+          : "rounded-md px-3 py-2",
+        editorState && selected && "ring-1 ring-foreground/15",
         isRunning && "animate-in fade-in duration-300",
       )}
     >
@@ -227,17 +228,19 @@ export function TaskListItem({
               state={editorState}
               task={task}
               depInfo={depInfo}
-            />
-            <TaskOperationalMeta
-              task={task}
-              op={op}
-              blockedByCount={blockedByCount}
-              blocksCount={blocksCount}
-              autoRun={autoRun}
-              autoRunRetries={autoRunRetries}
-              autoRunPaused={autoRunPaused}
-              hasRecentRun={hasRecentRun}
-              needsRunReview={needsRunReview}
+              footer={
+                <TaskOperationalMeta
+                  task={task}
+                  op={op}
+                  blockedByCount={blockedByCount}
+                  blocksCount={blocksCount}
+                  autoRun={autoRun}
+                  autoRunRetries={autoRunRetries}
+                  autoRunPaused={autoRunPaused}
+                  hasRecentRun={hasRecentRun}
+                  needsRunReview={needsRunReview}
+                />
+              }
             />
           </>
         ) : (

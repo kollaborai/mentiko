@@ -206,10 +206,12 @@ export function TaskSidebarConfiguredLayout({
   state,
   task,
   depInfo,
+  footer,
 }: {
   state: EditorState;
   task: Task;
   depInfo?: Map<string, DependencyInfo>;
+  footer?: ReactNode;
 }) {
   const { card, theme } = state;
   const surface =
@@ -290,6 +292,11 @@ export function TaskSidebarConfiguredLayout({
           </div>
         ))}
       </div>
+      {footer ? (
+        <div className="mt-2 min-w-0 border-t border-foreground/10 pt-1.5">
+          {footer}
+        </div>
+      ) : null}
     </div>
   );
 }

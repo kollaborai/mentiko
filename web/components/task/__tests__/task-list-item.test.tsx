@@ -133,6 +133,42 @@ describe("TaskListItem", () => {
     expect(screen.getByTitle(baseTask.title)).toHaveClass("flex-1");
   });
 
+  it("keeps operational metadata inside the configured card surface", async () => {
+    const editorState = makeEditorState();
+    localStorage.setItem(TASK_SIDEBAR_STORAGE_KEY, JSON.stringify(editorState));
+
+    render(
+      <TaskListItem
+        task={{
+          ...baseTask,
+          chainBinding: {
+            chain_id: "chain-1",
+            chain_name: "Chain",
+            auto_run: true,
+          },
+        }}
+        selected={true}
+        onSelect={jest.fn()}
+        onToggleComplete={jest.fn()}
+        depInfo={
+          new Map([[baseTask.id, { blockedBy: [], blocks: ["task-2"] }]])
+        }
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByText("Auto")).toBeInTheDocument(),
+    );
+
+    const configured = screen.getByTestId("task-sidebar-configured-layout");
+    expect(screen.getByText("Auto").closest("[data-testid]")).toBe(configured);
+    expect(configured).toHaveClass("min-w-0");
+
+    const item = screen.getByTestId("workflow-sidebar-item");
+    expect(item).toHaveClass("bg-transparent", "p-0", "ring-1");
+    expect(item).not.toHaveClass("bg-blue-500/5", "bg-blue-500/10");
+  });
+
   it("renders the typed task ID and priority without a redundant type badge", () => {
     render(
       <TaskListItem
