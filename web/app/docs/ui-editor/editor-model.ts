@@ -271,7 +271,7 @@ const defaultFieldStyles: Record<FieldId, FieldStyle> = {
     paddingY: 0,
     radius: 0,
     visible: true,
-    grow: false,
+    grow: true,
   },
   age: {
     fontSize: 10,

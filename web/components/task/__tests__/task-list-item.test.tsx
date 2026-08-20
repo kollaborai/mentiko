@@ -101,9 +101,13 @@ describe("TaskListItem", () => {
     const title = screen.getByText("Fix the bug");
     const updatedAt = screen.getByText("2h ago");
     expect(title).toHaveClass("line-clamp-2");
+    expect(title).toHaveClass("flex-1");
     expect(updatedAt).toHaveClass("shrink-0", "whitespace-nowrap");
     expect(updatedAt.parentElement).toBe(title.parentElement);
-    expect(updatedAt.parentElement).toHaveClass("items-end");
+    expect(updatedAt.parentElement).toHaveClass(
+      "items-start",
+      "justify-between",
+    );
   });
 
   it("uses the saved UI editor layout when one is published", async () => {
@@ -125,7 +129,8 @@ describe("TaskListItem", () => {
       expect(screen.getByTestId("task-sidebar-configured-layout")).toBeInTheDocument(),
     );
     expect(screen.getByText("Something is broken")).toBeInTheDocument();
-    expect(screen.getByText("2h ago")).toBeInTheDocument();
+    expect(screen.getByText("2h ago").parentElement).toHaveClass("shrink-0");
+    expect(screen.getByTitle(baseTask.title)).toHaveClass("flex-1");
   });
 
   it("renders the typed task ID and priority without a redundant type badge", () => {

@@ -350,6 +350,14 @@ function FieldBlock({
     padding: `${config.paddingY}px ${config.paddingX}px`,
     borderRadius: `${config.radius}px`,
   };
+  const layoutClassName =
+    field === "title"
+      ? "flex-1"
+      : field === "age"
+        ? "shrink-0"
+        : config.grow
+          ? "flex-1"
+          : undefined;
   const content = (
     <FieldContent field={field} state={state} style={style} />
   );
@@ -359,7 +367,7 @@ function FieldBlock({
       <span
         className={cn(
           "min-w-0",
-          config.grow && "flex-1",
+          layoutClassName,
           fieldColorClasses[config.color],
           fieldBackgroundClasses[config.background],
         )}
@@ -387,7 +395,7 @@ function FieldBlock({
       onKeyDown={onKeyDown}
       className={cn(
         "min-w-0 cursor-grab rounded-sm outline outline-1 -outline-offset-1 outline-foreground/10 transition-colors hover:bg-foreground/[0.04] hover:outline-foreground/25 active:cursor-grabbing",
-        config.grow && "flex-1",
+        layoutClassName,
         fieldColorClasses[config.color],
         fieldBackgroundClasses[config.background],
         !config.visible && "opacity-25 saturate-0",

@@ -242,18 +242,17 @@ export function TaskListItem({
           </>
         ) : (
           <div className="min-w-0">
-            <div className="flex min-w-0 items-end">
+            <div className="flex min-w-0 items-start justify-between gap-2">
               <span
                 className={cn(
-                  "min-w-0 line-clamp-2 text-sm font-semibold leading-5",
+                  "min-w-0 flex-1 line-clamp-2 text-sm font-semibold leading-5",
                   task.completed && "text-foreground/45 line-through",
                 )}
                 title={task.title}
               >
                 {task.title}
               </span>
-              {" "}
-              <span className="ml-1.5 shrink-0 whitespace-nowrap text-[10px] font-normal text-foreground/30">
+              <span className="shrink-0 whitespace-nowrap text-[10px] font-normal text-foreground/30">
                 {timeAgo(task.updatedAt)}
               </span>
             </div>

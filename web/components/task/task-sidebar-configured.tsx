@@ -167,11 +167,24 @@ function ConfiguredField({
       </span>
     );
 
+  // The production layout places title and age in the same flex cell. The
+  // title must own the remaining width while the age stays readable; relying
+  // on the saved `grow` flags lets long titles push the date into the card
+  // edge.
+  const layoutClassName =
+    field === "title"
+      ? "flex-1"
+      : field === "age"
+        ? "shrink-0"
+        : config.grow
+          ? "flex-1"
+          : undefined;
+
   return (
     <span
       className={cn(
         "min-w-0",
-        config.grow && "flex-1",
+        layoutClassName,
         task.completed && field === "title" && "text-foreground/45",
         fieldColorClasses[config.color],
         fieldBackgroundClasses[config.background],
