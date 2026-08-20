@@ -19,6 +19,14 @@ function response(body: unknown = {}): Response {
   } as Response;
 }
 
+function errorResponse(status: number, body: string): Response {
+  return {
+    ok: false,
+    status,
+    text: async () => body,
+  } as Response;
+}
+
 function restoreEnv(key: keyof typeof originalEnv): void {
   const value = originalEnv[key];
   if (value === undefined) delete process.env[key];
@@ -60,6 +68,26 @@ describe("auto-run service poller", () => {
         "x-org-id": "engineering",
       });
     }
+  });
+
+  it("summarizes HTML error pages without persisting framework markup", async () => {
+    const fetchMock = jest.fn(async (url: RequestInfo | URL) => {
+      if (String(url).endsWith("/api/tasks/auto-run")) {
+        return errorResponse(
+          500,
+          "<!DOCTYPE html><html><head><title>Internal Server Error</title></head></html>",
+        );
+      }
+      return response();
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    await checkAutoRunTasks();
+
+    expect(getAutoRunServiceStatus().lastError).toBe(
+      "HTTP 500: server returned an HTML error page",
+    );
+    expect(getAutoRunServiceStatus().lastError).not.toContain("<html>");
   });
 
   it("keeps the in-flight guard while an earlier reconcile is unresolved", async () => {

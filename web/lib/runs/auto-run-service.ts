@@ -44,6 +44,43 @@ const CHECK_INTERVAL_MS = 60_000; // 60s
 const HEALTH_CHECK_MAX_WAIT_MS = 30_000; // 30s max wait for platform startup
 const HEALTH_CHECK_INTERVAL_MS = 2_000; // 2s between health checks
 
+function summarizeHttpError(body: string): string {
+  const compact = body.replace(/\s+/g, " ").trim();
+  if (!compact) return "";
+
+  // Next.js returns a full HTML error document when the dev server fails to
+  // compile. Persist the HTTP failure, but not hundreds of characters of
+  // framework markup in the notification center.
+  if (/<(?:!doctype\s+html|html(?:\s|>))/i.test(compact)) {
+    return "server returned an HTML error page";
+  }
+
+  try {
+    const parsed: unknown = JSON.parse(body);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const record = parsed as Record<string, unknown>;
+      const error = record.error;
+      if (typeof error === "string" && error.trim()) return error.trim();
+      if (error && typeof error === "object" && !Array.isArray(error)) {
+        const message = (error as Record<string, unknown>).message;
+        if (typeof message === "string" && message.trim()) return message.trim();
+      }
+      if (typeof record.message === "string" && record.message.trim()) {
+        return record.message.trim();
+      }
+    }
+  } catch {
+    // Keep the compact response text for non-JSON errors.
+  }
+
+  return compact;
+}
+
+function formatHttpError(status: number, body: string): string {
+  const detail = summarizeHttpError(body);
+  return `HTTP ${status}${detail ? `: ${detail.slice(0, 200)}` : ""}`;
+}
+
 // ---------------------------------------------------------------------------
 // public API
 // ---------------------------------------------------------------------------
@@ -196,7 +233,7 @@ export async function checkAutoRunTasks() {
 
     if (!res.ok) {
       const text = await res.text().catch(() => "");
-      state.lastError = `HTTP ${res.status}: ${text.slice(0, 200)}`;
+      state.lastError = formatHttpError(res.status, text);
       // 403 means auto-run is disabled in settings - not an error
       if (res.status === 403) {
         state.lastError = null;
