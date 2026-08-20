@@ -255,7 +255,11 @@ export function TaskGenerateDialog({
             onRefresh?.();
             resetForm();
             onClose();
-            router.push(`/decisions?id=${encodeURIComponent(result.decisionId)}`);
+            router.push(
+              result.taskId
+                ? `/tasks?type=decision&task=${encodeURIComponent(result.taskId)}`
+                : "/tasks?type=decision",
+            );
             return;
           }
           if (job.taskId || result.taskId || result.createdTaskIds?.length) {

@@ -696,8 +696,12 @@ export async function buildOperationsView(
       title: state.title,
       detail: state.detail,
       updatedAt: state.updatedAt,
+      // decisions open inside the tasks page (there is no /decisions route);
+      // mirror the canonical link used across the app: /tasks?type=decision&task=<id>
       actionUrl: state.decisionId
-        ? `/decisions?id=${encodeURIComponent(state.decisionId)}`
+        ? state.taskId
+          ? `/tasks?type=decision&task=${encodeURIComponent(state.taskId)}`
+          : `/tasks?type=decision`
         : state.runId
           ? `/runs?runId=${encodeURIComponent(state.runId)}`
           : state.actionUrl,
@@ -726,7 +730,9 @@ export async function buildOperationsView(
       detail: awaitingSelection ? "Options ready — select one to continue" : `Decision is ${decision.status}`,
       status: decision.status,
       updatedAt: decision.updatedAt,
-      actionUrl: `/decisions?id=${encodeURIComponent(decision.id)}`,
+      actionUrl: decision.taskId
+        ? `/tasks?type=decision&task=${encodeURIComponent(decision.taskId)}`
+        : `/tasks?type=decision`,
     });
   }
 

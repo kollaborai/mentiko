@@ -33,6 +33,7 @@ import {
   WorkflowSidebarSegmentedControl,
 } from "@/components/ui/workflow-sidebar";
 import { PageBanner } from "@/components/ui/page-banner";
+import { PulseView } from "@/components/pulse/pulse-view";
 import { TimeAgo } from "@/components/shared/time-ago";
 import Link from "next/link";
 import {
@@ -646,7 +647,7 @@ function OperationsTimeline({ sidebarWidth, onDragStart }: {
 
 // ---------------- page shell ----------------
 
-type PageView = "operations" | "feed";
+type PageView = "operations" | "feed" | "pulse";
 
 export default function ActivityPage() {
   return (
@@ -661,7 +662,11 @@ export default function ActivityPage() {
 }
 
 function ActivityPageContent() {
-  const [pageView, setPageView] = useState<PageView>("operations");
+  const [pageView, setPageView] = useState<PageView>(() => {
+    if (typeof window === "undefined") return "operations";
+    const v = new URLSearchParams(window.location.search).get("view");
+    return v === "pulse" || v === "feed" ? v : "operations";
+  });
 
   const SIDEBAR_KEY = "activity-sidebar-width";
   const MIN_W = 260;
@@ -710,10 +715,10 @@ function ActivityPageContent() {
   return (
     <div className="h-full flex flex-col">
       <PageBanner
-        title="Operations"
+        title="Pulse"
         subtitle="One truthful view of the system: what is running, what runs next and why, what is blocked, what needs you, and what was accomplished — with the evidence."
         icon={ActivityFilled}
-        sectionColor="#5b9ef5"
+        sectionColor="#f59e0b"
         actions={[
           { label: "Tasks", href: "/tasks", icon: TaskSquareFilled, iconColor: "#5b9ef5" },
           { label: "Runs", href: "/runs", icon: RouteSquareFilled, iconColor: "#5b9ef5" },
@@ -727,11 +732,12 @@ function ActivityPageContent() {
       />
 
       <div className="shrink-0 flex items-center px-2 sm:px-4 pb-2">
-        <div className="w-[220px]">
+        <div className="w-[320px]">
           <WorkflowSidebarSegmentedControl
             options={[
               { value: "operations" as PageView, label: "Operations" },
               { value: "feed" as PageView, label: "Feed" },
+              { value: "pulse" as PageView, label: "Pulse" },
             ]}
             value={pageView}
             onChange={setPageView}
@@ -741,8 +747,12 @@ function ActivityPageContent() {
 
       {pageView === "operations" ? (
         <OperationsTimeline sidebarWidth={sidebarWidth} onDragStart={onDragStart} />
-      ) : (
+      ) : pageView === "feed" ? (
         <LegacyFeed sidebarWidth={sidebarWidth} onDragStart={onDragStart} />
+      ) : (
+        <div className="dark relative min-h-0 flex-1 text-foreground">
+          <PulseView />
+        </div>
       )}
     </div>
   );

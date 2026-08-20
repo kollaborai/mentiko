@@ -12,6 +12,7 @@ import {
   ActivityFilled as Activity,
   DangerFilled as OctagonX,
   CommandSquareFilled as Wand,
+  Element3Filled as Orrery,
 } from "@aliimam/icons";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { unwrapApiData, getApiErrorMessage } from "@/lib/api/api-client";
@@ -135,6 +136,12 @@ export function QuickActions({ className }: QuickActionsProps) {
             icon={Activity}
             label="View Runs"
             color="#5b9ef5"
+          />
+          <QuickAction
+            href="/activity?view=pulse"
+            icon={Orrery}
+            label="Pulse"
+            color="#f59e0b"
           />
           <QuickAction
             href="/schedules"
