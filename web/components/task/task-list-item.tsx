@@ -204,15 +204,9 @@ export function TaskListItem({
     <WorkflowSidebarItem
       selected={!selectMode && selected}
       onClick={() => onSelect(task)}
-      className={cn(
-        editorState
-          ? "rounded-md bg-transparent p-0 hover:bg-transparent"
-          : "rounded-md px-3 py-2",
-        editorState && selected && "ring-1 ring-foreground/15",
-        isRunning && "animate-in fade-in duration-300",
-      )}
+      className={isRunning ? "animate-in fade-in duration-300" : undefined}
     >
-      <div className={cn("relative", selectMode ? "pl-7" : "pl-0")}>
+      <div className={cn("relative", selectMode ? "pl-7" : "pl-4")}>
         {selectMode && (
           <div className="absolute left-2 top-1/2 -translate-y-1/2">
             {isChecked ? (

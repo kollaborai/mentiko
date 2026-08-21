@@ -165,8 +165,15 @@ describe("TaskListItem", () => {
     expect(configured).toHaveClass("min-w-0");
 
     const item = screen.getByTestId("workflow-sidebar-item");
-    expect(item).toHaveClass("bg-transparent", "p-0", "ring-1");
-    expect(item).not.toHaveClass("bg-blue-500/5", "bg-blue-500/10");
+    expect(item).not.toHaveClass(
+      "rounded-md",
+      "bg-transparent",
+      "p-0",
+      "px-3",
+      "py-2",
+      "ring-1",
+    );
+    expect(configured.parentElement).toHaveClass("pl-4");
   });
 
   it("renders the typed task ID and priority without a redundant type badge", () => {
