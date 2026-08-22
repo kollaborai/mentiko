@@ -12,6 +12,11 @@
  */
 
 export function normalizePermissionFlag(cli: string, permissionFlag: string | undefined): string | undefined {
+  if (cli === "codex" && permissionFlag === "--yolo") {
+    // Older bundled profiles persisted Codex's undocumented short alias. Keep
+    // those profiles runnable while emitting the documented CLI contract.
+    return "--dangerously-bypass-approvals-and-sandbox";
+  }
   if (
     cli === "claude"
     && (

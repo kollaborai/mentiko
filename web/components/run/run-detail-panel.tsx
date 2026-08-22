@@ -68,6 +68,7 @@ import type { RunStatusReason } from "@/lib/types";
 
 interface RunAgent extends Omit<WorkflowAgent, "emits"> {
   emits?: string;
+  durableOutput?: string | null;
   lastHeartbeat?: string;
   lastMessage?: string;
   isStale?: boolean;
@@ -2895,7 +2896,8 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
                     );
                   const messages = agentMessages[selectedAgent] || [];
                   const conversationId = agentConversations[selectedAgent];
-                  const rawOutput = agentOutputs[agent?.session || ""] || "";
+                  const rawOutput =
+                    agentOutputs[agent?.session || ""] || agent?.durableOutput || "";
                     const hasConversation =
                       conversationId && messages.length > 0;
                   const canInteract = canInteractWithAgentTerminal(agent);

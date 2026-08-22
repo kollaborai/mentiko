@@ -1,8 +1,13 @@
 import { NextRequest } from "next/server";
-import { existsSync, readdirSync, statSync, createReadStream, readFileSync } from "fs";
+import { existsSync, createReadStream, readFileSync } from "fs";
 import { basename, join } from "path";
 import { createInterface } from "readline";
-import { resolveLogDir } from "@/lib/runs/session-log-resolver";
+import {
+  fileBirthEpoch,
+  findConversationFiles,
+  listConversationFiles as listProviderConversationFiles,
+  resolveLogDir,
+} from "@/lib/runs/session-log-resolver";
 import { resolveAgentWorkspacePaths } from "@/lib/runs/agent-workspace-resolver";
 import { checkAuth } from "@/lib/auth/api-auth";
 import { BadRequest, Unauthorized } from "@/lib/api-errors";
@@ -37,18 +42,20 @@ function parseProviderList(raw: string | null): string[] {
   return providers.length ? providers : ["codex", "claude-code"];
 }
 
-function resolveLogPaths(cwds: string[], providers: string[]): string[] {
+type ResolvedLogPath = { dir: string; provider: string };
+
+function resolveLogPaths(cwds: string[], providers: string[]): ResolvedLogPath[] {
   const rawInputs = uniqueArray([...cwds, process.cwd()]);
-  const dirs: string[] = [];
+  const dirs: ResolvedLogPath[] = [];
   const providerList = uniqueArray(providers);
 
   for (const input of rawInputs) {
     for (const provider of providerList) {
       const resolved = resolveLogDir(provider, input);
-      if (!resolved || dirs.includes(resolved) || !existsSync(resolved)) {
+      if (!resolved || dirs.some((entry) => entry.dir === resolved && entry.provider === provider) || !existsSync(resolved)) {
         continue;
       }
-      dirs.push(resolved);
+      dirs.push({ dir: resolved, provider });
     }
   }
 
@@ -56,24 +63,21 @@ function resolveLogPaths(cwds: string[], providers: string[]): string[] {
 }
 
 function listConversationFiles(
-  dirs: string[],
-  filterMs: number
+  dirs: ResolvedLogPath[],
+  filterMs: number,
+  startedAtMs: number,
 ): { path: string; ctime: number }[] {
   const files: { path: string; ctime: number }[] = [];
 
-  for (const dir of dirs) {
-    try {
-      const names = readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
-      for (const name of names) {
-        const filePath = join(dir, name);
-        const stat = statSync(filePath);
-        const ctime = Number.isFinite(stat.birthtimeMs) ? stat.birthtimeMs : stat.mtimeMs;
-        if (!filterMs || ctime >= filterMs) {
-          files.push({ path: filePath, ctime });
-        }
+  for (const { dir, provider } of dirs) {
+    const candidates = startedAtMs
+      ? findConversationFiles(dir, startedAtMs / 1000, provider)
+      : listProviderConversationFiles(dir, provider);
+    for (const filePath of candidates) {
+      const ctime = fileBirthEpoch(filePath) * 1000;
+      if (!filterMs || ctime >= filterMs) {
+        files.push({ path: filePath, ctime });
       }
-    } catch {
-      continue;
     }
   }
 
@@ -292,7 +296,11 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     // for clock skew
     const filterMs = sinceMs ? sinceMs - 60000 : 0;
 
-    files = listConversationFiles(jsonlDirs, filterMs)
+    files = listConversationFiles(
+      jsonlDirs,
+      filterMs,
+      sinceMs,
+    )
       // sort by proximity to since time (closest first)
       // this picks the conversation created nearest to run start
       .sort((a, b) => {

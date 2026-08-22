@@ -10,7 +10,7 @@ describe("runner-v2 entry code root anchor", () => {
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), "mentiko-code-root-"));
     mkdirSync(join(root, "lib"), { recursive: true });
-    writeFileSync(join(root, "lib", "chain-runner.sh"), "#!/bin/bash\n");
+    writeFileSync(join(root, "lib", "runner-v2-direct-run.js"), "#!/usr/bin/env node\n");
     delete process.env.MENTIKO_CODE_ROOT;
   });
 
@@ -38,6 +38,17 @@ describe("runner-v2 entry code root anchor", () => {
       expect(findCodeRootFrom(stray, 0)).toBeNull();
     } finally {
       rmSync(stray, { recursive: true, force: true });
+    }
+  });
+
+  it("does not treat the compatibility shell filename as the code-root marker", () => {
+    const compatibilityOnly = mkdtempSync(join(tmpdir(), "mentiko-compatibility-root-"));
+    try {
+      mkdirSync(join(compatibilityOnly, "lib"), { recursive: true });
+      writeFileSync(join(compatibilityOnly, "lib", "chain-runner.sh"), "#!/bin/bash\n");
+      expect(findCodeRootFrom(join(compatibilityOnly, "web", "scripts"))).toBeNull();
+    } finally {
+      rmSync(compatibilityOnly, { recursive: true, force: true });
     }
   });
 

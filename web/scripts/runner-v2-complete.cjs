@@ -22,7 +22,7 @@ try {
   require("../lib/runner-v2/completion-launch-context").consumeCompletionLaunchContext(contextPath);
   // anchor MENTIKO_CODE_ROOT from this script's location BEFORE config loads:
   // the completion PTY's cwd sits in the data root, so config's parent-of-cwd
-  // fallback would resolve chain-runner.sh under ~/.mentiko.
+  // fallback would resolve the code root under ~/.mentiko instead of the checkout.
   require("../lib/runner-v2/entry-code-root").anchorCodeRootEnv(__dirname);
   ({
     RunnerV2CompletionUnsupportedError,

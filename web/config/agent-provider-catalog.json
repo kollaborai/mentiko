@@ -187,7 +187,7 @@
           "cli": "codex",
           "model": "gpt-5.6-sol",
           "pipe_flag": "exec",
-          "permission_flag": "--yolo",
+          "permission_flag": "--dangerously-bypass-approvals-and-sandbox",
           "readiness": { "enabled": false, "ready_patterns": [] },
           "description": "Flagship model for complex coding and agentic work"
         },
@@ -197,7 +197,7 @@
           "cli": "codex",
           "model": "gpt-5.6-terra",
           "pipe_flag": "exec",
-          "permission_flag": "--yolo",
+          "permission_flag": "--dangerously-bypass-approvals-and-sandbox",
           "readiness": {
             "enabled": true,
             "ready_patterns": [ { "name": "codex tui banner", "type": "text", "value": "OpenAI Codex (v", "action": "ready", "risk": "low", "enabled": true }, { "name": "codex input placeholder", "type": "text", "value": "Find and fix a bug", "action": "ready", "risk": "low", "enabled": true } ],
@@ -240,7 +240,7 @@
           "cli": "codex",
           "model": "gpt-5.6-luna",
           "pipe_flag": "exec",
-          "permission_flag": "--yolo",
+          "permission_flag": "--dangerously-bypass-approvals-and-sandbox",
           "readiness": {
             "enabled": true,
             "ready_patterns": [ { "name": "codex tui banner", "type": "text", "value": "OpenAI Codex (v", "action": "ready", "risk": "low", "enabled": true }, { "name": "codex input placeholder", "type": "text", "value": "Find and fix a bug", "action": "ready", "risk": "low", "enabled": true } ],
@@ -375,7 +375,7 @@
         "cli": "codex",
         "model": "gpt-5.6-luna",
         "pipe_flag": "exec",
-        "permission_flag": "--yolo",
+        "permission_flag": "--dangerously-bypass-approvals-and-sandbox",
         "readiness": { "enabled": false, "ready_patterns": [] },
         "description": "Legacy Spark profile id synced to the current fast Codex model"
       }

@@ -382,7 +382,7 @@ describe("runner-v2 bootstrap executor", () => {
     expect(executor.spawn).toHaveBeenLastCalledWith(
       "monitor-workspace-writer-run-1",
       "bash",
-      ["-lc", "monitor-chain-agent workspace-writer-run-1"],
+      ["-lc", "export MENTIKO_AGENT_ATTEMPT_ID='run-1:writer:1'; monitor-chain-agent workspace-writer-run-1"],
       expect.objectContaining({
         cwd: join(root, "workspace"),
         env: expect.objectContaining({ MENTIKO_AGENT_ATTEMPT_ID: "run-1:writer:1" }),
@@ -982,7 +982,7 @@ describe("runner-v2 bootstrap executor", () => {
     expect(executor.spawn).toHaveBeenLastCalledWith(
       "monitor-workspace-writer-run-1",
       "bash",
-      ["-lc", "monitor-chain-agent workspace-writer-run-1"],
+      ["-lc", "export MENTIKO_AGENT_ATTEMPT_ID='run-1:writer:1'; monitor-chain-agent workspace-writer-run-1"],
       expect.anything(),
     );
   });
@@ -1027,7 +1027,7 @@ describe("runner-v2 bootstrap executor", () => {
       expect(executor.spawn).toHaveBeenLastCalledWith(
         "monitor-workspace-writer-run-1",
         "bash",
-        ["-lc", "monitor-chain-agent workspace-writer-run-1"],
+        ["-lc", "export MENTIKO_AGENT_ATTEMPT_ID='run-1:writer:1'; monitor-chain-agent workspace-writer-run-1"],
         expect.anything(),
       );
     } finally {
@@ -1071,7 +1071,7 @@ describe("runner-v2 bootstrap executor", () => {
       expect(executor.spawn).toHaveBeenLastCalledWith(
         "monitor-workspace-writer-run-1",
         "bash",
-        ["-lc", "monitor-chain-agent workspace-writer-run-1"],
+        ["-lc", "export MENTIKO_AGENT_ATTEMPT_ID='run-1:writer:1'; monitor-chain-agent workspace-writer-run-1"],
         expect.anything(),
       );
     } finally {

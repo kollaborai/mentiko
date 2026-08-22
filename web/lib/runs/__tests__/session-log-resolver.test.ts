@@ -57,4 +57,20 @@ describe("typed session transcript resolution", () => {
 
     expect(findConversationFiles(root, fileBirthEpoch(transcript), "codex")).toEqual([transcript]);
   });
+
+  it("keeps resolving Codex transcripts when the date partition is nested", () => {
+    const root = tempDir();
+    const dated = join(
+      root,
+      String(new Date().getFullYear()),
+      String(new Date().getMonth() + 1).padStart(2, "0"),
+      String(new Date().getDate()).padStart(2, "0"),
+      "nested",
+    );
+    mkdirSync(dated, { recursive: true });
+    const transcript = join(dated, "codex.jsonl");
+    writeFileSync(transcript, "{}\n");
+
+    expect(findConversationFiles(root, fileBirthEpoch(transcript), "codex")).toEqual([transcript]);
+  });
 });

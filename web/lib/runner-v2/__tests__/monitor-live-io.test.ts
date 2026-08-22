@@ -275,7 +275,10 @@ describe("monitor-v2 live IO", () => {
       f.chainPath,
       expect.stringMatching(/mentiko-completion-context-.*\/context\.json$/),
     ]);
-    expect(call[3]).toBeUndefined();
+    expect(call[3]).toMatchObject({
+      cwd: codeRoot,
+      env: { TMPDIR: expect.any(String) },
+    });
     expect(lastCompletionContext).toMatchObject({
       MENTIKO_RUN_ID: "run-123",
       MENTIKO_RUN_DIR: f.runDir,

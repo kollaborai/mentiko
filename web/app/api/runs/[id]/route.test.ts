@@ -97,4 +97,43 @@ describe("GET /api/runs/[id] canonical record reads", () => {
 
     expect(response.status).toBe(404);
   });
+
+  it("projects durable agent output into the canonical run detail response", async () => {
+    writeRun({
+      id: "run-123",
+      chain: "durable-output",
+      goal: "show completed output",
+      started: "2026-07-15T12:00:00.000Z",
+      status: "completed",
+      agents: [{
+        id: "readiness_probe",
+        name: "Readiness Probe",
+        status: "complete",
+        session: "session-123",
+      }],
+    });
+    mkdirSync(
+      join(globalThis.__MENTIKO_RUN_DETAIL_ROUTE_TEST_DIR__, "run-123", "artifacts"),
+      { recursive: true },
+    );
+    writeFileSync(
+      join(
+        globalThis.__MENTIKO_RUN_DETAIL_ROUTE_TEST_DIR__,
+        "run-123",
+        "artifacts",
+        "readiness_probe-summary.md",
+      ),
+      "# Readiness Probe\n\nCompleted successfully.",
+    );
+
+    const response = await getRun();
+    const body = await response.json() as {
+      data: { run: { agents: Array<{ durableOutput?: string | null }> } };
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.data.run.agents[0].durableOutput).toBe(
+      "# Readiness Probe\n\nCompleted successfully.",
+    );
+  });
 });

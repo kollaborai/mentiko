@@ -57,6 +57,7 @@ describe("runner-v2 completion PTY launcher", () => {
       chainPath: "/tmp/chain.json",
       completionSession: "complete-writer-1",
       env: requiredEnv({
+        TMPDIR: "/tmp/mentiko-completion-test",
         RUNS_DIR: "/tmp/runs",
         MENTIKO_AI_GATEWAY_LOCAL_PROXY_ENABLED: "true",
         MENTIKO_AI_GATEWAY_LOCAL_BASE_URL: "http://127.0.0.1:3200/api/ai-gateway/v1",
@@ -78,7 +79,10 @@ describe("runner-v2 completion PTY launcher", () => {
     ]);
     expect(JSON.stringify(call.slice(0, 3))).not.toContain(token);
     expect(JSON.stringify(call.slice(0, 3))).not.toContain(sessionToken);
-    expect(call[3]).toBeUndefined();
+    expect(call[3]).toEqual({
+      cwd: process.cwd().replace(/\/web$/, ""),
+      env: { TMPDIR: "/tmp/mentiko-completion-test" },
+    });
     expect(persisted?.env).toMatchObject({
       MENTIKO_AI_GATEWAY_LOCAL_TOKEN: token,
       MENTIKO_SESSION_ID: "chain-run-1",

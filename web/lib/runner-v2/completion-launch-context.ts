@@ -14,6 +14,11 @@ import { tmpdir } from "os";
 const CONTEXT_DIR_PREFIX = "mentiko-completion-context-";
 const CONTEXT_FILE_NAME = "context.json";
 const REAL_TMP_DIR = realpathSync(tmpdir());
+// The web process and a long-lived PTY daemon can have different TMPDIR values
+// on macOS. Use the canonical OS temp root for the one-shot context so both
+// processes can validate the same private path, while still accepting the
+// process-local root for compatibility with existing callers.
+const SHARED_TMP_DIR = realpathSync("/tmp");
 
 export const COMPLETION_CONTEXT_ENV_KEYS = [
   "DEBUG", "MENTIKO_DEBUG", "NODE_ENV",
@@ -66,7 +71,7 @@ export function createCompletionLaunchContext(
   }
   validateContextEnv(env);
 
-  const dir = mkdtempSync(join(REAL_TMP_DIR, CONTEXT_DIR_PREFIX));
+  const dir = mkdtempSync(join(SHARED_TMP_DIR, CONTEXT_DIR_PREFIX));
   chmodSync(dir, 0o700);
   const path = join(dir, CONTEXT_FILE_NAME);
   writeFileSync(path, `${JSON.stringify({ version: 1, env } satisfies CompletionLaunchContextFile)}\n`, {
@@ -153,7 +158,7 @@ function isCompletionLaunchContextPath(path: string): boolean {
   }
   const parent = dirname(path);
   const dirName = basename(parent);
-  return dirname(parent) === REAL_TMP_DIR
+  return [REAL_TMP_DIR, SHARED_TMP_DIR].includes(dirname(parent))
     && /^mentiko-completion-context-[A-Za-z0-9_-]+$/.test(dirName);
 }
 

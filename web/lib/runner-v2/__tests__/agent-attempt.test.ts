@@ -154,6 +154,35 @@ describe("runner-v2 AgentAttempt lifecycle", () => {
     });
   });
 
+  it("lets declared completion evidence recover a stuck bootstrap attempt", () => {
+    const path = runPath();
+    const attempt = createAgentAttempt({ runJsonPath: path, runId: "run-1", agentId: "writer" });
+    transitionAgentAttempt({ runJsonPath: path, attemptId: attempt.id, to: "lease_acquired" });
+    transitionAgentAttempt({ runJsonPath: path, attemptId: attempt.id, to: "pty_allocated" });
+    transitionAgentAttempt({ runJsonPath: path, attemptId: attempt.id, to: "process_spawned" });
+    transitionAgentAttempt({ runJsonPath: path, attemptId: attempt.id, to: "ready_for_instructions" });
+    transitionAgentAttempt({
+      runJsonPath: path,
+      attemptId: attempt.id,
+      to: "stuck",
+      reason: "instruction_submission_unconfirmed",
+    });
+
+    const completed = markAgentAttemptCompletedFromEvent({
+      runJsonPath: path,
+      runId: "run-1",
+      agentId: "writer",
+      attemptId: attempt.id,
+      detail: "matched declared completion event readiness_test_complete",
+    });
+
+    expect(completed).toMatchObject({
+      id: attempt.id,
+      phase: "completed",
+      terminalReason: "completed_from_declared_event",
+    });
+  });
+
   it("preserves startup terminal reason when releasing the lease", () => {
     const path = runPath();
     const attempt = createAgentAttempt({ runJsonPath: path, runId: "run-1", agentId: "writer" });

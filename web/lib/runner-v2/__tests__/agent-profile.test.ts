@@ -165,7 +165,7 @@ describe("runner-v2 agent profile contract", () => {
       .toThrow("Invalid pipe_flag");
   });
 
-  it("builds Codex exec invocation and isolated trusted CODEX_HOME for interactive and noninteractive launches", () => {
+  it("builds interactive Codex TUI and noninteractive exec invocations with isolated trusted CODEX_HOME", () => {
     const root = tempDir();
     const profilePath = join(root, "codex.json");
     writeJson(profilePath, {
@@ -179,9 +179,12 @@ describe("runner-v2 agent profile contract", () => {
 
     const interactive = buildAgentProfileCommand({ profilePath, interactive: true, namespaceId: "default", orgId: "default" });
     const noninteractive = buildAgentProfileCommand({ profilePath, interactive: false, namespaceId: "default", orgId: "default" });
+    expect(interactive).toContain("'codex' '-c' 'check_for_update_on_startup=false' '--dangerously-bypass-hook-trust'");
+    expect(interactive).not.toContain("'codex' 'exec'");
+    expect(noninteractive).toContain("'codex' 'exec' '-c' 'check_for_update_on_startup=false' '--dangerously-bypass-hook-trust'");
+    expect(interactive.match(/(?:^|[ ;])'exec'/g)?.length ?? 0).toBe(0);
+    expect(noninteractive.match(/(?:^|[ ;])'exec'/g)?.length ?? 0).toBe(1);
     for (const command of [interactive, noninteractive]) {
-      expect(command).toContain("'codex' 'exec' '-c' 'check_for_update_on_startup=false' '--dangerously-bypass-hook-trust'");
-      expect(command.match(/(?:^|[ ;])'exec'/g)?.length ?? 0).toBe(1);
       expect(command).toContain('MENTIKO_CODEX_AUTH_HOME="${CODEX_HOME:-$HOME/.codex}"');
       expect(command).toContain('CODEX_HOME="$(mktemp -d');
       expect(command).toContain("export CODEX_HOME");
@@ -194,6 +197,22 @@ describe("runner-v2 agent profile contract", () => {
       expect(command).toContain("trap 'rm -rf \"$CODEX_HOME\"' EXIT");
       expect(command).not.toContain("--mcp-config");
     }
+  });
+
+  it("keeps persisted legacy Codex profiles runnable with the canonical permission flag", () => {
+    const root = tempDir();
+    const profilePath = join(root, "codex-legacy.json");
+    writeJson(profilePath, {
+      id: "codex-legacy",
+      name: "Codex legacy",
+      cli: "codex",
+      pipe_flag: "exec",
+      permission_flag: "--yolo",
+    });
+
+    const command = buildAgentProfileCommand({ profilePath, interactive: false, namespaceId: "default", orgId: "default" });
+    expect(command).toContain("'--dangerously-bypass-approvals-and-sandbox'");
+    expect(command).not.toContain("'--yolo'");
   });
 
   it("does not add Codex invocation or isolated-home setup to non-Codex profiles", () => {

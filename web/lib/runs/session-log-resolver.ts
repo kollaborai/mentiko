@@ -79,6 +79,12 @@ export function findConversationFiles(logDir: string, startedAtEpoch: number, cl
   return newest ? [newest.file] : [];
 }
 
+/** List transcript JSONL files under a provider's configured log root. */
+export function listConversationFiles(logDir: string, cli = "claude"): string[] {
+  if (!isDirectory(logDir)) return [];
+  return listJsonlFiles(logDir, cli === "codex" ? 4 : 2);
+}
+
 export function fileBirthEpoch(file: string): number {
   try {
     const stat = statSync(file);

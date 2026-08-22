@@ -105,6 +105,7 @@ describe("agent provider catalog", () => {
       ]),
     );
     for (const profile of codexProfiles) {
+      expect(profile.permission_flag).toBe("--dangerously-bypass-approvals-and-sandbox");
       expect(profile.extra_args || []).not.toContain("--skip-git-repo-check");
     }
   });

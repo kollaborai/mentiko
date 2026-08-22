@@ -2,7 +2,8 @@ import { existsSync } from "fs";
 import { dirname, join, resolve } from "path";
 
 /**
- * Locate the mentiko code root (the checkout/image dir holding lib/chain-runner.sh)
+ * Locate the mentiko code root (the checkout/image dir holding the active
+ * lib/runner-v2-direct-run.js entrypoint)
  * by walking up from a file that physically lives inside it.
  *
  * The completion bridge runs in a PTY session whose cwd is inside the DATA root
@@ -16,7 +17,7 @@ import { dirname, join, resolve } from "path";
 export function findCodeRootFrom(startDir: string, maxHops = 8): string | null {
   let dir = resolve(startDir);
   for (let hop = 0; hop <= maxHops; hop++) {
-    if (existsSync(join(dir, "lib", "chain-runner.sh"))) return dir;
+    if (existsSync(join(dir, "lib", "runner-v2-direct-run.js"))) return dir;
     const parent = dirname(dir);
     if (parent === dir) return null;
     dir = parent;

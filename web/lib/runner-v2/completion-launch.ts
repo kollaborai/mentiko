@@ -1,4 +1,5 @@
 import { existsSync } from "fs";
+import { tmpdir } from "os";
 import { join } from "path";
 import config from "@/lib/config";
 import { pty } from "@/lib/pty/pty-client";
@@ -19,6 +20,12 @@ export async function launchRunnerV2CompletionPty(input: CompletionLaunchInput):
   const completionSession = input.completionSession
     || `complete-${input.sessionName}-${Math.floor(Date.now() / 1000)}`;
   const entrypoint = resolveCompletionEntrypoint(config.codeRoot);
+  // macOS can expose different temp roots to the web process and the long-lived
+  // PTY daemon. The completion child validates the private context path before
+  // consuming it, so it must see the same TMPDIR that created the context.
+  const completionTmpDir = typeof env.TMPDIR === "string" && env.TMPDIR.trim()
+    ? env.TMPDIR
+    : tmpdir();
 
   const context = createCompletionLaunchContext({
     ...env,
@@ -35,6 +42,7 @@ export async function launchRunnerV2CompletionPty(input: CompletionLaunchInput):
       completionSession,
       process.execPath,
       [entrypoint, input.sessionName, input.chainPath, context.path],
+      { cwd: config.codeRoot, env: { TMPDIR: completionTmpDir } },
     );
   } catch (error) {
     cleanupCompletionLaunchContext(context.path);

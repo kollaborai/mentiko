@@ -145,7 +145,11 @@ const ALLOWED_TRANSITIONS: Record<AgentAttemptPhase, AgentAttemptPhase[]> = {
   completion_failed: ["released"],
   startup_failed: ["released"],
   human_action_required: ["released"],
-  stuck: ["released"],
+  // A bootstrap can be marked stuck when instruction submission could not be
+  // confirmed, while the CLI continues and later emits a valid completion
+  // event. That evidence is authoritative and must be able to close the
+  // attempt instead of leaving the run permanently live.
+  stuck: ["completed", "released"],
   released: [],
 };
 

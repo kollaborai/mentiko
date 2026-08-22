@@ -114,7 +114,10 @@ export function buildAgentProfileCommand(input: ProfileCommandInput): string {
   const mentikoMcp = profile.cli === "claude" ? createClaudeMentikoMcpConfig(process.env) : undefined;
   const codexArgs = codex
     ? [
-        "exec",
+        // PTY launches need Codex's interactive TUI so the typed bootstrap can
+        // submit the instruction after readiness. The exec subcommand requires
+        // a prompt up front and exits with "No prompt provided" otherwise.
+        ...(input.interactive ? [] : ["exec"]),
         "-c",
         "check_for_update_on_startup=false",
         "--dangerously-bypass-hook-trust",

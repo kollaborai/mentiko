@@ -24,6 +24,12 @@ describe("agent profile argv contract", () => {
     ]);
   });
 
+  it("normalizes the legacy Codex short alias to the documented bypass flag", () => {
+    expect(resolveProfilePermissionArgs("codex", "--yolo")).toEqual([
+      "--dangerously-bypass-approvals-and-sandbox",
+    ]);
+  });
+
   it("never yields the consent-gated claude flags", () => {
     for (const flag of [COMBINED_PERMISSION_FLAG, "--dangerously-skip-permissions"]) {
       const args = resolveProfilePermissionArgs("claude", flag);

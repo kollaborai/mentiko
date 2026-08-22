@@ -1247,7 +1247,14 @@ async function startMonitorSession(
   executor: RunnerV2BootstrapExecutor,
 ): Promise<void> {
   await executor.remove(plan.monitorSessionName);
-  await executor.spawn(plan.monitorSessionName, "bash", ["-lc", plan.monitorCommand], {
+  // The long-lived PTY daemon filters the environment it receives. Keep the
+  // exact bootstrap attempt identity in the monitor command as well, so a
+  // daemon that predates the whitelist update cannot substitute a stale
+  // MENTIKO_AGENT_ATTEMPT_ID when completion launches its bridge.
+  const monitorCommand = plan.runContextExports.MENTIKO_AGENT_ATTEMPT_ID
+    ? `export MENTIKO_AGENT_ATTEMPT_ID=${shellEscape(plan.runContextExports.MENTIKO_AGENT_ATTEMPT_ID)}; ${plan.monitorCommand}`
+    : plan.monitorCommand;
+  await executor.spawn(plan.monitorSessionName, "bash", ["-lc", monitorCommand], {
     cwd: plan.projectRoot,
     env: sanitizePtyEnv({
       PATH: plan.runContextExports.PATH || process.env.PATH || "",

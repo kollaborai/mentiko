@@ -1,6 +1,6 @@
-import { existsSync, readFileSync, readdirSync, statSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { join } from "path";
-import { resolveLogDir } from "@/lib/runs/session-log-resolver";
+import { findConversationFiles, resolveLogDir } from "@/lib/runs/session-log-resolver";
 import { resolveAgentWorkspacePaths } from "@/lib/runs/agent-workspace-resolver";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { sanitizeOutput } from "@/lib/sanitize-output";
@@ -287,27 +287,22 @@ export const GET = withErrorHandling(async (
         const startedAt = agent?.started || runJson.started;
         const startMs = startedAt ? new Date(startedAt).getTime() : 0;
         try {
-          const jsonlFiles = logDirs
-            .flatMap((dir) =>
-              readdirSync(dir)
-                .filter((f) => f.endsWith(".jsonl"))
-                .map((f) => {
-                  const stat = statSync(join(dir, f));
-                  return { name: f, path: join(dir, f), birthMs: stat.birthtimeMs };
-                })
-            )
-            // files created within 2 minutes of run start
-            .filter((f) => startMs ? Math.abs(f.birthMs - startMs) < 120000 : false)
-            .sort((a, b) => Math.abs(a.birthMs - startMs) - Math.abs(b.birthMs - startMs));
+          // Codex stores JSONL under ~/.codex/sessions/YYYY/MM/DD, while
+          // Claude stores it directly under its project directory. Use the
+          // shared resolver so the provider-specific layout is not flattened
+          // into a top-level readdir that can never see Codex transcripts.
+          const jsonlFiles = logDirs.flatMap((dir) =>
+            findConversationFiles(dir, startMs / 1000, cli || "codex")
+          );
 
-          for (const jf of jsonlFiles) {
-            const msgs = parseConversation(jf.path);
+          for (const filePath of [...new Set(jsonlFiles)]) {
+            const msgs = parseConversation(filePath);
             if (msgs.length === 0) continue;
 
             const firstUser = msgs.find((m) => m.role === "user");
             const text = firstUser?.content || "";
             if (matchesAgentConversationBootstrap(text, { runId, agentId })) {
-              conversations = [{ path: jf.path, messages: msgs }];
+              conversations = [{ path: filePath, messages: msgs }];
               break;
             }
           }
