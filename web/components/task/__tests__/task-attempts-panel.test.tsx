@@ -327,4 +327,9 @@ describe("TaskAttemptsPanel", () => {
     expect(source).not.toContain("no-scrollbar");
     expect(source).not.toContain("self-start");
   });
+
+  it("keeps the run rail free of left accent borders", () => {
+    expect(source).not.toContain("border-s-2");
+    expect(source).not.toContain("accentFor");
+  });
 });

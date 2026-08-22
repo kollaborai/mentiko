@@ -32,7 +32,7 @@ type AttemptsResponse = {
 // just its runs: the runs that produced the chain, the chain itself, the
 // execution run, the outcome summary, and the decision that summary forced.
 // Selecting any item swaps the viewer on the right. Kind is carried by the
-// left accent + row tint; selection stays neutral so the two never conflate.
+// row tint and icon; selection stays neutral so the two never conflate.
 type PanelItem =
   | { key: string; kind: "run"; attempt: TaskAttempt }
   | { key: string; kind: "chain"; chainName: string; status: string }
@@ -67,21 +67,6 @@ function iconFor(item: PanelItem) {
   if (kind === "outcome_summary") return <Document className="h-3 w-3" />;
   if (kind === "chain_generation") return <Flash className="h-3 w-3" />;
   return <Clock className="h-3 w-3" />;
-}
-
-// Kind accent — persists in both selected and unselected states so you can
-// always tell a chain from a run from a verdict at a glance.
-function accentFor(item: PanelItem) {
-  switch (item.kind) {
-    case "chain":
-      return "border-s-blue-400/70";
-    case "summary":
-      return "border-s-emerald-400/70";
-    case "decision":
-      return "border-s-blue-400/70";
-    default:
-      return "border-s-transparent";
-  }
 }
 
 function tintFor(item: PanelItem) {
@@ -429,8 +414,7 @@ export function TaskAttemptsPanel({
                   disabled={disabled}
                   onClick={() => setSelectedKey(item.key)}
                   className={cn(
-                    "w-full min-w-0 rounded-lg border-s-2 px-2.5 py-2 text-left transition-colors disabled:cursor-not-allowed",
-                    accentFor(item),
+                    "w-full min-w-0 rounded-lg px-2.5 py-2 text-left transition-colors disabled:cursor-not-allowed",
                     isSelected
                       ? "bg-accent text-foreground"
                       : cn(
