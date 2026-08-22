@@ -10,6 +10,15 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (2026) ---
   {
+    version: "v0.3.62",
+    date: "August 22, 2026",
+    title: "Pulse: Live System Topology",
+    description:
+      "The activity view gains Pulse, a live 3D map of the system that renders runs, agents, and their connections as they move instead of a flat list. This release also tightens run event delivery: streaming watchers are now scoped per subscriber and every subscription is gated by run and job access control, so a client can no longer receive events for runs it cannot see. Remaining trust-leak paths around invite attribution, Linux usernames, and Telegram identity are closed, auto-run HTTP failures are summarized into readable messages instead of raw errors, and the non-functional retry button on failed agents is removed.",
+    category: "new",
+    docsHref: "/activity",
+  },
+  {
     version: "v0.3.61",
     date: "August 17, 2026",
     title: "Server-Owned Decision Delivery",
@@ -772,7 +781,7 @@ export const releases: Release[] = [
 
 // The build tag is tracked separately from the user-facing update feed.
 // Do not add an update card solely for internal release work.
-export const CURRENT_RELEASE_VERSION = "v0.3.61";
+export const CURRENT_RELEASE_VERSION = "v0.3.62";
 export const LATEST_VERSION = releases[0].version;
 export const UPDATES_STORAGE_KEY = "mentiko-last-seen-version";
 
