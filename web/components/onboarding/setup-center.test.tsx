@@ -1,6 +1,9 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import { SetupCenter } from "./setup-center";
 
+const push = jest.fn();
+jest.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
+
 jest.mock("@/components/onboarding/welcome-wizard", () => ({
   WelcomeWizard: () => <div data-testid="welcome-wizard">wizard</div>,
 }));
@@ -8,6 +11,7 @@ jest.mock("@/components/onboarding/welcome-wizard", () => ({
 describe("SetupCenter", () => {
   beforeEach(() => {
     global.fetch = jest.fn();
+    push.mockClear();
   });
 
   it("renders canonical milestone rail and partial progress", async () => {
@@ -24,7 +28,10 @@ describe("SetupCenter", () => {
     render(<SetupCenter />);
     expect(screen.getByRole("main")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByText("2 of 4 milestones complete")).toBeInTheDocument());
-    expect(screen.getByRole("button", { name: /Check that everything works/ })).toHaveAttribute("aria-current", "step");
+    const readiness = screen.getByRole("button", { name: /Check that everything works/ });
+    expect(readiness).toHaveAttribute("aria-current", "step");
+    readiness.click();
+    expect(push).toHaveBeenCalledWith("/settings/agent-health?from=setup");
     expect(screen.getByTestId("welcome-wizard")).toBeInTheDocument();
   });
 

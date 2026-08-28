@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { TickCircleFilled, Warning2Filled, ArrowRight2Filled } from "@aliimam/icons";
 import { Button } from "@/components/ui/button";
 import { WelcomeWizard } from "@/components/onboarding/welcome-wizard";
@@ -33,6 +34,7 @@ function isActive(key: string, state: SetupState) {
 }
 
 export function SetupCenter({ workspacesDir, embedded = false }: { workspacesDir?: string; embedded?: boolean }) {
+  const router = useRouter();
   const [state, setState] = useState<SetupState>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -56,6 +58,16 @@ export function SetupCenter({ workspacesDir, embedded = false }: { workspacesDir
 
   const completedCount = useMemo(() => MILESTONES.filter((milestone) => isComplete(milestone.key, state)).length, [state]);
   const heading = completedCount > 0 ? "Continue setting up your first chain." : "Let’s get your first chain running.";
+  const routes: Record<string, string> = {
+    provider: "/settings/agent-configs?from=setup",
+    workspace: "/workspaces?from=setup",
+    readiness: "/settings/agent-health?from=setup",
+    sampleRun: "/chains?setup=sample",
+  };
+  const goToMilestone = (key: string) => {
+    const route = routes[key];
+    if (route) router.push(route);
+  };
 
   return (
     <main aria-labelledby="setup-center-heading" className={cn("w-full", !embedded && "min-h-screen bg-background px-4 py-8 sm:px-6") }>
@@ -75,7 +87,7 @@ export function SetupCenter({ workspacesDir, embedded = false }: { workspacesDir
                 const active = isActive(milestone.key, state) || (!complete && index === completedCount);
                 return (
                   <li key={milestone.key}>
-                    <button type="button" aria-current={active ? "step" : undefined} className="flex w-full items-start gap-2 rounded-md p-2 text-left hover:bg-accent/50">
+                    <button type="button" onClick={() => goToMilestone(milestone.key)} aria-label={`${milestone.label}${complete ? ", complete. Edit or recheck" : active ? ", action needed" : ""}`} aria-current={active ? "step" : undefined} className="flex w-full items-start gap-2 rounded-md p-2 text-left hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                       <span className="mt-0.5 shrink-0" aria-hidden="true">
                         {complete ? <TickCircleFilled className="h-4 w-4 text-emerald-400" /> : active ? <Warning2Filled className="h-4 w-4 text-amber-400" /> : <span className="flex h-4 w-4 items-center justify-center rounded-full border border-foreground/25 text-[10px]">{index + 1}</span>}
                       </span>
