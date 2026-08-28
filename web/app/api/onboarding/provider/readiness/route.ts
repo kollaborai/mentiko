@@ -5,7 +5,7 @@ import { apiSuccess, withErrorHandling } from "@/lib/api-response";
 import { BadRequest, Unauthorized } from "@/lib/api-errors";
 import { getProfile } from "@/lib/agents/agent-profile-storage";
 import { startChainRun } from "@/lib/runs/chain-run-service";
-import { readOnboardingState, writeOnboardingState, nextOperation, CURRENT_SETUP_VERSION, type OnboardingRecord } from "@/lib/onboarding/onboarding-state";
+import { readOnboardingState, writeOnboardingState, nextOperation, CURRENT_SETUP_VERSION, READINESS_DEADLINE_MS } from "@/lib/onboarding/onboarding-state";
 import type { Chain } from "@/lib/types";
 
 export const POST = withErrorHandling(async (request: NextRequest) => {
@@ -26,7 +26,9 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   if (current.provider.selectedProfileId && current.provider.selectedProfileId !== profileId) {
     throw new BadRequest("Profile is not the active onboarding profile", { profileId });
   }
-  const opResult = nextOperation(namespaceId, orgId, "provider_readiness", key, "readiness");
+  const requestFingerprint = JSON.stringify({ profileId, setupVersion });
+  const opResult = nextOperation(namespaceId, orgId, "provider_readiness", key, "readiness", requestFingerprint, READINESS_DEADLINE_MS);
+  if (opResult.reused && opResult.op.status === "timed_out") throw new BadRequest("Readiness operation deadline exceeded", { operationId: opResult.op.operationId, errorCode: opResult.op.errorCode });
   if (opResult.reused && "result" in opResult.op && opResult.op.result) return apiSuccess(opResult.op.result);
   const chain: Chain = {
     id: "onboarding-provider-readiness",

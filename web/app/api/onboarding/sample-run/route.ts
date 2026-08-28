@@ -7,7 +7,7 @@ import { getProfile } from "@/lib/agents/agent-profile-storage";
 import { getWorkspace } from "@/lib/workspaces/workspace-storage";
 import { startChainRun } from "@/lib/runs/chain-run-service";
 import { ensureSampleChain, getSampleChain, SAMPLE_CHAIN_ID } from "@/lib/onboarding/sample-chain-template";
-import { readOnboardingState, writeOnboardingState, nextOperation, CURRENT_SETUP_VERSION } from "@/lib/onboarding/onboarding-state";
+import { readOnboardingState, writeOnboardingState, nextOperation, CURRENT_SETUP_VERSION, SAMPLE_RUN_DEADLINE_MS } from "@/lib/onboarding/onboarding-state";
 import type { Chain } from "@/lib/types";
 
 export const POST = withErrorHandling(async (request: NextRequest) => {
@@ -26,7 +26,9 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   const profile = getProfile(namespaceId, orgId, profileId);
   const workspace = getWorkspace(namespaceId, orgId, workspaceId);
   if (!profile || !workspace || state.workspace.id !== workspaceId || state.workspace.status !== "ready") throw new BadRequest("Workspace is not ready for onboarding");
-  const opResult = nextOperation(namespaceId, orgId, "sample_run", key, "sample-run");
+  const requestFingerprint = JSON.stringify({ profileId, workspaceId, setupVersion });
+  const opResult = nextOperation(namespaceId, orgId, "sample_run", key, "sample-run", requestFingerprint, SAMPLE_RUN_DEADLINE_MS);
+  if (opResult.reused && opResult.op.status === "timed_out") throw new BadRequest("Sample run deadline exceeded", { operationId: opResult.op.operationId, errorCode: opResult.op.errorCode });
   if (opResult.reused && "result" in opResult.op && opResult.op.result) return apiSuccess(opResult.op.result);
   ensureSampleChain(namespaceId, orgId);
   const chain: Chain = { ...(getSampleChain() as unknown as Chain), default_agent_profile: profileId };
