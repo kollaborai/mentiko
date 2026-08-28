@@ -1,0 +1,7 @@
+import { NextRequest } from "next/server";
+import { checkAuth } from "@/lib/auth/api-auth";
+import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
+import { apiSuccess, withErrorHandling } from "@/lib/api-response";
+import { BadRequest, Unauthorized } from "@/lib/api-errors";
+import { readOnboardingState, writeOnboardingState, nextOperation, CURRENT_SETUP_VERSION } from "@/lib/onboarding/onboarding-state";
+export const POST = withErrorHandling(async (request: NextRequest) => { if (!(await checkAuth(request))) throw new Unauthorized(); const b=await request.json(); const key=String(b.idempotencyKey||""), setupVersion=Number(b.setupVersion); if(!key) throw new BadRequest("idempotencyKey is required"); if(setupVersion!==CURRENT_SETUP_VERSION) throw new BadRequest("Unsupported setupVersion",{setupVersion,current:CURRENT_SETUP_VERSION}); const ns=await getNamespaceIdFromRequest(request),org=await getOrgIdFromRequest(request); const {state,op,reused}=nextOperation(ns,org,"input_bar_check",key,"input-bar"); const available=process.env.MENTIKO_INPUT_BAR_ENABLED!=="0"; if(!reused){const s=readOnboardingState(ns,org); s.setupVersion=setupVersion; s.inputBar={status:available?"ready":"needs_attention",available}; writeOnboardingState(ns,org,s,state.revision);} return apiSuccess({operationId:op.operationId,status:available?"ready":"needs_attention",available}); });
