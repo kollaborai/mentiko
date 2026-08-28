@@ -3,6 +3,7 @@ import { timingSafeEqual } from "@/lib/auth/security";
 import { checkAuth } from "@/lib/auth/api-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { readOnboardingState, writeOnboardingState, CURRENT_SETUP_VERSION } from "@/lib/onboarding/onboarding-state";
+import { createSecret } from "@/lib/secrets/secrets-store";
 
 export const dynamic = "force-dynamic";
 const STATE_COOKIE = "mentiko-github-oauth-state";
@@ -31,7 +32,13 @@ export async function GET(request: NextRequest) {
     if (!userResponse.ok) throw new Error("github_user_failed");
     const user = await userResponse.json() as { id?: number; login?: string; name?: string; avatar_url?: string };
     state.setupVersion = CURRENT_SETUP_VERSION;
-    state.github = { status: "connected", account: { id: user.id, login: user.login, name: user.name, avatarUrl: user.avatar_url, accessToken: token.access_token } };
+    const tokenSecret = createSecret(ns, org, {
+      name: "GitHub OAuth token",
+      envVar: "GITHUB_ACCESS_TOKEN",
+      value: token.access_token,
+      description: `OAuth token for GitHub account ${user.login || user.id || "unknown"}`,
+    });
+    state.github = { status: "connected", account: { id: user.id, login: user.login, name: user.name, avatarUrl: user.avatar_url, tokenSecretId: tokenSecret.id } };
     state.operations[entry.operationId] = { ...entry, status: "completed", result: { state: returnedState, login: user.login } };
     writeOnboardingState(ns, org, state, state.revision);
     const response = NextResponse.redirect(new URL("/settings/integrations?github=connected", request.url));
