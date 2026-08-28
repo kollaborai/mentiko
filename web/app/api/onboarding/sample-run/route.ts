@@ -8,6 +8,7 @@ import { getWorkspace } from "@/lib/workspaces/workspace-storage";
 import { startChainRun } from "@/lib/runs/chain-run-service";
 import { ensureSampleChain, getSampleChain, SAMPLE_CHAIN_ID } from "@/lib/onboarding/sample-chain-template";
 import { readOnboardingState, writeOnboardingState, nextOperation, CURRENT_SETUP_VERSION } from "@/lib/onboarding/onboarding-state";
+import type { Chain } from "@/lib/types";
 
 export const POST = withErrorHandling(async (request: NextRequest) => {
   if (!(await checkAuth(request))) throw new Unauthorized();
@@ -26,9 +27,9 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   const workspace = getWorkspace(namespaceId, orgId, workspaceId);
   if (!profile || !workspace || state.workspace.id !== workspaceId || state.workspace.status !== "ready") throw new BadRequest("Workspace is not ready for onboarding");
   const opResult = nextOperation(namespaceId, orgId, "sample_run", key, "sample-run");
-  if (opResult.reused && opResult.op.result) return apiSuccess(opResult.op.result);
+  if (opResult.reused && "result" in opResult.op && opResult.op.result) return apiSuccess(opResult.op.result);
   ensureSampleChain(namespaceId, orgId);
-  const chain = { ...getSampleChain(), default_agent_profile: profileId };
+  const chain: Chain = { ...(getSampleChain() as unknown as Chain), default_agent_profile: profileId };
   const run = await startChainRun({ request, namespaceId, orgId, body: { chain, chainId: SAMPLE_CHAIN_ID, workspaceId, agentProfileId: profileId, userPrompt: "Create a short introduction to Mentiko.", metadata: { source: "onboarding-sample-run" } } });
   const result = { operationId: opResult.op.operationId, status: "in_progress", runId: run.runId, profileId, workspaceId, mutatesWorkspace: false };
   const next = readOnboardingState(namespaceId, orgId);

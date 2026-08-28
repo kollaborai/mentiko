@@ -5,7 +5,8 @@ import { apiSuccess, withErrorHandling } from "@/lib/api-response";
 import { BadRequest, Unauthorized } from "@/lib/api-errors";
 import { getProfile } from "@/lib/agents/agent-profile-storage";
 import { startChainRun } from "@/lib/runs/chain-run-service";
-import { readOnboardingState, writeOnboardingState, nextOperation, CURRENT_SETUP_VERSION } from "@/lib/onboarding/onboarding-state";
+import { readOnboardingState, writeOnboardingState, nextOperation, CURRENT_SETUP_VERSION, type OnboardingRecord } from "@/lib/onboarding/onboarding-state";
+import type { Chain } from "@/lib/types";
 
 export const POST = withErrorHandling(async (request: NextRequest) => {
   if (!(await checkAuth(request))) throw new Unauthorized();
@@ -26,14 +27,14 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     throw new BadRequest("Profile is not the active onboarding profile", { profileId });
   }
   const opResult = nextOperation(namespaceId, orgId, "provider_readiness", key, "readiness");
-  if (opResult.reused && opResult.op.result) return apiSuccess(opResult.op.result);
-  const chain = {
+  if (opResult.reused && "result" in opResult.op && opResult.op.result) return apiSuccess(opResult.op.result);
+  const chain: Chain = {
     id: "onboarding-provider-readiness",
     name: "Onboarding provider readiness",
     version: "1.0.0",
     description: "Verifies the selected provider can execute a runner probe.",
     default_agent_profile: profileId,
-    config: { max_rounds: 1, session_prefix: "onboarding-readiness" },
+    config: { cli: profile.cli, cli_args: profile.extra_args, monitor: true, max_rounds: 1, session_prefix: "onboarding-readiness" },
     agents: [{ id: "readiness-probe", name: "Readiness Probe", role: "Verify provider readiness.", prompt: "Start and respond briefly. Do not modify files.", triggers: ["manual-start"], emits: "readiness-complete", agent_profile: profileId }],
   };
   const run = await startChainRun({
