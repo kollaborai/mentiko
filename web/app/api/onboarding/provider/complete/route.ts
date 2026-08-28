@@ -1,0 +1,10 @@
+import { NextRequest } from "next/server";
+import { checkAuth } from "@/lib/auth/api-auth";
+import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
+import { apiSuccess, withErrorHandling } from "@/lib/api-response";
+import { BadRequest, Unauthorized } from "@/lib/api-errors";
+import { readOnboardingState, writeOnboardingState, nextOperation } from "@/lib/onboarding/onboarding-state";
+import { getCatalogBundleByProvider } from "@/lib/agents/agent-provider-catalog";
+import { listProfiles, findDefaultProfile } from "@/lib/agents/agent-profile-storage";
+import type { AgentProfileProvider } from "@/lib/types";
+export const POST = withErrorHandling(async (request: NextRequest) => { if (!(await checkAuth(request))) throw new Unauthorized(); const body=await request.json(); const provider=String(body.provider||"") as AgentProfileProvider; const key=String(body.idempotencyKey||""); if(!provider||!key) throw new BadRequest("provider and idempotencyKey are required"); const bundle=getCatalogBundleByProvider(provider); if(!bundle) throw new BadRequest(`Unknown provider: ${provider}`); const ns=await getNamespaceIdFromRequest(request), org=await getOrgIdFromRequest(request); const {state,op}=nextOperation(ns,org,"provider_complete",key,"activation"); const profiles=listProfiles(ns,org); const selected=String(body.profileId||bundle.profiles[0]?.id||""); const profile=profiles.find(p=>p.id===selected)||findDefaultProfile(ns,org); const updated=readOnboardingState(ns,org); updated.provider={selectedCli:provider,selectedProfileId:profile?.id||selected||null,defaultVerified:Boolean(profile?.isDefault),status:profile?"ready":"needs_attention"}; writeOnboardingState(ns,org,updated, state.revision); return apiSuccess({bundleInstalled:false,bundleAlreadyPresent:true,profileSynced:false,defaultChanged:false,defaultVerified:updated.provider.defaultVerified,readinessAvailable:Boolean(profile?.readiness?.enabled),operationId:op.operationId,operationStatus:op.status,phase:op.phase,errorCode:profile?null:"PROFILE_NOT_FOUND"}); });
