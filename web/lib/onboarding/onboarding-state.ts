@@ -73,7 +73,7 @@ export function operation(ns:string,org:string,kind:string,key:string, fingerpri
 }
 export function nextOperation(ns:string,org:string,kind:string,key:string,phase:string, fingerprint?: string, deadlineMs?: number) {
   const existing=operation(ns,org,kind,key,fingerprint);
-  if(existing) return { state:readOnboardingState(ns,org), op:existing, reused:true };
+  if(existing) { const state=readOnboardingState(ns,org); const deadline=existing.deadlineAt ? Date.parse(existing.deadlineAt) : NaN; if ((existing.status === "in_progress" || existing.status === "running" || existing.status === "queued") && Number.isFinite(deadline) && deadline <= Date.now()) { const timedOut={...existing,status:"timed_out",terminalAt:new Date().toISOString(),updatedAt:new Date().toISOString(),errorCode:"DEADLINE_EXCEEDED",errorMessage:"Operation deadline exceeded"}; state.operations[existing.operationId]=timedOut; return { state:writeOnboardingState(ns,org,state), op:timedOut, reused:true }; } return { state, op:existing, reused:true }; }
   const now = new Date(); const operationId=`onb_${crypto.randomUUID()}`;
   const op: OnboardingOperation={operationId,idempotencyKey:key,requestFingerprint:fingerprint,kind,status:"in_progress",phase,createdAt:now.toISOString(),updatedAt:now.toISOString(),deadlineAt:deadlineMs ? new Date(now.getTime()+deadlineMs).toISOString() : undefined};
   const s=readOnboardingState(ns,org); s.operations[operationId]=op; return { state:writeOnboardingState(ns,org,s),op, reused:false };

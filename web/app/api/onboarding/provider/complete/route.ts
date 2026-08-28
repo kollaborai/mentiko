@@ -32,6 +32,9 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
       operationStatus: result.op.status, phase: result.op.phase, errorCode: null });
   }
   const before = listProfiles(namespaceId, orgId);
+  const beforeById = new Map(before.map((p) => [p.id, p]));
+  const beforeDefault = before.find((p) => p.isDefault)?.id ?? null;
+  const beforeAdvisorDefault = before.find((p) => p.isAdvisorDefault)?.id ?? null;
   const state = readOnboardingState(namespaceId, orgId);
   try {
     const response = await installBundle(request);
@@ -56,11 +59,19 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     const updated = readOnboardingState(namespaceId, orgId);
     updated.setupVersion = setupVersion;
     updated.provider = { selectedCli: provider, selectedProfileId: active.id, defaultVerified, status: "ready" };
+    const completedOp = { ...result.op, status: "completed", terminalAt: new Date().toISOString(), updatedAt: new Date().toISOString(), result: { profileId: active.id, defaultVerified } };
+    updated.operations[completedOp.operationId] = completedOp;
     writeOnboardingState(namespaceId, orgId, updated, result.state.revision);
-    return apiSuccess({ bundleInstalled: true, bundleAlreadyPresent: false, profileSynced: true,
-      defaultChanged: true, defaultVerified, readinessAvailable: Boolean(active.readiness?.enabled),
-      operationId: result.op.operationId, operationStatus: result.op.status, phase: result.op.phase, errorCode: null });
+    const afterProfiles = listProfiles(namespaceId, orgId);
+    const bundleAlreadyPresent = before.length === afterProfiles.length && afterProfiles.every((p) => beforeById.has(p.id));
+    const profileSynced = afterProfiles.some((p) => !beforeById.has(p.id) || JSON.stringify(p) !== JSON.stringify(beforeById.get(p.id)));
+    const defaultChanged = beforeDefault !== active.id || beforeAdvisorDefault !== afterProfiles.find((p) => p.isAdvisorDefault)?.id;
+    return apiSuccess({ bundleInstalled: !bundleAlreadyPresent, bundleAlreadyPresent, profileSynced,
+      defaultChanged, defaultVerified, readinessAvailable: Boolean(active.readiness?.enabled),
+      operationId: completedOp.operationId, operationStatus: completedOp.status, phase: completedOp.phase, errorCode: null });
   } catch (error) {
+    const failed = { ...result.op, status: "failed", terminalAt: new Date().toISOString(), updatedAt: new Date().toISOString(), errorCode: error instanceof Error ? error.name : "ACTIVATION_FAILED", errorMessage: error instanceof Error ? error.message : "Provider activation failed" };
+    try { const failedState = readOnboardingState(namespaceId, orgId); failedState.operations[failed.operationId] = failed; writeOnboardingState(namespaceId, orgId, failedState); } catch { /* preserve original error */ }
     // Restore profile flags/data if activation or state CAS fails.
     const after = listProfiles(namespaceId, orgId);
     for (const profile of after) {
