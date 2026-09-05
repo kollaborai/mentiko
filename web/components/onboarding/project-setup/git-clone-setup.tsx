@@ -42,8 +42,13 @@ export function GitCloneSetup({
   const { fetchWithNamespace } = useNamespaceFetch();
   const [url, setUrl] = useState("");
   const [visibility, setVisibility] = useState<"public" | "private">("public");
-  const [token, setToken] = useState("");
-  const [secretSaved, setSecretSaved] = useState(false);
+  // The raw token value never lands in component state — only the saved
+  // secret's reference id does. handleSecretSave posts it straight through
+  // to /api/secrets and the clone request later sends only tokenSecretId;
+  // /api/fs/git-clone resolves the actual value server-side.
+  const [tokenSecretId, setTokenSecretId] = useState("");
+  const [secretSaving, setSecretSaving] = useState(false);
+  const [secretSaveError, setSecretSaveError] = useState("");
   const [parent, setParent] = useState(workspacesDir || "");
   const [parentManual, setParentManual] = useState(false);
   const [showBrowser, setShowBrowser] = useState(false);
@@ -54,6 +59,26 @@ export function GitCloneSetup({
   const [error, setError] = useState("");
   const [authMethod, setAuthMethod] = useState<"terminal" | "token">("terminal");
   const [ghAuthStarted, setGhAuthStarted] = useState(false);
+  const [githubRepos, setGithubRepos] = useState<Array<{ full_name: string; default_branch: string; private?: boolean }>>([]);
+  const [loadingGithubRepos, setLoadingGithubRepos] = useState(false);
+
+  const loadGithubRepos = useCallback(async () => {
+    setLoadingGithubRepos(true);
+    setError("");
+    try {
+      const response = await fetchWithNamespace("/api/integrations/github/repositories?limit=25");
+      const payload = await response.json().catch(() => ({})) as { repositories?: typeof githubRepos; error?: { message?: string } };
+      if (!response.ok) {
+        setError(payload.error?.message || "GitHub repositories unavailable");
+        return;
+      }
+      setGithubRepos(payload.repositories || []);
+    } catch {
+      setError("GitHub repositories unavailable");
+    } finally {
+      setLoadingGithubRepos(false);
+    }
+  }, [fetchWithNamespace]);
 
   const derivedName = nameManual ? name : parseRepoName(url);
 
@@ -100,10 +125,28 @@ export function GitCloneSetup({
 
   const handleSecretSave = useCallback(
     async (data: { name: string; envVar: string; value: string; description?: string }) => {
-      setToken(data.value);
-      setSecretSaved(true);
+      setSecretSaving(true);
+      setSecretSaveError("");
+      try {
+        const res = await fetchWithNamespace("/api/secrets", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(data),
+        });
+        const payload = (await res.json().catch(() => ({}))) as { secret?: { id?: string } };
+        if (!res.ok || !payload.secret?.id) {
+          setSecretSaveError(getApiErrorMessage(payload, "failed to save token"));
+          return;
+        }
+        // the raw value (data.value) is discarded here — only the reference survives
+        setTokenSecretId(payload.secret.id);
+      } catch {
+        setSecretSaveError("failed to save token");
+      } finally {
+        setSecretSaving(false);
+      }
     },
-    []
+    [fetchWithNamespace]
   );
 
   const handleSubmit = useCallback(async () => {
@@ -128,7 +171,7 @@ export function GitCloneSetup({
           url: url.trim(),
           parent: parent.trim(),
           name: derivedName || undefined,
-          token: visibility === "private" && token ? token : undefined,
+          tokenSecretId: visibility === "private" && tokenSecretId ? tokenSecretId : undefined,
           branch: branch.trim() || undefined,
         }),
       });
@@ -175,7 +218,7 @@ export function GitCloneSetup({
     } finally {
       setCloning(false);
     }
-  }, [url, parent, derivedName, visibility, token, branch, fetchWithNamespace, onComplete]);
+  }, [url, parent, derivedName, visibility, tokenSecretId, branch, fetchWithNamespace, onComplete]);
 
   return (
     <div className="space-y-5">
@@ -184,6 +227,26 @@ export function GitCloneSetup({
         <p className="text-sm text-foreground/50">
           pull down an existing git repo
         </p>
+      </div>
+
+      {/* connected GitHub repositories */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <label className="text-xs text-foreground/50">GitHub repository</label>
+          <button type="button" onClick={loadGithubRepos} disabled={loadingGithubRepos}
+            className="text-[10px] text-foreground/40 hover:text-foreground transition-colors">
+            {loadingGithubRepos ? "loading..." : "browse connected repos"}
+          </button>
+        </div>
+        {githubRepos.length > 0 && <select className="w-full bg-muted rounded-md px-3 py-2 text-sm"
+          value={url} onChange={(e) => {
+            const repo = githubRepos.find((item) => `https://github.com/${item.full_name}.git` === e.target.value);
+            handleUrlChange(e.target.value);
+            if (repo && !branch) setBranch(repo.default_branch);
+          }}>
+          <option value="">select a repository...</option>
+          {githubRepos.map((repo) => <option key={repo.full_name} value={`https://github.com/${repo.full_name}.git`}>{repo.full_name}</option>)}
+        </select>}
       </div>
 
       {/* URL */}
@@ -279,7 +342,7 @@ export function GitCloneSetup({
             </div>
           )}
 
-          {authMethod === "token" && !secretSaved && (
+          {authMethod === "token" && !tokenSecretId && (
             <div className="bg-muted/30 rounded-md p-3 space-y-2">
               <p className="text-[10px] text-foreground/40">
                 provide a personal access token
@@ -288,20 +351,19 @@ export function GitCloneSetup({
                 inline
                 prefilledPreset="GITHUB_TOKEN"
                 onSave={handleSecretSave}
+                saving={secretSaving}
+                error={secretSaveError}
               />
             </div>
           )}
 
-          {authMethod === "token" && secretSaved && (
+          {authMethod === "token" && tokenSecretId && (
             <div className="flex items-center gap-2 text-xs text-foreground/50 bg-muted/30 rounded-md px-3 py-2">
               <span className="text-green-400">*</span>
               token saved
               <button
                 type="button"
-                onClick={() => {
-                  setSecretSaved(false);
-                  setToken("");
-                }}
+                onClick={() => setTokenSecretId("")}
                 className="ml-auto text-[10px] text-foreground/30 hover:text-foreground transition-colors"
               >
                 change
