@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, type ComponentType } from "react";
 import { Button } from "@/components/ui/button";
+import { BusyButton } from "@/components/onboarding/setup-footer";
 import {
   ArrowLeft2Filled,
   TickCircleFilled,
@@ -17,6 +18,7 @@ import {
   getAgentConfigOptionsForTool,
   getDefaultAgentConfigIdForTool,
 } from "@/lib/agents/provider-config";
+import { getReadinessEnabledProfileIds, getPreferredReadinessProfileId } from "@/lib/agents/readiness-profiles";
 import { TerminalAuthOption } from "./terminal-auth-option";
 import { TerminalIcon } from "@/components/ui/terminal-icon";
 
@@ -29,6 +31,12 @@ interface AntigravityAuthProps {
   detectedVersion?: string;
   initialAuthMethod?: AuthOption;
   backLabel?: string;
+  /** From detect-cli: skip the fresh login flow when already signed in. */
+  authenticated?: boolean;
+  /** Hide this adapter's own header — the host (Setup Center) already shows one. */
+  embedded?: boolean;
+  /** An ancestor is still processing after onSave fired — keep the primary action visibly busy through both phases. */
+  busy?: boolean;
 }
 
 type AuthOption = "login" | "api-key" | "terminal";
@@ -37,8 +45,9 @@ type LoginStatus = "idle" | "pending" | "complete" | "failed";
 
 const antigravityCreds = PROVIDER_CREDENTIALS.gemini;
 const antigravityProfileOptions = getAgentConfigOptionsForTool("antigravity");
+const antigravityReadinessIds = getReadinessEnabledProfileIds("antigravity");
 
-export function AntigravityAuth({ onSave, onBack, detectedVersion, initialAuthMethod, backLabel }: AntigravityAuthProps) {
+export function AntigravityAuth({ onSave, onBack, detectedVersion, initialAuthMethod, backLabel, authenticated, embedded, busy }: AntigravityAuthProps) {
   const { fetchWithNamespace } = useNamespaceFetch();
   const [authOption, setAuthOption] = useState<AuthOption>(initialAuthMethod ?? "api-key");
   const [model, setModel] = useState(getDefaultAgentConfigIdForTool("antigravity"));
@@ -47,7 +56,7 @@ export function AntigravityAuth({ onSave, onBack, detectedVersion, initialAuthMe
   const [error, setError] = useState("");
 
   // interactive login state
-  const [loginStatus, setLoginStatus] = useState<LoginStatus>("idle");
+  const [loginStatus, setLoginStatus] = useState<LoginStatus>(authenticated ? "complete" : "idle");
   const [authUrl, setAuthUrl] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -71,11 +80,11 @@ export function AntigravityAuth({ onSave, onBack, detectedVersion, initialAuthMe
         const filtered = all.filter(p => p.cli === "agy");
         setProfiles(filtered);
         const options = filtered.length > 0 ? filtered : antigravityProfileOptions;
-        setModel((current) => (
-          options.some((option) => option.id === current)
-            ? current
-            : options[0]?.id ?? ""
-        ));
+        const preferred = getPreferredReadinessProfileId("antigravity");
+        // This effect runs exactly once (mount), so `current` here is always
+        // the naive useState initializer, never a real prior choice. Always
+        // steer to the readiness-capable profile when the list has one.
+        setModel(preferred && options.some((option) => option.id === preferred) ? preferred : (options[0]?.id ?? ""));
       })
       .catch(() => {});
   }, []);
@@ -92,13 +101,13 @@ export function AntigravityAuth({ onSave, onBack, detectedVersion, initialAuthMe
       });
       if (!res.ok) {
         setLoginStatus("failed");
-        setError("failed to start auth session");
+        setError("Failed to start auth session.");
         return;
       }
       const data = (await res.json()) as { sessionId?: string };
       if (!data.sessionId) {
         setLoginStatus("failed");
-        setError("no session ID returned");
+        setError("No session ID returned.");
         return;
       }
 
@@ -120,7 +129,7 @@ export function AntigravityAuth({ onSave, onBack, detectedVersion, initialAuthMe
           } else if (pollData.status === "failed") {
             stopPolling();
             setLoginStatus("failed");
-            setError(pollData.error || "authentication failed");
+            setError(pollData.error || "Authentication failed.");
           }
         } catch {
           // poll error, keep trying
@@ -128,7 +137,7 @@ export function AntigravityAuth({ onSave, onBack, detectedVersion, initialAuthMe
       }, 2000);
     } catch {
       setLoginStatus("failed");
-      setError("network error");
+      setError("Network error.");
     }
   };
 
@@ -147,42 +156,47 @@ export function AntigravityAuth({ onSave, onBack, detectedVersion, initialAuthMe
         body: JSON.stringify(data),
       });
       if (!res.ok) {
-        setError("failed to save secret");
+        setError("Failed to save secret.");
         return;
       }
       onSave({ authMethod: "api-key", model });
     } catch {
-      setError("failed to save secret");
+      setError("Failed to save secret.");
     } finally {
       setSaving(false);
     }
   };
 
   const handleLoginDone = () => {
+    if (loginStatus !== "complete") {
+      setError("Sign in to Antigravity CLI first.");
+      return;
+    }
     onSave({ authMethod: "login", model });
   };
 
   const showFooterSave = authOption === "login";
   const profileOptions = profiles.length > 0 ? profiles : antigravityProfileOptions;
+  const isBusy = saving || Boolean(busy);
 
   const options: { key: AuthOption; icon: ComponentType<{ className?: string }>; label: string; desc: string }[] = [
     {
       key: "api-key",
       icon: KeyFilled,
-      label: "use an API key",
-      desc: `set ${antigravityCreds.envKey} as a secret`,
+      label: "Use an API Key",
+      desc: `Set ${antigravityCreds.envKey} as a secret.`,
     },
     {
       key: "login",
       icon: Link2Filled,
-      label: "Antigravity CLI browser login",
-      desc: "runs agy and starts Google sign-in if needed",
+      label: "Antigravity CLI Browser Login",
+      desc: "Runs agy and starts Google sign-in if needed.",
     },
     {
       key: "terminal",
       icon: TerminalIcon,
-      label: "open in terminal",
-      desc: "run auth interactively in the terminal",
+      label: "Open in Terminal",
+      desc: "Run auth interactively in the terminal.",
     },
   ];
 
@@ -195,47 +209,44 @@ export function AntigravityAuth({ onSave, onBack, detectedVersion, initialAuthMe
       transition={{ duration: 0.3 }}
       className="space-y-5"
     >
-      <div className="text-center">
-        <h2 className="text-lg font-semibold mb-1">Configure Antigravity CLI</h2>
-        {detectedVersion && (
-          <p className="text-[10px] text-foreground/30">
-            detected: {detectedVersion}
-          </p>
-        )}
-      </div>
+      {!embedded && (
+        <div className="text-center">
+          <h2 className="text-lg font-semibold mb-1">Configure Antigravity CLI</h2>
+          {detectedVersion && (
+            <p className="text-[10px] text-foreground/30">
+              Detected: {detectedVersion}
+            </p>
+          )}
+        </div>
+      )}
 
       {/* auth option selector */}
       <div className="space-y-2">
         {options.map((opt) => {
           const Icon = opt.icon;
           const active = authOption === opt.key;
-          const disabled = false;
           return (
             <button
               key={opt.key}
               type="button"
-              disabled={disabled}
               onClick={() => {
-                if (disabled) return;
                 setAuthOption(opt.key);
                 setError("");
               }}
               className={`w-full text-left p-3 rounded-md flex items-start gap-3 transition-all ${
-                disabled
-                  ? "bg-muted/30 opacity-40 cursor-not-allowed"
-                  : active
-                    ? "bg-accent ring-1 ring-foreground/10"
-                    : "bg-muted hover:bg-accent/50"
+                active
+                  ? "bg-accent ring-1 ring-foreground/10"
+                  : "bg-muted hover:bg-accent/50"
               }`}
             >
               <div
                 className={`mt-0.5 h-3.5 w-3.5 rounded-full border flex items-center justify-center ${
-                  active && !disabled
+                  active
                     ? "border-foreground/60 bg-foreground/10"
                     : "border-foreground/20"
                 }`}
               >
-                {active && !disabled && (
+                {active && (
                   <div className="h-1.5 w-1.5 rounded-full bg-foreground/80" />
                 )}
               </div>
@@ -259,18 +270,18 @@ export function AntigravityAuth({ onSave, onBack, detectedVersion, initialAuthMe
           <div className="space-y-3">
             {loginStatus === "idle" && (
               <Button onClick={startLogin} className="w-full" size="sm">
-                start Antigravity CLI login
+                Start Antigravity CLI Login
               </Button>
             )}
             {loginStatus === "pending" && (
               <div className="space-y-2 text-center">
                 <p className="text-xs text-foreground/50">
-                  waiting for Antigravity CLI...
+                  Waiting for Antigravity CLI…
                 </p>
                 {authUrl && (
                   <div className="bg-muted rounded-md p-2">
                     <p className="text-[10px] text-foreground/40 mb-1">
-                      open this link if browser didn&apos;t open:
+                      Open this link if the browser didn&apos;t open:
                     </p>
                     <a
                       href={authUrl}
@@ -290,14 +301,14 @@ export function AntigravityAuth({ onSave, onBack, detectedVersion, initialAuthMe
             {loginStatus === "complete" && (
               <div className="flex items-center gap-2 justify-center text-green-400">
                 <TickCircleFilled className="h-4 w-4" />
-                <span className="text-sm">signed in</span>
+                <span className="text-sm">Signed In</span>
               </div>
             )}
             {loginStatus === "failed" && (
               <div className="space-y-2 text-center">
                 <div className="flex items-center gap-2 justify-center text-red-400">
                   <CloseCircleFilled className="h-4 w-4" />
-                  <span className="text-xs">{error || "sign in failed"}</span>
+                  <span className="text-xs">{error || "Sign in failed."}</span>
                 </div>
                 <Button
                   onClick={() => {
@@ -307,7 +318,7 @@ export function AntigravityAuth({ onSave, onBack, detectedVersion, initialAuthMe
                   variant="outline"
                   size="sm"
                 >
-                  try again
+                  Try Again
                 </Button>
               </div>
             )}
@@ -329,9 +340,9 @@ export function AntigravityAuth({ onSave, onBack, detectedVersion, initialAuthMe
         )}
       </div>
 
-      {/* agent config selector */}
+      {/* profile selector */}
       <div className="space-y-1">
-        <label className="text-xs text-foreground/50">default agent config</label>
+        <label className="text-xs text-foreground/50">Profile for Your First Run</label>
         <select
           className="w-full h-8 px-3 text-xs rounded-md bg-muted focus:ring-1 focus:ring-accent border-0"
           value={model}
@@ -339,7 +350,7 @@ export function AntigravityAuth({ onSave, onBack, detectedVersion, initialAuthMe
         >
           {profileOptions.map((p) => (
             <option key={p.id} value={p.id}>
-              {p.name}
+              {p.name}{!antigravityReadinessIds.has(p.id) ? " (cannot be verified here)" : ""}
             </option>
           ))}
         </select>
@@ -352,18 +363,17 @@ export function AntigravityAuth({ onSave, onBack, detectedVersion, initialAuthMe
           className="flex items-center gap-1 text-xs text-foreground/40 hover:text-foreground transition-colors"
         >
           <ArrowLeft2Filled className="h-3.5 w-3.5" />
-          {backLabel ?? "back to tools"}
+          {backLabel ?? "Back to Tools"}
         </button>
         {showFooterSave && (
-          <Button
-            size="sm"
-            disabled={saving || loginStatus !== "complete"}
-            onClick={handleLoginDone}
-          >
-            {saving ? "saving..." : "save"}
-          </Button>
+          <BusyButton busy={isBusy} busyLabel="Saving…" onClick={handleLoginDone}>
+            Save and Check Antigravity CLI
+          </BusyButton>
         )}
       </div>
+      {authOption === "login" && loginStatus !== "failed" && error && (
+        <p className="text-right text-xs text-red-400">{error}</p>
+      )}
     </motion.div>
   );
 }

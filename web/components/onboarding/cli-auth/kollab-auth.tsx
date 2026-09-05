@@ -7,7 +7,7 @@ import {
   KeyFilled,
 } from "@aliimam/icons";
 
-import { Button } from "@/components/ui/button";
+import { BusyButton } from "@/components/onboarding/setup-footer";
 import { SecretForm } from "@/components/secrets/secret-form";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import {
@@ -15,6 +15,7 @@ import {
   getAgentConfigOptionsForTool,
   getDefaultAgentConfigIdForTool,
 } from "@/lib/agents/provider-config";
+import { getReadinessEnabledProfileIds, getPreferredReadinessProfileId } from "@/lib/agents/readiness-profiles";
 import { TerminalIcon } from "@/components/ui/terminal-icon";
 import { TerminalAuthOption } from "./terminal-auth-option";
 
@@ -27,18 +28,27 @@ interface KollabAuthProps {
   onBack: () => void;
   detectedVersion?: string;
   backLabel?: string;
+  /** Accepted for a consistent adapter contract; Kollab's terminal path has no login/device-auth flow to skip. */
+  authenticated?: boolean;
+  /** Hide this adapter's own header — the host (Setup Center) already shows one. */
+  embedded?: boolean;
+  /** An ancestor is still processing after onSave fired — keep the primary action visibly busy through both phases. */
+  busy?: boolean;
 }
 
 type AuthMethod = "terminal" | "api-key";
 
 const kollabCreds = PROVIDER_CREDENTIALS.kollab;
 const kollabProfileOptions = getAgentConfigOptionsForTool("kollab");
+const kollabReadinessIds = getReadinessEnabledProfileIds("kollab");
 
 export function KollabAuth({
   onSave,
   onBack,
   detectedVersion,
   backLabel,
+  embedded,
+  busy,
 }: KollabAuthProps) {
   const { fetchWithNamespace } = useNamespaceFetch();
   const [authMethod, setAuthMethod] = useState<AuthMethod>("terminal");
@@ -60,14 +70,16 @@ export function KollabAuth({
         const filtered = all.filter((p) => p.cli === "kollab");
         setProfiles(filtered);
         const options = filtered.length > 0 ? filtered : kollabProfileOptions;
-        setModel((current) => (
-          options.some((option) => option.id === current)
-            ? current
-            : options[0]?.id ?? ""
-        ));
+        const preferred = getPreferredReadinessProfileId("kollab");
+        // This effect runs exactly once (mount), so `current` here is always
+        // the naive useState initializer, never a real prior choice. Always
+        // steer to the readiness-capable profile when the list has one.
+        setModel(preferred && options.some((option) => option.id === preferred) ? preferred : (options[0]?.id ?? ""));
       })
       .catch(() => {});
   }, []);
+
+  const isBusy = saving || Boolean(busy);
 
   const handleApiKeySave = async (data: {
     name: string;
@@ -84,7 +96,7 @@ export function KollabAuth({
         body: JSON.stringify(data),
       });
       if (!res.ok) {
-        setError("failed to save secret");
+        setError("Failed to save secret.");
         return;
       }
 
@@ -96,7 +108,7 @@ export function KollabAuth({
         secretName: secret?.name,
       });
     } catch {
-      setError("failed to save secret");
+      setError("Failed to save secret.");
     } finally {
       setSaving(false);
     }
@@ -111,14 +123,14 @@ export function KollabAuth({
     {
       key: "terminal",
       icon: TerminalIcon,
-      label: "open in terminal",
-      desc: "runs kollab --login openai",
+      label: "Open in Terminal",
+      desc: "Runs kollab --login openai.",
     },
     {
       key: "api-key",
       icon: KeyFilled,
-      label: "use an API key",
-      desc: `set ${kollabCreds.envKey} as a secret`,
+      label: "Use an API Key",
+      desc: `Set ${kollabCreds.envKey} as a secret.`,
     },
   ];
   const profileOptions = profiles.length > 0 ? profiles : kollabProfileOptions;
@@ -133,14 +145,16 @@ export function KollabAuth({
       transition={{ duration: 0.3 }}
       className="space-y-5"
     >
-      <div className="text-center">
-        <h2 className="text-lg font-semibold mb-1">Configure Kollab</h2>
-        {detectedVersion && (
-          <p className="text-[10px] text-foreground/30">
-            detected: {detectedVersion}
-          </p>
-        )}
-      </div>
+      {!embedded && (
+        <div className="text-center">
+          <h2 className="text-lg font-semibold mb-1">Configure Kollab</h2>
+          {detectedVersion && (
+            <p className="text-[10px] text-foreground/30">
+              Detected: {detectedVersion}
+            </p>
+          )}
+        </div>
+      )}
 
       <div className="space-y-2">
         {options.map((opt) => {
@@ -200,7 +214,7 @@ export function KollabAuth({
       </div>
 
       <div className="space-y-1">
-        <label className="text-xs text-foreground/50">default agent config</label>
+        <label className="text-xs text-foreground/50">Profile for Your First Run</label>
         <select
           className="w-full h-8 px-3 text-xs rounded-md bg-muted focus:ring-1 focus:ring-accent border-0"
           value={model}
@@ -208,7 +222,7 @@ export function KollabAuth({
         >
           {profileOptions.map((p) => (
             <option key={p.id} value={p.id}>
-              {p.name}
+              {p.name}{!kollabReadinessIds.has(p.id) ? " (cannot be verified here)" : ""}
             </option>
           ))}
         </select>
@@ -220,16 +234,12 @@ export function KollabAuth({
           className="flex items-center gap-1 text-xs text-foreground/40 hover:text-foreground transition-colors"
         >
           <ArrowLeft2Filled className="h-3.5 w-3.5" />
-          {backLabel ?? "back to tools"}
+          {backLabel ?? "Back to Tools"}
         </button>
         {authMethod === "terminal" && (
-          <Button
-            size="sm"
-            disabled={saving}
-            onClick={() => onSave({ authMethod: "login", model })}
-          >
-            save
-          </Button>
+          <BusyButton busy={isBusy} busyLabel="Saving…" onClick={() => onSave({ authMethod: "login", model })}>
+            Save and Check Kollab
+          </BusyButton>
         )}
       </div>
     </motion.div>

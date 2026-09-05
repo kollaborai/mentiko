@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, type ComponentType } from "react";
 import { Button } from "@/components/ui/button";
+import { BusyButton } from "@/components/onboarding/setup-footer";
 import {
   ArrowLeft2Filled,
   TickCircleFilled,
@@ -17,6 +18,7 @@ import {
   getAgentConfigOptionsForTool,
   getDefaultAgentConfigIdForTool,
 } from "@/lib/agents/provider-config";
+import { getReadinessEnabledProfileIds, getPreferredReadinessProfileId } from "@/lib/agents/readiness-profiles";
 import { TerminalIcon } from "@/components/ui/terminal-icon";
 import { TerminalAuthOption } from "./terminal-auth-option";
 import { WebViewport } from "@/components/ui/web-viewport";
@@ -30,6 +32,12 @@ interface ClaudeAuthProps {
   detectedVersion?: string;
   initialAuthMethod?: AuthOption;
   backLabel?: string;
+  /** From detect-cli: skip the fresh login flow when already signed in. */
+  authenticated?: boolean;
+  /** Hide this adapter's own header — the host (Setup Center) already shows one. */
+  embedded?: boolean;
+  /** An ancestor is still processing after onSave fired — keep the primary action visibly busy through both phases. */
+  busy?: boolean;
 }
 
 type AuthOption = "login" | "api-key" | "gateway" | "terminal";
@@ -38,8 +46,9 @@ type LoginStatus = "idle" | "pending" | "complete" | "failed";
 
 const claudeCreds = PROVIDER_CREDENTIALS.claude;
 const claudeProfileOptions = getAgentConfigOptionsForTool("claude");
+const claudeReadinessIds = getReadinessEnabledProfileIds("claude");
 
-export function ClaudeAuth({ onSave, onBack, detectedVersion, initialAuthMethod, backLabel }: ClaudeAuthProps) {
+export function ClaudeAuth({ onSave, onBack, detectedVersion, initialAuthMethod, backLabel, authenticated, embedded, busy }: ClaudeAuthProps) {
   const { fetchWithNamespace } = useNamespaceFetch();
   const [authOption, setAuthOption] = useState<AuthOption>(initialAuthMethod ?? "api-key");
   const [model, setModel] = useState(getDefaultAgentConfigIdForTool("claude"));
@@ -48,7 +57,7 @@ export function ClaudeAuth({ onSave, onBack, detectedVersion, initialAuthMethod,
   const [error, setError] = useState("");
 
   // interactive login state
-  const [loginStatus, setLoginStatus] = useState<LoginStatus>("idle");
+  const [loginStatus, setLoginStatus] = useState<LoginStatus>(authenticated ? "complete" : "idle");
   const [authUrl, setAuthUrl] = useState<string | null>(null);
   const [showViewport, setShowViewport] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -77,11 +86,11 @@ export function ClaudeAuth({ onSave, onBack, detectedVersion, initialAuthMethod,
         const filtered = all.filter(p => p.cli === "claude");
         setProfiles(filtered);
         const options = filtered.length > 0 ? filtered : claudeProfileOptions;
-        setModel((current) => (
-          options.some((option) => option.id === current)
-            ? current
-            : options[0]?.id ?? ""
-        ));
+        const preferred = getPreferredReadinessProfileId("claude");
+        // This effect runs exactly once (mount), so `current` here is always
+        // the naive useState initializer, never a real prior choice. Always
+        // steer to the readiness-capable profile when the list has one.
+        setModel(preferred && options.some((option) => option.id === preferred) ? preferred : (options[0]?.id ?? ""));
       })
       .catch(() => {});
   }, []);
@@ -98,13 +107,13 @@ export function ClaudeAuth({ onSave, onBack, detectedVersion, initialAuthMethod,
       });
       if (!res.ok) {
         setLoginStatus("failed");
-        setError("failed to start auth session");
+        setError("Failed to start auth session.");
         return;
       }
       const data = (await res.json()) as { sessionId?: string };
       if (!data.sessionId) {
         setLoginStatus("failed");
-        setError("no session ID returned");
+        setError("No session ID returned.");
         return;
       }
       // start polling
@@ -131,7 +140,7 @@ export function ClaudeAuth({ onSave, onBack, detectedVersion, initialAuthMethod,
             stopPolling();
             setLoginStatus("failed");
             setShowViewport(false);
-            setError(pollData.error || "authentication failed");
+            setError(pollData.error || "Authentication failed.");
           }
         } catch {
           // poll error, keep trying
@@ -139,7 +148,7 @@ export function ClaudeAuth({ onSave, onBack, detectedVersion, initialAuthMethod,
       }, 2000);
     } catch {
       setLoginStatus("failed");
-      setError("network error");
+      setError("Network error.");
     }
   };
 
@@ -158,12 +167,12 @@ export function ClaudeAuth({ onSave, onBack, detectedVersion, initialAuthMethod,
         body: JSON.stringify(data),
       });
       if (!res.ok) {
-        setError("failed to save secret");
+        setError("Failed to save secret.");
         return;
       }
       onSave({ authMethod: "api-key", model });
     } catch {
-      setError("failed to save secret");
+      setError("Failed to save secret.");
     } finally {
       setSaving(false);
     }
@@ -171,7 +180,7 @@ export function ClaudeAuth({ onSave, onBack, detectedVersion, initialAuthMethod,
 
   const handleGatewaySave = async () => {
     if (!gatewayUrl.trim()) {
-      setError("base URL is required");
+      setError("Base URL is required.");
       return;
     }
     setSaving(true);
@@ -201,37 +210,47 @@ export function ClaudeAuth({ onSave, onBack, detectedVersion, initialAuthMethod,
       }
       onSave({ authMethod: "gateway", model });
     } catch {
-      setError("failed to save gateway config");
+      setError("Failed to save gateway config.");
     } finally {
       setSaving(false);
     }
   };
 
   const handleLoginDone = () => {
+    if (loginStatus !== "complete") {
+      setError("Sign in to Claude Code first.");
+      return;
+    }
     onSave({ authMethod: "login", model });
+  };
+
+  const handleFooterSave = () => {
+    if (authOption === "login") handleLoginDone();
+    else if (authOption === "gateway") handleGatewaySave();
   };
 
   const showFooterSave = authOption === "login" || authOption === "gateway";
   const profileOptions = profiles.length > 0 ? profiles : claudeProfileOptions;
+  const isBusy = saving || Boolean(busy);
 
   const options: { key: AuthOption; icon: ComponentType<{ className?: string }>; label: string; desc: string }[] = [
     {
       key: "api-key",
       icon: KeyFilled,
-      label: "use an API key",
-      desc: `set ${claudeCreds.envKey} as a secret`,
+      label: "Use an API Key",
+      desc: `Set ${claudeCreds.envKey} as a secret.`,
     },
     {
       key: "gateway",
       icon: GlobalFilled,
-      label: "custom gateway",
-      desc: "proxy through a custom API endpoint",
+      label: "Custom Gateway",
+      desc: "Proxy through a custom API endpoint.",
     },
     {
       key: "terminal",
       icon: TerminalIcon,
-      label: "open in terminal",
-      desc: "run auth interactively in the terminal",
+      label: "Open in Terminal",
+      desc: "Run auth interactively in the terminal.",
     },
   ];
 
@@ -244,47 +263,44 @@ export function ClaudeAuth({ onSave, onBack, detectedVersion, initialAuthMethod,
       transition={{ duration: 0.3 }}
       className="space-y-5"
     >
-      <div className="text-center">
-        <h2 className="text-lg font-semibold mb-1">Configure Claude Code</h2>
-        {detectedVersion && (
-          <p className="text-[10px] text-foreground/30">
-            detected: {detectedVersion}
-          </p>
-        )}
-      </div>
+      {!embedded && (
+        <div className="text-center">
+          <h2 className="text-lg font-semibold mb-1">Configure Claude Code</h2>
+          {detectedVersion && (
+            <p className="text-[10px] text-foreground/30">
+              Detected: {detectedVersion}
+            </p>
+          )}
+        </div>
+      )}
 
       {/* auth option selector */}
       <div className="space-y-2">
         {options.map((opt) => {
           const Icon = opt.icon;
           const active = authOption === opt.key;
-          const disabled = false;
           return (
             <button
               key={opt.key}
               type="button"
-              disabled={disabled}
               onClick={() => {
-                if (disabled) return;
                 setAuthOption(opt.key);
                 setError("");
               }}
               className={`w-full text-left p-3 rounded-md flex items-start gap-3 transition-all ${
-                disabled
-                  ? "bg-muted/30 opacity-40 cursor-not-allowed"
-                  : active
-                    ? "bg-accent ring-1 ring-foreground/10"
-                    : "bg-muted hover:bg-accent/50"
+                active
+                  ? "bg-accent ring-1 ring-foreground/10"
+                  : "bg-muted hover:bg-accent/50"
               }`}
             >
               <div
                 className={`mt-0.5 h-3.5 w-3.5 rounded-full border flex items-center justify-center ${
-                  active && !disabled
+                  active
                     ? "border-foreground/60 bg-foreground/10"
                     : "border-foreground/20"
                 }`}
               >
-                {active && !disabled && (
+                {active && (
                   <div className="h-1.5 w-1.5 rounded-full bg-foreground/80" />
                 )}
               </div>
@@ -308,7 +324,7 @@ export function ClaudeAuth({ onSave, onBack, detectedVersion, initialAuthMethod,
           <div className="space-y-3">
             {loginStatus === "idle" && (
               <Button onClick={startLogin} className="w-full" size="sm">
-                sign in
+                Sign In
               </Button>
             )}
             {loginStatus === "pending" && (
@@ -321,11 +337,11 @@ export function ClaudeAuth({ onSave, onBack, detectedVersion, initialAuthMethod,
                         onClick={() => setShowViewport(true)}
                         className="w-full px-3 py-2 text-xs bg-muted hover:bg-accent rounded-md transition-colors"
                       >
-                        open sign-in page
+                        Open Sign-In Page
                       </button>
                     )}
                     <p className="text-[10px] text-foreground/30">
-                      complete sign-in in the browser below
+                      Complete sign-in in the browser below.
                     </p>
                     {showViewport && (
                       <WebViewport
@@ -338,7 +354,7 @@ export function ClaudeAuth({ onSave, onBack, detectedVersion, initialAuthMethod,
                   </>
                 ) : (
                   <p className="text-xs text-foreground/50">
-                    starting auth session...
+                    Starting auth session…
                   </p>
                 )}
                 <div className="flex justify-center">
@@ -349,14 +365,14 @@ export function ClaudeAuth({ onSave, onBack, detectedVersion, initialAuthMethod,
             {loginStatus === "complete" && (
               <div className="flex items-center gap-2 justify-center text-green-400">
                 <TickCircleFilled className="h-4 w-4" />
-                <span className="text-sm">signed in</span>
+                <span className="text-sm">Signed In</span>
               </div>
             )}
             {loginStatus === "failed" && (
               <div className="space-y-2 text-center">
                 <div className="flex items-center gap-2 justify-center text-red-400">
                   <CloseCircleFilled className="h-4 w-4" />
-                  <span className="text-xs">{error || "sign in failed"}</span>
+                  <span className="text-xs">{error || "Sign in failed."}</span>
                 </div>
                 <Button
                   onClick={() => {
@@ -366,7 +382,7 @@ export function ClaudeAuth({ onSave, onBack, detectedVersion, initialAuthMethod,
                   variant="outline"
                   size="sm"
                 >
-                  try again
+                  Try Again
                 </Button>
               </div>
             )}
@@ -386,7 +402,7 @@ export function ClaudeAuth({ onSave, onBack, detectedVersion, initialAuthMethod,
         {authOption === "gateway" && (
           <div className="space-y-3">
             <div className="space-y-1">
-              <label className="text-xs text-foreground/50">base URL</label>
+              <label className="text-xs text-foreground/50">Base URL</label>
               <input
                 type="text"
                 placeholder="https://gateway.example.com/v1"
@@ -397,8 +413,8 @@ export function ClaudeAuth({ onSave, onBack, detectedVersion, initialAuthMethod,
             </div>
             <div className="space-y-1">
               <label className="text-xs text-foreground/50">
-                auth token{" "}
-                <span className="text-foreground/30">(optional)</span>
+                Auth Token{" "}
+                <span className="text-foreground/30">(Optional)</span>
               </label>
               <input
                 type="password"
@@ -417,9 +433,9 @@ export function ClaudeAuth({ onSave, onBack, detectedVersion, initialAuthMethod,
         )}
       </div>
 
-      {/* agent config selector */}
+      {/* profile selector */}
       <div className="space-y-1">
-        <label className="text-xs text-foreground/50">default agent config</label>
+        <label className="text-xs text-foreground/50">Profile for Your First Run</label>
         <select
           className="w-full h-8 px-3 text-xs rounded-md bg-muted focus:ring-1 focus:ring-accent border-0"
           value={model}
@@ -427,7 +443,7 @@ export function ClaudeAuth({ onSave, onBack, detectedVersion, initialAuthMethod,
         >
           {profileOptions.map((p) => (
             <option key={p.id} value={p.id}>
-              {p.name}
+              {p.name}{!claudeReadinessIds.has(p.id) ? " (cannot be verified here)" : ""}
             </option>
           ))}
         </select>
@@ -440,25 +456,17 @@ export function ClaudeAuth({ onSave, onBack, detectedVersion, initialAuthMethod,
           className="flex items-center gap-1 text-xs text-foreground/40 hover:text-foreground transition-colors"
         >
           <ArrowLeft2Filled className="h-3.5 w-3.5" />
-          {backLabel ?? "back to tools"}
+          {backLabel ?? "Back to Tools"}
         </button>
         {showFooterSave && (
-          <Button
-            size="sm"
-            disabled={
-              saving ||
-              (authOption === "login" && loginStatus !== "complete") ||
-              (authOption === "gateway" && !gatewayUrl.trim())
-            }
-            onClick={() => {
-              if (authOption === "login") handleLoginDone();
-              else if (authOption === "gateway") handleGatewaySave();
-            }}
-          >
-            {saving ? "saving..." : "save"}
-          </Button>
+          <BusyButton busy={isBusy} busyLabel="Saving…" onClick={handleFooterSave}>
+            Save and Check Claude Code
+          </BusyButton>
         )}
       </div>
+      {authOption === "login" && loginStatus !== "failed" && error && (
+        <p className="text-right text-xs text-red-400">{error}</p>
+      )}
     </motion.div>
   );
 }

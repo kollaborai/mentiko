@@ -1,111 +1,450 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { TickCircleFilled, Warning2Filled, ArrowRight2Filled } from "@aliimam/icons";
+import { motion } from "motion/react";
+import { TickCircleFilled, ArrowRight2Filled, InfoCircleFilled } from "@aliimam/icons";
 import { Button } from "@/components/ui/button";
-import { WelcomeWizard } from "@/components/onboarding/welcome-wizard";
+import { ProviderStep, type ProviderStepState } from "@/components/onboarding/provider-step";
+import { ProjectStep } from "@/components/onboarding/project-step";
+import { OnboardingRunMonitor } from "@/components/onboarding/run-monitor";
+import { SetupFooter, BusyButton } from "@/components/onboarding/setup-footer";
+import { CURRENT_SETUP_VERSION } from "@/lib/onboarding/onboarding-constants";
+import { getProviderDisplayName } from "@/lib/agents/agent-provider-catalog";
+import { useAgentProfiles } from "@/lib/hooks/use-agent-profiles";
 import { cn } from "@/lib/utils";
 
-type Status = "ready" | "completed" | "in_progress" | "not_started" | "needs_attention" | "unverified" | string;
-interface SetupState {
-  provider?: { status?: Status; selectedCli?: string | null };
-  workspace?: { status?: Status };
-  readiness?: { status?: Status };
-  sampleRun?: { status?: Status };
-  nextAction?: string;
-}
+type Status = "ready" | "completed" | "in_progress" | "not_started" | "needs_attention" | "unverified" | "timed_out" | "skipped" | "not_available" | string;
+export type MilestoneStep = "provider" | "workspace" | "readiness" | "sampleRun";
+type Step = "welcome" | MilestoneStep;
+interface SetupState { setupVersion?: number; revision?: number; nextAction?: string; provider?: ProviderStepState; workspace?: { status?: Status; id?: string | null }; readiness?: { status?: Status; runId?: string | null }; sampleRun?: { status?: Status; runId?: string | null }; inputBar?: { status?: Status; available?: boolean }; }
+interface Workspace { id: string; name: string; path?: string; execution?: { type?: string }; }
 
-const MILESTONES = [
-  { key: "provider", label: "Choose your AI tool", description: "Connect and verify the tool for your first run." },
-  { key: "workspace", label: "Choose a project", description: "Give your agents a project folder to work with." },
-  { key: "readiness", label: "Check that everything works", description: "Run a bounded check through the real runner." },
-  { key: "sampleRun", label: "Run a sample chain", description: "Watch Mentiko complete a small, safe chain." },
-] as const;
+const MILESTONES: { key: MilestoneStep; label: string; short: string; description: string }[] = [
+  { key: "provider", label: "Choose Your AI Tool", short: "Tool", description: "Pick the tool that will run your chain." },
+  { key: "workspace", label: "Connect Your Project", short: "Project", description: "Choose where your agents will work." },
+  { key: "readiness", label: "Check That Everything Works", short: "Check", description: "Run a safe check through the real runner." },
+  { key: "sampleRun", label: "Run Your First Chain", short: "Run", description: "Watch a small, read-only chain complete." },
+];
 
-function isComplete(key: string, state: SetupState) {
-  const status = state[key as keyof SetupState] as { status?: Status } | undefined;
-  return key === "sampleRun" ? status?.status === "completed" : status?.status === "ready";
-}
+// The server's nextAction vocabulary ("project", "sample") doesn't match the
+// panel's step keys ("workspace", "sampleRun") — without this translation,
+// auto-advance silently no-ops for two of the four milestones (defect #6).
+const NEXT_ACTION_TO_STEP: Partial<Record<string, MilestoneStep>> = {
+  provider: "provider",
+  project: "workspace",
+  readiness: "readiness",
+  sample: "sampleRun",
+};
 
-function isActive(key: string, state: SetupState) {
-  const status = (state[key as keyof SetupState] as { status?: Status } | undefined)?.status;
-  return status === "in_progress" || status === "needs_attention" || status === "unverified";
-}
+const MENTIKO_LOGO = (
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="-4 -5 32 32" className="h-11 w-11">
+    <rect x="-4" y="-5" width="32" height="32" rx="6" fill="white"/>
+    <path d="M14.0298 7.04057L11.9145 2.76797L7.37146 2.6136L6.37685 0L13.605 0.246633L17.0205 7.14525L14.0315 7.04412L14.0298 7.04057ZM20.3497 17.9474L12.7883 17.7345L14.2974 15.0961L18.9821 15.2274L21.2769 11.2174L24 11.5669L20.3497 17.9474ZM17.8597 13.9906L16.4783 11.2795L19.0822 7.29785L16.9825 3.17784L18.7231 1.00782L22.0643 7.564L17.8614 13.9924L17.8597 13.9906ZM9.69219 7.20736L5.00755 7.09025L2.72481 11.1073L0 10.7667L3.63307 4.37374L11.1962 4.56359L9.69392 7.20558L9.69219 7.20736ZM4.91603 15.6479L7.09002 19.7288L5.38916 21.9308L1.93049 15.4385L6.01772 8.93378L7.44742 11.6166L4.91603 15.6479ZM10.6074 21.8847L7.07273 15.0499L10.0635 15.0978L12.253 19.3314L16.7995 19.4041L17.8407 22L10.6091 21.8847H10.6074Z" fill="#0a0a0a"/>
+  </svg>
+);
 
-export function SetupCenter({ workspacesDir, embedded = false }: { workspacesDir?: string; embedded?: boolean }) {
-  const router = useRouter();
-  const [state, setState] = useState<SetupState>({});
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+const statusText = (status?: Status) => status === "ready" || status === "completed" ? "Ready" : status === "in_progress" ? "In Progress" : status === "needs_attention" || status === "unverified" || status === "timed_out" ? "Needs Attention" : "Not Started";
+const done = (key: MilestoneStep, state: SetupState) => { const s = state[key]; return key === "sampleRun" ? s?.status === "completed" : s?.status === "ready"; };
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    try {
-      const response = await fetch("/api/onboarding/state", { cache: "no-store" });
-      if (!response.ok) throw new Error("Unable to load setup progress");
-      const payload = await response.json() as { data?: SetupState } & SetupState;
-      setState(payload.data ?? payload);
-      setError(null);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to load setup progress");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+// Enter-only, no AnimatePresence: a step change swaps `key`, React unmounts
+// the old subtree and mounts the new one in the same commit, so exactly one
+// step's JSX can ever exist in the DOM — by construction, not by an exit
+// animation completing. (An exit-gated transition can get stuck — a
+// backgrounded/hidden tab pauses rAF, so the old step never finishes
+// animating out and the new one never mounts.)
+const enter = { initial: { opacity: 0, y: 6 }, animate: { opacity: 1, y: 0 }, transition: { duration: 0.18 } } as const;
 
-  useEffect(() => { void refresh(); }, [refresh]);
+// Optional side quest (spec: never required progress, never blocks). Shown
+// after the first successful chain by default. "not_available" is an honest
+// install limitation, not a failure — it gets its own copy, never the
+// setup/skip flow.
+function InputBarSideQuest({
+  status,
+  available,
+  busy,
+  onCheck,
+}: {
+  status?: Status;
+  available?: boolean;
+  busy: boolean;
+  onCheck: () => void;
+}) {
+  const [dismissed, setDismissed] = useState(false);
+  if (dismissed || status === "ready") return null;
 
-  const completedCount = useMemo(() => MILESTONES.filter((milestone) => isComplete(milestone.key, state)).length, [state]);
-  const heading = completedCount > 0 ? "Continue setting up your first chain." : "Let’s get your first chain running.";
-  const routes: Record<string, string> = {
-    provider: "/settings/agent-configs?from=setup",
-    workspace: "/workspaces?from=setup",
-    readiness: "/settings/agent-health?from=setup",
-    sampleRun: "/chains?setup=sample",
-  };
-  const goToMilestone = (key: string) => {
-    const route = routes[key];
-    if (route) router.push(route);
-  };
+  if (available === false) {
+    return (
+      <div className="mt-5 rounded-lg border border-dashed border-border/60 p-4 text-sm">
+        <p className="font-medium">Input Bar Is Not Available on This Install</p>
+        <p className="mt-1 text-xs text-foreground/50">Chain setup can continue without it.</p>
+      </div>
+    );
+  }
 
   return (
-    <main aria-labelledby="setup-center-heading" className={cn("w-full", !embedded && "min-h-screen bg-background px-4 py-8 sm:px-6") }>
-      <div className="mx-auto w-full max-w-5xl">
-        <header className="mb-6">
-          <p className="text-xs font-medium uppercase tracking-[0.16em] text-foreground/45">Setup Center</p>
-          <h1 id="setup-center-heading" tabIndex={-1} className="mt-2 text-2xl font-semibold tracking-tight sm:text-3xl">{heading}</h1>
-          <p className="mt-2 max-w-2xl text-sm text-foreground/55">Choose the AI tool you want to use, connect a project, and watch Mentiko run a small chain.</p>
+    <div className="mt-5 rounded-lg border border-border/60 bg-card/20 p-4 text-sm">
+      <p className="font-medium">Set up the input bar</p>
+      <p className="mt-1 text-xs text-foreground/50">The input bar lets you ask Mentiko for help from any page.</p>
+      {status === "needs_attention" && (
+        <p className="mt-1.5 flex items-center gap-1.5 text-xs text-amber-300">
+          <InfoCircleFilled className="h-3.5 w-3.5 shrink-0" />
+          Couldn’t connect last time — try again.
+        </p>
+      )}
+      <div className="mt-3 flex gap-2">
+        <BusyButton busy={busy} busyLabel="Checking…" onClick={onCheck} size="sm">
+          Set Up Input Bar
+        </BusyButton>
+        <button type="button" onClick={() => setDismissed(true)} className="text-xs text-foreground/50 hover:text-foreground">
+          Skip for Now
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export function SetupCenter({
+  workspacesDir,
+  embedded = false,
+  initialStep,
+  onRequestClose,
+  onOperationStateChange,
+}: {
+  workspacesDir?: string;
+  embedded?: boolean;
+  /** Deep-link to a specific milestone (e.g. from GettingStarted's "open the
+   *  exact unmet step"), bypassing Step 0. Absent: the normal welcome-first flow. */
+  initialStep?: MilestoneStep;
+  /** Explore-first / Finish. Standalone (/welcome) falls back to router.push("/"). */
+  onRequestClose?: () => void;
+  /** Lets an embedding host (the floating panel) know whether it's safe to fully
+   *  discard the panel or must hide-only while an operation is in flight. */
+  onOperationStateChange?: (inFlight: boolean) => void;
+}) {
+  const router = useRouter();
+  const [state, setState] = useState<SetupState>({});
+  const [step, setStep] = useState<Step>(initialStep ?? "welcome");
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const stepRef = useRef<Step>(step);
+  useEffect(() => { stepRef.current = step; }, [step]);
+  // Once the user has explicitly re-navigated mid-session (a rail click or
+  // footer Back — deliberately reviewing a different step), a later
+  // background nextAction change must never yank them somewhere else.
+  // Deep links are handled separately by skipNextAutoAdvanceRef below: they
+  // protect only the first post-mount resolution, so normal auto-advance
+  // still resumes afterward for whatever the user does on the linked step.
+  const userNavigatedRef = useRef(false);
+  // A deep-linked step is a direct request for THAT step, not "whatever's
+  // next" — don't let the very first nextAction load (from the initial
+  // refresh()) immediately redirect away from it. Later nextAction changes
+  // (from the user's own actions on this visit) still auto-advance normally.
+  const skipNextAutoAdvanceRef = useRef(Boolean(initialStep));
+  // Stable idempotency keys: same (kind, server revision, target) always
+  // reuses/resumes the same server-side operation instead of racing a fresh
+  // one on every click. `state.revision` bumps on every successful write, so
+  // the key changes naturally once something actually changed. A failure
+  // does NOT change the revision, so a bare retry would reuse the same key —
+  // that's fine for an in-flight retry, but a stale *terminal* failed
+  // operation record would otherwise get silently "replayed" as success on
+  // the next click; bump a local attempt counter after a failure so the next
+  // click gets a fresh key instead.
+  const attemptCountersRef = useRef<Map<string, number>>(new Map());
+  const nextIdempotencyKey = useCallback((kind: string, targetId: string) => {
+    const base = `${kind}:${state.revision ?? 0}:${targetId}`;
+    const attempt = attemptCountersRef.current.get(base) ?? 0;
+    return attempt > 0 ? `${base}:attempt${attempt}` : base;
+  }, [state.revision]);
+  const recordAttemptFailure = useCallback((kind: string, targetId: string) => {
+    const base = `${kind}:${state.revision ?? 0}:${targetId}`;
+    attemptCountersRef.current.set(base, (attemptCountersRef.current.get(base) ?? 0) + 1);
+  }, [state.revision]);
+
+  const refresh = useCallback(async () => {
+    setLoading(true); setError(null);
+    try {
+      const [stateResponse, workspaceResponse] = await Promise.all([fetch("/api/onboarding/state", { cache: "no-store" }), fetch("/api/workspaces", { cache: "no-store" })]);
+      if (!stateResponse.ok) throw new Error("Unable to load setup progress");
+      const payload = await stateResponse.json() as { data?: SetupState } & SetupState;
+      setState(payload.data ?? payload);
+      if (workspaceResponse.ok) { const work = await workspaceResponse.json() as { data?: { workspaces?: Workspace[] }; workspaces?: Workspace[] }; setWorkspaces(work.data?.workspaces ?? work.workspaces ?? []); }
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to load setup progress"); }
+    finally { setLoading(false); }
+  }, []);
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  // Auto-advance to the server's next unmet milestone, but never while the
+  // user is still looking at Step 0, and never by reacting to their own
+  // manual rail navigation (only to a genuine change in nextAction).
+  useEffect(() => {
+    if (stepRef.current === "welcome") return;
+    // The initial mount runs this effect once with nextAction still
+    // undefined (refresh() hasn't resolved yet). That run must NOT spend the
+    // deep-link skip — only the first REAL server value is allowed to; a
+    // premature no-op run consuming it left the guard disarmed by the time
+    // nextAction actually arrived, so the very first live value silently
+    // overrode ?step=/detail:{step} on every deep link.
+    if (!state.nextAction) return;
+    if (skipNextAutoAdvanceRef.current) { skipNextAutoAdvanceRef.current = false; return; }
+    if (userNavigatedRef.current) return;
+    const mapped = NEXT_ACTION_TO_STEP[state.nextAction];
+    if (mapped) setStep(mapped);
+  }, [state.nextAction]);
+
+  const inFlight = busy || state.readiness?.status === "in_progress" || state.sampleRun?.status === "in_progress";
+  useEffect(() => { onOperationStateChange?.(inFlight); }, [inFlight, onOperationStateChange]);
+
+  // The run monitor's own onTerminal only catches completion in THIS tab.
+  // The spec's two-tab/two-device case (a run started elsewhere, or this
+  // record just not having refreshed since) needs an independent poll while
+  // something is genuinely in flight, so the rail/status here don't lag the
+  // server by a full manual reload.
+  useEffect(() => {
+    if (!inFlight) return;
+    const id = setInterval(() => { void refresh(); }, 5000);
+    return () => clearInterval(id);
+  }, [inFlight, refresh]);
+
+  const completedCount = useMemo(() => MILESTONES.filter((m) => done(m.key, state)).length, [state]);
+  const selectedTool = state.provider?.selectedCli;
+  const selectedToolLabel = selectedTool ? getProviderDisplayName(selectedTool) : undefined;
+  const selectedWorkspace = workspaces.find((w) => w.id === state.workspace?.id);
+  const setupVersion = state.setupVersion ?? CURRENT_SETUP_VERSION;
+  // Shares use-agent-profiles.ts's module-level cache with ProviderStep (no
+  // duplicate fetch in practice) — needed here only to show the exact
+  // profile name/model on the readiness/sample summary cards instead of the
+  // raw provider key.
+  const { profiles } = useAgentProfiles();
+  const selectedProfile = profiles.find((p) => p.id === state.provider?.selectedProfileId);
+  const selectedProfileLabel = selectedProfile ? (selectedProfile.model ? `${selectedProfile.name} (${selectedProfile.model})` : selectedProfile.name) : undefined;
+
+  const runAction = async (kind: string, targetId: string, url: string, body: Record<string, unknown>) => {
+    setBusy(true); setError(null); setMessage(null);
+    const idempotencyKey = nextIdempotencyKey(kind, targetId);
+    try { const response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...body, setupVersion, idempotencyKey }) }); const payload = await response.json() as { data?: Record<string, unknown>; error?: { message?: string } }; if (!response.ok) throw new Error(payload.error?.message || "That action could not be completed"); setMessage("Saved. Your setup progress is up to date."); await refresh(); } catch (cause) { recordAttemptFailure(kind, targetId); setError(cause instanceof Error ? cause.message : "That action could not be completed"); } finally { setBusy(false); }
+  };
+  const handleSelectWorkspace = async (workspaceId: string) => { await runAction("workspace_select", workspaceId, "/api/onboarding/workspace/select", { workspaceId }); };
+  const runReadiness = () => { if (!state.provider?.selectedProfileId) { setError("Choose and activate an AI tool first."); setStep("provider"); return; } if (!state.workspace?.id) { setError("Choose a project before checking readiness."); setStep("workspace"); return; } void runAction("provider_readiness", `${state.provider.selectedProfileId}:${state.workspace.id}`, "/api/onboarding/provider/readiness", { profileId: state.provider.selectedProfileId, workspaceId: state.workspace.id }); };
+  const runSample = () => { if (!state.provider?.selectedProfileId || !state.workspace?.id) { setError("Choose an AI tool and project before running the sample."); return; } void runAction("sample_run", `${state.provider.selectedProfileId}:${state.workspace.id}`, "/api/onboarding/sample-run", { profileId: state.provider.selectedProfileId, workspaceId: state.workspace.id }); };
+
+  const mappedNext = state.nextAction ? NEXT_ACTION_TO_STEP[state.nextAction] : undefined;
+  const nextMilestoneLabel = mappedNext ? MILESTONES.find((m) => m.key === mappedNext)?.label : undefined;
+  const hasProgress = completedCount > 0 || Boolean(state.provider?.selectedCli);
+  const isAllSet = state.nextAction === "done" || completedCount === MILESTONES.length;
+  const openChainBuilder = () => router.push("/chains?chain=onboarding-sample-v1");
+  const checkInputBar = () => void runAction("input_bar_check", "input-bar", "/api/onboarding/input-bar/check", {});
+
+  const handleRequestClose = useCallback(() => {
+    if (onRequestClose) onRequestClose();
+    else router.push("/");
+  }, [onRequestClose, router]);
+
+  const handleGetStarted = () => setStep(mappedNext ?? "provider");
+
+  const milestoneIndex = step === "welcome" ? -1 : MILESTONES.findIndex((m) => m.key === step);
+  const isLastMilestone = milestoneIndex === MILESTONES.length - 1;
+  // Nothing to go back to from the first milestone — Back only makes sense
+  // between milestones, not from "Tool" to the Step 0 launch pad.
+  const footerBack = milestoneIndex <= 0 ? undefined : () => { userNavigatedRef.current = true; setStep(MILESTONES[milestoneIndex - 1].key); };
+  const footerNext = isLastMilestone ? handleRequestClose : () => setStep(MILESTONES[milestoneIndex + 1]?.key ?? step);
+
+  return (
+    <main aria-labelledby="setup-center-heading" className={cn("w-full", !embedded && "flex min-h-screen flex-col items-center bg-background px-4 py-10 sm:py-14")}>
+      <div className="w-full max-w-xl">
+        <header className="flex flex-col items-center text-center">
+          <div className="mb-5">{MENTIKO_LOGO}</div>
+          <h1 id="setup-center-heading" tabIndex={-1} className="text-xl font-semibold tracking-tight">{isAllSet ? "You’re all set." : hasProgress ? "Continue setting up your first chain." : "Let’s get your first chain running."}</h1>
+          <p className="mt-2 max-w-md text-sm text-foreground/50">{isAllSet ? "Your setup is complete. Run the sample again or start building your own chain." : "Choose the AI tool you want to use, connect a project, and watch Mentiko run a small chain."}</p>
         </header>
 
-        <div className="grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
-          <nav aria-label="Setup progress" className="h-fit rounded-lg border border-border/60 bg-card/40 p-3">
-            <p className="mb-3 px-2 text-xs text-foreground/45">{completedCount} of {MILESTONES.length} milestones complete</p>
-            <ol className="space-y-1">
-              {MILESTONES.map((milestone, index) => {
-                const complete = isComplete(milestone.key, state);
-                const active = isActive(milestone.key, state) || (!complete && index === completedCount);
+        {(step !== "welcome" || isAllSet) && (
+          <nav aria-label="Setup progress" className="mt-8">
+            <ol className="flex items-center gap-2">
+              {MILESTONES.map((m, i) => {
+                const complete = done(m.key, state);
+                const active = step === m.key;
                 return (
-                  <li key={milestone.key}>
-                    <button type="button" onClick={() => goToMilestone(milestone.key)} aria-label={`${milestone.label}${complete ? ", complete. Edit or recheck" : active ? ", action needed" : ""}`} aria-current={active ? "step" : undefined} className="flex w-full items-start gap-2 rounded-md p-2 text-left hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                      <span className="mt-0.5 shrink-0" aria-hidden="true">
-                        {complete ? <TickCircleFilled className="h-4 w-4 text-emerald-400" /> : active ? <Warning2Filled className="h-4 w-4 text-amber-400" /> : <span className="flex h-4 w-4 items-center justify-center rounded-full border border-foreground/25 text-[10px]">{index + 1}</span>}
+                  <li key={m.key} className="flex-1">
+                    <button
+                      type="button"
+                      aria-label={m.label}
+                      aria-current={active ? "step" : undefined}
+                      onClick={() => { userNavigatedRef.current = true; setStep(m.key); }}
+                      className="group flex w-full flex-col items-center gap-1.5 rounded-md px-1 py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      <span className={cn("h-1 w-full rounded-full transition-all", complete ? "bg-foreground/40" : active ? "bg-amber-400/70" : "bg-foreground/10")} />
+                      <span className="flex items-center gap-1">
+                        <span aria-hidden className="flex h-4 w-4 items-center justify-center">
+                          {complete ? <TickCircleFilled className="h-3.5 w-3.5 text-foreground/60" /> : <span className={cn("flex h-4 w-4 items-center justify-center rounded-full border text-[9px]", active ? "border-amber-400 text-amber-300" : "border-foreground/20 text-foreground/40")}>{i + 1}</span>}
+                        </span>
+                        <span className={cn("hidden text-[10px] sm:inline", active ? "text-foreground/70" : "text-foreground/40")}>{m.short}</span>
                       </span>
-                      <span className="min-w-0"><span className="block text-xs font-medium">{milestone.label}</span><span className="mt-0.5 block text-[10px] leading-snug text-foreground/45">{complete ? "Complete" : milestone.description}</span></span>
                     </button>
                   </li>
                 );
               })}
             </ol>
+            <p className="mt-2 text-center text-[10px] text-foreground/40">{completedCount} of {MILESTONES.length} milestones complete</p>
           </nav>
+        )}
 
-          <section aria-label="Setup actions" className="min-w-0 rounded-xl border border-border/60 bg-card/20 p-4 sm:p-6">
-            {error && <div role="alert" className="mb-4 flex items-center justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs"><span>{error}</span><Button size="sm" variant="outline" onClick={() => void refresh()}>Try Again</Button></div>}
-            {loading && <p role="status" className="mb-3 text-xs text-foreground/45">Loading your setup progress…</p>}
-            <WelcomeWizard workspacesDir={workspacesDir} embedded />
-            {!loading && completedCount === MILESTONES.length && <p className="mt-4 flex items-center gap-2 text-sm text-emerald-400"><TickCircleFilled className="h-4 w-4" /> All Set <ArrowRight2Filled className="h-4 w-4" /></p>}
-          </section>
-        </div>
+        <section aria-label="Setup actions" className="mt-6 min-w-0 rounded-xl border border-border/60 bg-card/20 p-5 sm:p-6">
+          {error && <div role="alert" className="mb-4 flex items-center justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs"><span>{error}</span><BusyButton busy={loading} busyLabel="Retrying…" size="sm" variant="outline" onClick={() => void refresh()}>Retry</BusyButton></div>}
+          {message && <p role="status" className="mb-4 text-xs text-foreground/60">{message}</p>}
+          {loading && <p role="status" className="mb-4 text-xs text-foreground/45">Loading your setup progress…</p>}
+
+          <motion.div key={step} tabIndex={-1} className="outline-none" initial={enter.initial} animate={enter.animate} transition={enter.transition}>
+              {step === "welcome" && (
+                <div className="text-center">
+                  {isAllSet ? (
+                    <>
+                      <p className="text-sm text-foreground/60">
+                        {selectedToolLabel || "Your tool"} ran your first chain on {selectedWorkspace?.name || state.workspace?.id || "your project"}.
+                      </p>
+                      <div className="mt-4 flex flex-col items-center gap-2">
+                        <Button onClick={handleRequestClose} className="w-full gap-2 sm:w-auto">
+                          Open Dashboard
+                          <ArrowRight2Filled className="h-4 w-4" />
+                        </Button>
+                        <div className="flex items-center gap-4">
+                          <button type="button" onClick={() => { userNavigatedRef.current = true; setStep("sampleRun"); }} className="text-xs text-foreground/40 transition-colors hover:text-foreground/60">
+                            Run Again
+                          </button>
+                          <button type="button" onClick={openChainBuilder} className="text-xs text-foreground/40 transition-colors hover:text-foreground/60">
+                            Open Chain Builder
+                          </button>
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      {hasProgress && nextMilestoneLabel && (
+                        <p className="text-sm text-foreground/60">Next: <span className="text-foreground/90">{nextMilestoneLabel}</span>.</p>
+                      )}
+                      <div className="mt-4 flex flex-col items-center gap-2">
+                        <Button onClick={handleGetStarted} className="w-full gap-2 sm:w-auto">
+                          {hasProgress ? "Continue Setup" : "Get Started"}
+                          <ArrowRight2Filled className="h-4 w-4" />
+                        </Button>
+                        <button type="button" onClick={handleRequestClose} className="text-xs text-foreground/40 transition-colors hover:text-foreground/60">
+                          I’ll explore first
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+              {step === "provider" && (
+                <ProviderStep
+                  providerState={state.provider ?? {}}
+                  revision={state.revision}
+                  setupVersion={setupVersion}
+                  onChanged={refresh}
+                  onBusyChange={setBusy}
+                  onError={setError}
+                  onNotify={setMessage}
+                  onContinue={() => setStep("workspace")}
+                />
+              )}
+              {step === "workspace" && (
+                <ProjectStep
+                  workspacesDir={workspacesDir}
+                  workspaces={workspaces}
+                  selectedWorkspaceId={state.workspace?.id}
+                  busy={busy}
+                  onSelect={handleSelectWorkspace}
+                />
+              )}
+              {step === "readiness" && (
+                <div>
+                  <h2 className="text-lg font-semibold">Check That Everything Works</h2>
+                  <p className="mt-1 text-sm text-foreground/50">We’ll run a bounded, non-mutating check with your selected tool and project.</p>
+                  <div className="mt-5 space-y-1.5 rounded-lg border border-border/60 p-4 text-sm">
+                    <p>AI Tool: <strong>{selectedToolLabel || "Not selected"}</strong></p>
+                    {selectedProfileLabel && <p>Profile: <strong>{selectedProfileLabel}</strong></p>}
+                    <p>Project: <strong>{selectedWorkspace?.name || state.workspace?.id || "Not selected"}</strong></p>
+                    <p>Runner: <strong>Mentiko runner</strong></p>
+                    <p>Status: <strong>{statusText(state.readiness?.status)}</strong></p>
+                  </div>
+                  {/* busy gates on the local in-flight fetch only, never on the
+                      server's persisted status — a run stuck "in_progress"
+                      server-side (orphaned/never reconciled) must not
+                      permanently trap the button unclickable. */}
+                  <BusyButton busy={busy} busyLabel="Checking…" onClick={runReadiness} className="mt-5 w-full gap-2 sm:w-auto">
+                    Check that {selectedToolLabel || "your tool"} works
+                    <ArrowRight2Filled className="h-4 w-4" />
+                  </BusyButton>
+                  {state.readiness?.runId && (
+                    <div className="mt-4">
+                      <OnboardingRunMonitor key={state.readiness.runId} runId={state.readiness.runId} title="Readiness check" onTerminal={() => void refresh()} />
+                    </div>
+                  )}
+                </div>
+              )}
+              {step === "sampleRun" && (
+                state.sampleRun?.status === "completed" ? (
+                  <div>
+                    <h2 className="text-lg font-semibold">All set. Your first chain ran.</h2>
+                    <div className="mt-5 space-y-1.5 rounded-lg border border-border/60 p-4 text-sm">
+                      <p>Tool: <strong>{selectedToolLabel || "Not selected"}</strong></p>
+                      {selectedProfileLabel && <p>Profile: <strong>{selectedProfileLabel}</strong></p>}
+                      <p>Project: <strong>{selectedWorkspace?.name || state.workspace?.id || "Not selected"}</strong></p>
+                    </div>
+                    {state.sampleRun?.runId && (
+                      <div className="mt-4">
+                        <OnboardingRunMonitor key={state.sampleRun.runId} runId={state.sampleRun.runId} title="Sample chain" onTerminal={() => void refresh()} />
+                      </div>
+                    )}
+                    <div className="mt-5 flex flex-wrap gap-2">
+                      <Button variant="outline" onClick={() => router.push(`/runs/${state.sampleRun?.runId}`)}>
+                        Open Full Run
+                      </Button>
+                      <BusyButton busy={busy} busyLabel="Running…" onClick={runSample}>
+                        Run Again
+                      </BusyButton>
+                      <Button variant="outline" onClick={openChainBuilder}>
+                        Open Chain Builder
+                      </Button>
+                    </div>
+                    <InputBarSideQuest status={state.inputBar?.status} available={state.inputBar?.available} busy={busy} onCheck={checkInputBar} />
+                  </div>
+                ) : (
+                  <div>
+                    <h2 className="text-lg font-semibold">Run Your First Chain</h2>
+                    <p className="mt-1 text-sm text-foreground/50">Read the project name and return one short sentence. This sample does not modify files.</p>
+                    <div className="mt-5 space-y-1.5 rounded-lg border border-border/60 p-4 text-sm">
+                      <p>Tool: <strong>{selectedToolLabel || "Not selected"}</strong></p>
+                      {selectedProfileLabel && <p>Profile: <strong>{selectedProfileLabel}</strong></p>}
+                      <p>Project: <strong>{selectedWorkspace?.name || state.workspace?.id || "Not selected"}</strong></p>
+                      <p>Status: <strong>{statusText(state.sampleRun?.status)}</strong></p>
+                      {state.sampleRun?.runId && <p className="mt-2 text-xs text-foreground/45">Run ID: {state.sampleRun.runId}</p>}
+                    </div>
+                    <BusyButton busy={busy} busyLabel="Running…" onClick={runSample} className="mt-5 gap-2">
+                      Run a sample chain
+                      <ArrowRight2Filled className="h-4 w-4" />
+                    </BusyButton>
+                    {state.sampleRun?.runId && (
+                      <div className="mt-4">
+                        <OnboardingRunMonitor key={state.sampleRun.runId} runId={state.sampleRun.runId} title="Sample chain" onTerminal={() => void refresh()} />
+                      </div>
+                    )}
+                  </div>
+                )
+              )}
+          </motion.div>
+
+          {step !== "welcome" && (
+            <SetupFooter
+              onBack={footerBack}
+              onNext={footerNext}
+              nextLabel={isLastMilestone ? "Finish" : "Next"}
+            />
+          )}
+        </section>
       </div>
     </main>
   );

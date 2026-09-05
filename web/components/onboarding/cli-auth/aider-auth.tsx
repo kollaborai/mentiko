@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Button } from "@/components/ui/button";
+import { BusyButton } from "@/components/onboarding/setup-footer";
 import {
   ArrowLeft2Filled,
   TickCircleFilled,
@@ -12,6 +12,7 @@ import { motion } from "motion/react";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { SecretForm } from "@/components/secrets/secret-form";
 import { getDefaultAgentConfigIdForTool, PROVIDER_CREDENTIALS } from "@/lib/agents/provider-config";
+import { getReadinessEnabledProfileIds } from "@/lib/agents/readiness-profiles";
 import { TerminalAuthOption } from "./terminal-auth-option";
 import { TerminalIcon } from "@/components/ui/terminal-icon";
 
@@ -22,6 +23,12 @@ interface AiderAuthProps {
   }) => void;
   onBack: () => void;
   backLabel?: string;
+  /** Accepted for a consistent adapter contract; Aider has no login/device-auth flow to skip. */
+  authenticated?: boolean;
+  /** Hide this adapter's own header — the host (Setup Center) already shows one. */
+  embedded?: boolean;
+  /** An ancestor is still processing after onSave fired — keep the primary action visibly busy through both phases. */
+  busy?: boolean;
 }
 
 type AuthMethod = "api-key" | "terminal";
@@ -60,7 +67,12 @@ const PROVIDER_MAP: Record<Provider, {
   },
 };
 
-export function AiderAuth({ onSave, onBack, backLabel }: AiderAuthProps) {
+// Aider has no catalog bundle (getBundleProviderForTool("aider") is
+// undefined), so this is always empty — every profile option honestly shows
+// "(cannot be verified here)" rather than implying one is safer than another.
+const aiderReadinessIds = getReadinessEnabledProfileIds("aider");
+
+export function AiderAuth({ onSave, onBack, backLabel, embedded, busy }: AiderAuthProps) {
   const { fetchWithNamespace } = useNamespaceFetch();
   const [authMethod, setAuthMethod] = useState<AuthMethod>("api-key");
   const [provider, setProvider] = useState<Provider>("anthropic");
@@ -108,6 +120,7 @@ export function AiderAuth({ onSave, onBack, backLabel }: AiderAuthProps) {
   const hasKey = existingSecrets.some(
     (s) => s.envVar === providerConfig.envKey
   );
+  const isBusy = saving || Boolean(busy);
 
   const handleApiKeySave = async (data: {
     name: string;
@@ -124,20 +137,24 @@ export function AiderAuth({ onSave, onBack, backLabel }: AiderAuthProps) {
         body: JSON.stringify(data),
       });
       if (!res.ok) {
-        setError("failed to save secret");
+        setError("Failed to save secret.");
         return;
       }
       // refresh secrets list so the check shows up
       await loadSecrets();
       onSave({ authMethod: "api-key", model });
     } catch {
-      setError("failed to save secret");
+      setError("Failed to save secret.");
     } finally {
       setSaving(false);
     }
   };
 
-  const handleUsExisting = () => {
+  const handleUseExisting = () => {
+    if (!hasKey) {
+      setError(`Add your ${providerConfig.label} API key first.`);
+      return;
+    }
     onSave({ authMethod: "api-key", model });
   };
 
@@ -150,12 +167,14 @@ export function AiderAuth({ onSave, onBack, backLabel }: AiderAuthProps) {
       transition={{ duration: 0.3 }}
       className="space-y-5"
     >
-      <div className="text-center">
-        <h2 className="text-lg font-semibold mb-1">Configure Aider</h2>
-        <p className="text-xs text-foreground/40">
-          aider uses your existing provider keys
-        </p>
-      </div>
+      {!embedded && (
+        <div className="text-center">
+          <h2 className="text-lg font-semibold mb-1">Configure Aider</h2>
+          <p className="text-xs text-foreground/40">
+            Aider uses your existing provider keys.
+          </p>
+        </div>
+      )}
 
       {/* auth method selector */}
       <div className="space-y-2">
@@ -163,14 +182,14 @@ export function AiderAuth({ onSave, onBack, backLabel }: AiderAuthProps) {
           {
             key: "api-key" as AuthMethod,
             icon: KeyFilled,
-            label: "use an API key",
-            desc: "set a provider key as a secret",
+            label: "Use an API Key",
+            desc: "Set a provider key as a secret.",
           },
           {
             key: "terminal" as AuthMethod,
             icon: TerminalIcon,
-            label: "open in terminal",
-            desc: "run auth interactively in the terminal",
+            label: "Open in Terminal",
+            desc: "Run auth interactively in the terminal.",
           },
         ]).map((opt) => {
           const Icon = opt.icon;
@@ -220,7 +239,7 @@ export function AiderAuth({ onSave, onBack, backLabel }: AiderAuthProps) {
           <>
             {/* provider selector */}
             <div className="space-y-1 mb-3">
-              <label className="text-xs text-foreground/50">provider</label>
+              <label className="text-xs text-foreground/50">Provider</label>
               <div className="flex gap-2">
                 {(Object.entries(PROVIDER_MAP) as [Provider, typeof PROVIDER_MAP[Provider]][]).map(
                   ([key, config]) => {
@@ -267,17 +286,17 @@ export function AiderAuth({ onSave, onBack, backLabel }: AiderAuthProps) {
                 <div className="flex items-center gap-2 justify-center text-green-400">
                   <TickCircleFilled className="h-4 w-4" />
                   <span className="text-sm">
-                    using your {providerConfig.label} key
+                    Using your {providerConfig.label} key
                   </span>
                 </div>
                 <p className="text-[10px] text-foreground/30">
-                  {providerConfig.envKey} already configured in secrets
+                  {providerConfig.envKey} already configured in secrets.
                 </p>
               </div>
             ) : (
               <div className="space-y-2">
                 <p className="text-xs text-foreground/40">
-                  add your {providerConfig.label} API key:
+                  Add your {providerConfig.label} API key:
                 </p>
                 <SecretForm
                   inline
@@ -296,9 +315,9 @@ export function AiderAuth({ onSave, onBack, backLabel }: AiderAuthProps) {
         )}
       </div>
 
-      {/* agent config selector */}
+      {/* profile selector */}
       <div className="space-y-1">
-        <label className="text-xs text-foreground/50">default agent config</label>
+        <label className="text-xs text-foreground/50">Profile for Your First Run</label>
         <select
           className="w-full h-8 px-3 text-xs rounded-md bg-muted focus:ring-1 focus:ring-accent border-0"
           value={model}
@@ -307,7 +326,7 @@ export function AiderAuth({ onSave, onBack, backLabel }: AiderAuthProps) {
           {profiles.length > 0
             ? profiles.map((p) => (
                 <option key={p.id} value={p.id}>
-                  {p.name}
+                  {p.name}{!aiderReadinessIds.has(p.id) ? " (cannot be verified here)" : ""}
                 </option>
               ))
             : (
@@ -323,16 +342,15 @@ export function AiderAuth({ onSave, onBack, backLabel }: AiderAuthProps) {
           className="flex items-center gap-1 text-xs text-foreground/40 hover:text-foreground transition-colors"
         >
           <ArrowLeft2Filled className="h-3.5 w-3.5" />
-          {backLabel ?? "back to tools"}
+          {backLabel ?? "Back to Tools"}
         </button>
-        <Button
-          size="sm"
-          disabled={saving || (!hasKey && !loadingSecrets)}
-          onClick={handleUsExisting}
-        >
-          {saving ? "saving..." : "save"}
-        </Button>
+        <BusyButton busy={isBusy} busyLabel="Saving…" onClick={handleUseExisting}>
+          Save and Check Aider
+        </BusyButton>
       </div>
+      {authMethod === "api-key" && hasKey && error && (
+        <p className="text-right text-xs text-red-400">{error}</p>
+      )}
     </motion.div>
   );
 }

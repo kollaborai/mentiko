@@ -9,7 +9,6 @@ import {
   SettingFilled,
 } from "@aliimam/icons";
 import { ClaudeAI, OpenAI as OpenAILogo, GoogleIcon } from "@aliimam/logos";
-import { BotMessageSquare } from "@aliimam/icons";
 import { motion, AnimatePresence } from "motion/react";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { getBundleProviderForTool } from "@/lib/agents/agent-provider-catalog";
@@ -19,6 +18,7 @@ import { CodexAuth } from "@/components/onboarding/cli-auth/codex-auth";
 import { AntigravityAuth } from "@/components/onboarding/cli-auth/antigravity-auth";
 import { AiderAuth } from "@/components/onboarding/cli-auth/aider-auth";
 import { KollabAuth } from "@/components/onboarding/cli-auth/kollab-auth";
+import { ProviderLogo } from "@/components/onboarding/provider-logo";
 
 interface ConfiguredTool {
   tool: string;
@@ -49,25 +49,6 @@ type Mode = null | "claude" | "openai" | "antigravity" | "custom";
 
 // when in custom mode, which tool is selected for auth
 type ActiveCustomTool = string | null;
-
-function ProviderLogo({ id, className }: { id: string; className?: string }) {
-  switch (id) {
-    case "claude":
-      return <ClaudeAI className={className} />;
-    case "codex":
-      return <OpenAILogo className={className} />;
-    case "antigravity":
-      return <GoogleIcon className={className} />;
-    case "kollab":
-      return (
-        <svg viewBox="0 0 24 24" fill="currentColor" className={className}>
-          <path d="M5 3h3v7.5L13.5 3H17l-6 8 6.5 10H14l-6-9.5V21H5z" />
-        </svg>
-      );
-    default:
-      return <BotMessageSquare className={className} />;
-  }
-}
 
 const PROVIDERS = [
   {

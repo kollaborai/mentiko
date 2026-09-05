@@ -1926,7 +1926,7 @@ export function FloatingKollaborBar() {
         {hasSetupLink && (
           <button
             type="button"
-            onClick={() => router.push("/settings/agent-configs")}
+            onClick={() => window.dispatchEvent(new CustomEvent("open-welcome-panel", { detail: { step: "provider" } }))}
             className="shrink-0 rounded-md border border-border/60 bg-background/60 px-2.5 py-1 text-[11px] leading-none hover:bg-background/85"
             title="setup kollab cli and provider profiles"
           >

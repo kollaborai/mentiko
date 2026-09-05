@@ -1,198 +1,97 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
-
-import { TickCircleFilled, RecordCircleFilled, ArrowRight2Filled, ExportFilled, FolderOpenFilled, RotateFilled } from "@aliimam/icons";
-import { useWorkspace } from "@/lib/ui-context/workspace-context";
-import { unwrapApiData } from "@/lib/api/api-client";
-import { useSharedRuns } from "@/lib/runs/runs-store";
-import { useSharedChains } from "@/lib/chains/chains-store";
-import { getTerminalAuthCommand } from "@/lib/agents/agent-provider-catalog";
-import { seedAndOpenSampleChain } from "@/lib/onboarding/seed-sample-chain";
-
-interface Step {
-  id: string;
-  title: string;
-  description: string;
-  href?: string;
-  onClick?: () => void;
-  done?: boolean | null;
-}
+import { useEffect, useState } from "react";
+import { TickCircleFilled, RecordCircleFilled, ArrowRight2Filled } from "@aliimam/icons";
 
 const DISMISSED_KEY = "getting-started-dismissed";
-const WORKSPACE_BANNER_KEY = "workspace-banner-dismissed";
-const CLI_AUTH_KEY = "cli-auth-confirmed";
+
+type MilestoneStatus = string | undefined;
+interface OnboardingSummary {
+  provider?: { status?: MilestoneStatus };
+  workspace?: { status?: MilestoneStatus };
+  readiness?: { status?: MilestoneStatus };
+  sampleRun?: { status?: MilestoneStatus };
+}
+
+type StepId = "provider" | "workspace" | "readiness" | "sampleRun";
+
+// Mirrors setup-center.tsx's four canonical milestones exactly — this widget
+// is a launcher/mirror of the Setup Center's own server-backed state, not a
+// second onboarding truth model (localStorage/CLI-auth/chain-existence used
+// to be checked here independently and could disagree with the Setup Center).
+const STEPS: { id: StepId; title: string; description: string }[] = [
+  { id: "provider", title: "Choose an AI tool", description: "Pick and verify the tool that will run your chains." },
+  { id: "workspace", title: "Connect a project", description: "Choose where your agents will work." },
+  { id: "readiness", title: "Check that everything works", description: "Run a safe, real check through the runner." },
+  { id: "sampleRun", title: "Run your first chain", description: "Watch a small, read-only chain complete." },
+];
+
+function isStepDone(id: StepId, state: OnboardingSummary): boolean {
+  switch (id) {
+    case "provider": return state.provider?.status === "ready";
+    case "workspace": return state.workspace?.status === "ready";
+    case "readiness": return state.readiness?.status === "ready";
+    case "sampleRun": return state.sampleRun?.status === "completed";
+    default: return false;
+  }
+}
+
+function openSetupCenterStep(step: StepId) {
+  window.dispatchEvent(new CustomEvent("open-welcome-panel", { detail: { step } }));
+}
 
 export function GettingStarted() {
-  const router = useRouter();
-  const { workspaces, workspacePath } = useWorkspace();
-  const { runs } = useSharedRuns({ workspacePath });
-  const { chains } = useSharedChains();
-
-  const [hasAgentProfile, setHasAgentProfile] = useState<boolean | null>(null);
-  const [hasWorkspace, setHasWorkspace] = useState<boolean | null>(null);
-  const [cliAuthConfirmed, setCliAuthConfirmed] = useState(false);
+  const [state, setState] = useState<OnboardingSummary | null>(null);
   const [dismissed, setDismissed] = useState(false);
-  const [workspaceBannerDismissed, setWorkspaceBannerDismissed] = useState(false);
-  const [seedingSample, setSeedingSample] = useState(false);
-
-  const hasChains = chains.length > 0;
-  const hasRuns = runs.length > 0;
 
   useEffect(() => {
-    // load agent profiles (not in shared store — only needed here)
-    fetch("/api/agent-profiles").then((r) => r.json()).then((data) => {
-      const profiles = unwrapApiData<{ profiles?: unknown[] }>(data);
-      setHasAgentProfile((profiles.profiles?.length ?? 0) > 0);
-    }).catch(() => setHasAgentProfile(false));
-
-    // defer detect-cli to avoid blocking dashboard load (~2s endpoint).
-    if (!localStorage.getItem(CLI_AUTH_KEY)) {
-      fetch("/api/system/detect-cli").then((r) => r.json()).then((cliData) => {
-        if (cliData) {
-          const cli = unwrapApiData<{ tools?: Array<{ name: string; authenticated?: boolean }> }>(cliData);
-          const anyAuthed = cli.tools?.some((t) => t.authenticated === true) ?? false;
-          if (anyAuthed) {
-            localStorage.setItem(CLI_AUTH_KEY, "1");
-            setCliAuthConfirmed(true);
-          }
-        }
-      }).catch(() => {});
-    }
+    let cancelled = false;
+    fetch("/api/onboarding/state", { cache: "no-store" })
+      .then((res) => res.json())
+      .then((payload: { data?: OnboardingSummary } & OnboardingSummary) => {
+        if (!cancelled) setState(payload.data ?? payload);
+      })
+      .catch(() => { if (!cancelled) setState({}); });
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setDismissed(!!localStorage.getItem(DISMISSED_KEY));
-      setWorkspaceBannerDismissed(!!localStorage.getItem(WORKSPACE_BANNER_KEY));
-      setCliAuthConfirmed(!!localStorage.getItem(CLI_AUTH_KEY));
     }
-    setHasWorkspace(workspaces.length > 0);
-  }, [workspaces.length]);
+  }, []);
 
   const handleDismiss = () => {
     localStorage.setItem(DISMISSED_KEY, "1");
     setDismissed(true);
   };
 
-  const handleWorkspaceBannerDismiss = () => {
-    localStorage.setItem(WORKSPACE_BANNER_KEY, "1");
-    setWorkspaceBannerDismissed(true);
-  };
+  // Wait for the real onboarding state before deciding anything — an
+  // "everything looks done" flash while state is still loading would be a
+  // decorative claim, not a verified one.
+  if (!state || dismissed) return null;
 
-  const openTerminal = () => {
-    window.dispatchEvent(new CustomEvent("toggle-terminal-panel"));
-  };
+  const doneCount = STEPS.filter((step) => isStepDone(step.id, state)).length;
 
-  // "run a chain": a user with no chains has nothing to run, so seed a starter
-  // sample and open its run page instead of dumping them on empty /runs. Users
-  // who already have chains keep the plain jump to their run history.
-  const handleRunChain = async () => {
-    if (hasChains) {
-      router.push("/runs");
-      return;
-    }
-    if (seedingSample) return;
-    setSeedingSample(true);
-    try {
-      await seedAndOpenSampleChain({ navigate: (route) => router.push(route) });
-    } finally {
-      setSeedingSample(false);
-    }
-  };
-
-  // Show workspace setup banner if no workspaces configured
-  if (workspaces.length === 0 && !workspaceBannerDismissed) {
+  if (doneCount === STEPS.length) {
     return (
-      <div className="bg-gradient-to-r from-amber-500/10 to-red-500/10 border border-amber-500/20 rounded-md p-4 mb-4">
-        <div className="flex items-start gap-3">
-          <div className="p-2 rounded bg-amber-500/20">
-            <FolderOpenFilled className="h-5 w-5 text-amber-500" />
-          </div>
-          <div className="flex-1">
-            <h3 className="text-sm font-medium">Set up your workspace</h3>
-            <p className="text-xs text-muted-foreground mt-1">
-              Connect a project directory to start running chains
-            </p>
-            <div className="flex items-center gap-2 mt-3">
-              <button
-                onClick={() => window.dispatchEvent(new CustomEvent("open-welcome-panel"))}
-                className="px-3 py-1.5 bg-foreground text-background text-xs rounded-md hover:bg-foreground/90 transition-colors flex items-center gap-1.5"
-              >
-                Start setup
-                <ExportFilled className="h-3 w-3" />
-              </button>
-              <button
-                onClick={handleWorkspaceBannerDismiss}
-                className="text-xs text-muted-foreground hover:text-foreground/70 transition-colors"
-              >
-                dismiss
-              </button>
-            </div>
-          </div>
-        </div>
+      <div className="bg-background border border-border/40 rounded-xl mb-4 px-4 py-2.5 flex items-center justify-between gap-3">
+        <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <TickCircleFilled className="h-3.5 w-3.5 text-green-500/70" />
+          Setup complete
+        </p>
+        <button
+          onClick={() => openSetupCenterStep("sampleRun")}
+          className="text-[11px] text-muted-foreground hover:text-foreground/70 transition-colors shrink-0"
+        >
+          Reopen
+        </button>
       </div>
     );
   }
 
-  // Wait for all checks to load
-  if (hasAgentProfile === null) return null;
-
-  const steps: Step[] = [
-    {
-      id: "agent-config",
-      title: "Configure an AI provider",
-      description: "Set up Claude, Antigravity, or another CLI — add your API key",
-      href: "/settings/agent-configs",
-      done: hasAgentProfile,
-    },
-    {
-      id: "agent-configs",
-      title: "Visit Agent Configs",
-      description: "Review installed profiles and customize models, flags, env vars",
-      href: "/settings/agent-configs",
-      done: hasAgentProfile,
-    },
-    {
-      id: "cli-auth",
-      title: "Authenticate your CLI",
-      description: `Run '${getTerminalAuthCommand("claude")}' in the terminal to complete OAuth auth`,
-      onClick: () => { openTerminal(); },
-      done: cliAuthConfirmed,
-    },
-    {
-      id: "workspace",
-      title: "Connect a workspace",
-      description: "Link a project directory where your agents will run",
-      href: "/workspaces",
-      done: hasWorkspace,
-    },
-    {
-      id: "create-chain",
-      title: "Create your first chain",
-      description: "Build an agent pipeline to automate a workflow",
-      href: "/chains/new",
-      done: hasChains,
-    },
-    {
-      id: "run-chain",
-      title: "Run a chain",
-      description: hasChains
-        ? "Execute your first chain and see live agent output"
-        : "Open a ready-made sample chain and watch it run",
-      onClick: () => { void handleRunChain(); },
-      done: hasRuns,
-    },
-  ];
-
-  const doneCount = steps.filter((s) => s.done).length;
-  const allDone = doneCount === steps.length;
-
-  if (dismissed || allDone) return null;
-
-  const progressPct = Math.round((doneCount / steps.length) * 100);
+  const progressPct = Math.round((doneCount / STEPS.length) * 100);
 
   return (
     <div className="bg-background border border-border/40 rounded-xl overflow-hidden mb-4">
@@ -200,7 +99,7 @@ export function GettingStarted() {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
             <h3 className="text-sm font-medium">Getting started</h3>
-            <span className="text-[10px] text-muted-foreground/60">{doneCount}/{steps.length} done</span>
+            <span className="text-[10px] text-muted-foreground/60">{doneCount}/{STEPS.length} done</span>
           </div>
           <div className="h-1 bg-muted rounded-full overflow-hidden">
             <div
@@ -218,44 +117,27 @@ export function GettingStarted() {
       </div>
 
       <div className="divide-y divide-muted/40">
-        {steps.map((step) => {
-          const isSeeding = step.id === "run-chain" && seedingSample;
-          const content = (
-            <div className="flex items-center gap-3 px-4 py-3 hover:bg-accent/40 transition-colors group">
-              <div className="shrink-0">
-                {step.done ? (
-                  <TickCircleFilled className="h-4 w-4 text-green-500/70" />
-                ) : (
-                  <RecordCircleFilled className="h-4 w-4 text-muted-foreground/30" />
-                )}
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className={`text-xs font-medium ${step.done ? "line-through text-muted-foreground/40" : ""}`}>
-                  {step.title}
-                </p>
-                <p className="text-[11px] text-muted-foreground truncate">
-                  {isSeeding ? "setting up a sample chain..." : step.description}
-                </p>
-              </div>
-              {isSeeding ? (
-                <RotateFilled className="h-3.5 w-3.5 text-muted-foreground/50 animate-spin shrink-0" />
-              ) : (
-                <ArrowRight2Filled className="h-3.5 w-3.5 text-muted-foreground/30 group-hover:text-muted-foreground/60 transition-colors shrink-0" />
-              )}
-            </div>
-          );
-
-          if (step.onClick) {
-            return (
-              <button key={step.id} className="w-full text-left" onClick={step.onClick} disabled={isSeeding}>
-                {content}
-              </button>
-            );
-          }
+        {STEPS.map((step) => {
+          const done = isStepDone(step.id, state);
           return (
-            <Link key={step.id} href={step.href!}>
-              {content}
-            </Link>
+            <button key={step.id} className="w-full text-left" onClick={() => openSetupCenterStep(step.id)}>
+              <div className="flex items-center gap-3 px-4 py-3 hover:bg-accent/40 transition-colors group">
+                <div className="shrink-0">
+                  {done ? (
+                    <TickCircleFilled className="h-4 w-4 text-green-500/70" />
+                  ) : (
+                    <RecordCircleFilled className="h-4 w-4 text-muted-foreground/30" />
+                  )}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className={`text-xs font-medium ${done ? "line-through text-muted-foreground/40" : ""}`}>
+                    {step.title}
+                  </p>
+                  <p className="text-[11px] text-muted-foreground truncate">{step.description}</p>
+                </div>
+                <ArrowRight2Filled className="h-3.5 w-3.5 text-muted-foreground/30 group-hover:text-muted-foreground/60 transition-colors shrink-0" />
+              </div>
+            </button>
           );
         })}
       </div>

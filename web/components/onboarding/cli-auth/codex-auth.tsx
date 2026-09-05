@@ -2,12 +2,13 @@
 
 import { useState, useEffect, useRef, useCallback, type ComponentType } from "react";
 import { Button } from "@/components/ui/button";
+import { BusyButton } from "@/components/onboarding/setup-footer";
 import {
   ArrowLeft2Filled,
   TickCircleFilled,
   CloseCircleFilled,
-  Link2Filled,
   KeyFilled,
+  Link2Filled,
 } from "@aliimam/icons";
 import { motion } from "motion/react";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
@@ -17,6 +18,7 @@ import {
   getAgentConfigOptionsForTool,
   getDefaultAgentConfigIdForTool,
 } from "@/lib/agents/provider-config";
+import { getReadinessEnabledProfileIds, getPreferredReadinessProfileId } from "@/lib/agents/readiness-profiles";
 import { getTerminalAuthCommand } from "@/lib/agents/agent-provider-catalog";
 import { TerminalAuthOption } from "./terminal-auth-option";
 import { TerminalIcon } from "@/components/ui/terminal-icon";
@@ -30,6 +32,12 @@ interface CodexAuthProps {
   detectedVersion?: string;
   initialAuthMethod?: AuthOption;
   backLabel?: string;
+  /** From detect-cli: skip the fresh device-auth flow when already signed in. */
+  authenticated?: boolean;
+  /** Hide this adapter's own header — the host (Setup Center) already shows one. */
+  embedded?: boolean;
+  /** An ancestor is still processing after onSave fired — keep the primary action visibly busy through both phases. */
+  busy?: boolean;
 }
 
 type AuthOption = "login" | "api-key" | "terminal";
@@ -38,8 +46,9 @@ type LoginStatus = "idle" | "pending" | "complete" | "failed";
 
 const codexCreds = PROVIDER_CREDENTIALS.codex;
 const codexProfileOptions = getAgentConfigOptionsForTool("codex");
+const codexReadinessIds = getReadinessEnabledProfileIds("codex");
 
-export function CodexAuth({ onSave, onBack, detectedVersion, initialAuthMethod, backLabel }: CodexAuthProps) {
+export function CodexAuth({ onSave, onBack, detectedVersion, initialAuthMethod, backLabel, authenticated, embedded, busy }: CodexAuthProps) {
   const { fetchWithNamespace } = useNamespaceFetch();
   const [authOption, setAuthOption] = useState<AuthOption>(initialAuthMethod ?? "api-key");
   const [model, setModel] = useState(getDefaultAgentConfigIdForTool("codex"));
@@ -47,8 +56,9 @@ export function CodexAuth({ onSave, onBack, detectedVersion, initialAuthMethod, 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  // interactive login state
-  const [loginStatus, setLoginStatus] = useState<LoginStatus>("idle");
+  // interactive login state — already-authenticated (per detect-cli) skips
+  // straight to "complete" instead of forcing a fresh `codex login --device-auth`.
+  const [loginStatus, setLoginStatus] = useState<LoginStatus>(authenticated ? "complete" : "idle");
   const [authUrl, setAuthUrl] = useState<string | null>(null);
   const [authCode, setAuthCode] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -73,11 +83,12 @@ export function CodexAuth({ onSave, onBack, detectedVersion, initialAuthMethod, 
         const filtered = all.filter(p => p.cli === "codex");
         setProfiles(filtered);
         const options = filtered.length > 0 ? filtered : codexProfileOptions;
-        setModel((current) => (
-          options.some((option) => option.id === current)
-            ? current
-            : options[0]?.id ?? ""
-        ));
+        const preferred = getPreferredReadinessProfileId("codex");
+        // This effect runs exactly once (mount), so `current` here is always
+        // the naive useState initializer (catalog[0] — Codex's
+        // readiness-DISABLED entry), never a real prior choice. Always
+        // steer to the readiness-capable profile when the list has one.
+        setModel(preferred && options.some((option) => option.id === preferred) ? preferred : (options[0]?.id ?? ""));
       })
       .catch(() => {});
   }, []);
@@ -95,13 +106,13 @@ export function CodexAuth({ onSave, onBack, detectedVersion, initialAuthMethod, 
       });
       if (!res.ok) {
         setLoginStatus("failed");
-        setError("failed to start auth session");
+        setError("Failed to start auth session.");
         return;
       }
       const data = (await res.json()) as { sessionId?: string };
       if (!data.sessionId) {
         setLoginStatus("failed");
-        setError("no session ID returned");
+        setError("No session ID returned.");
         return;
       }
 
@@ -125,7 +136,7 @@ export function CodexAuth({ onSave, onBack, detectedVersion, initialAuthMethod, 
           } else if (pollData.status === "failed") {
             stopPolling();
             setLoginStatus("failed");
-            setError(pollData.error || "authentication failed");
+            setError(pollData.error || "Authentication failed.");
           }
         } catch {
           // poll error, keep trying
@@ -133,7 +144,7 @@ export function CodexAuth({ onSave, onBack, detectedVersion, initialAuthMethod, 
       }, 2000);
     } catch {
       setLoginStatus("failed");
-      setError("network error");
+      setError("Network error.");
     }
   };
 
@@ -152,42 +163,47 @@ export function CodexAuth({ onSave, onBack, detectedVersion, initialAuthMethod, 
         body: JSON.stringify(data),
       });
       if (!res.ok) {
-        setError("failed to save secret");
+        setError("Failed to save secret.");
         return;
       }
       onSave({ authMethod: "api-key", model });
     } catch {
-      setError("failed to save secret");
+      setError("Failed to save secret.");
     } finally {
       setSaving(false);
     }
   };
 
   const handleLoginDone = () => {
+    if (loginStatus !== "complete") {
+      setError("Sign in to Codex first.");
+      return;
+    }
     onSave({ authMethod: "login", model });
   };
 
   const showFooterSave = authOption === "login";
   const profileOptions = profiles.length > 0 ? profiles : codexProfileOptions;
+  const isBusy = saving || Boolean(busy);
 
   const options: { key: AuthOption; icon: ComponentType<{ className?: string }>; label: string; desc: string }[] = [
     {
       key: "api-key",
       icon: KeyFilled,
-      label: "use an API key",
-      desc: `set ${codexCreds.envKey} as a secret`,
+      label: "Use an API Key",
+      desc: `Set ${codexCreds.envKey} as a secret.`,
     },
     {
       key: "login",
       icon: Link2Filled,
-      label: "sign in with openai",
-      desc: `runs ${getTerminalAuthCommand("codex")}, opens browser`,
+      label: "Sign in with OpenAI",
+      desc: `Runs ${getTerminalAuthCommand("codex")}, opens browser.`,
     },
     {
       key: "terminal",
       icon: TerminalIcon,
-      label: "open in terminal",
-      desc: "run auth interactively in the terminal",
+      label: "Open in Terminal",
+      desc: "Run auth interactively in the terminal.",
     },
   ];
 
@@ -200,47 +216,44 @@ export function CodexAuth({ onSave, onBack, detectedVersion, initialAuthMethod, 
       transition={{ duration: 0.3 }}
       className="space-y-5"
     >
-      <div className="text-center">
-        <h2 className="text-lg font-semibold mb-1">Configure Codex</h2>
-        {detectedVersion && (
-          <p className="text-[10px] text-foreground/30">
-            detected: {detectedVersion}
-          </p>
-        )}
-      </div>
+      {!embedded && (
+        <div className="text-center">
+          <h2 className="text-lg font-semibold mb-1">Configure Codex</h2>
+          {detectedVersion && (
+            <p className="text-[10px] text-foreground/30">
+              Detected: {detectedVersion}
+            </p>
+          )}
+        </div>
+      )}
 
       {/* auth option selector */}
       <div className="space-y-2">
         {options.map((opt) => {
           const Icon = opt.icon;
           const active = authOption === opt.key;
-          const disabled = false;
           return (
             <button
               key={opt.key}
               type="button"
-              disabled={disabled}
               onClick={() => {
-                if (disabled) return;
                 setAuthOption(opt.key);
                 setError("");
               }}
               className={`w-full text-left p-3 rounded-md flex items-start gap-3 transition-all ${
-                disabled
-                  ? "bg-muted/30 opacity-40 cursor-not-allowed"
-                  : active
-                    ? "bg-accent ring-1 ring-foreground/10"
-                    : "bg-muted hover:bg-accent/50"
+                active
+                  ? "bg-accent ring-1 ring-foreground/10"
+                  : "bg-muted hover:bg-accent/50"
               }`}
             >
               <div
                 className={`mt-0.5 h-3.5 w-3.5 rounded-full border flex items-center justify-center ${
-                  active && !disabled
+                  active
                     ? "border-foreground/60 bg-foreground/10"
                     : "border-foreground/20"
                 }`}
               >
-                {active && !disabled && (
+                {active && (
                   <div className="h-1.5 w-1.5 rounded-full bg-foreground/80" />
                 )}
               </div>
@@ -264,18 +277,18 @@ export function CodexAuth({ onSave, onBack, detectedVersion, initialAuthMethod, 
           <div className="space-y-3">
             {loginStatus === "idle" && (
               <Button onClick={startLogin} className="w-full" size="sm">
-                sign in
+                Sign In
               </Button>
             )}
             {loginStatus === "pending" && (
               <div className="space-y-2 text-center">
                 <p className="text-xs text-foreground/50">
-                  waiting for browser...
+                  Waiting for browser…
                 </p>
                 {authUrl && (
                   <div className="bg-muted rounded-md p-2">
                     <p className="text-[10px] text-foreground/40 mb-1">
-                      open this link and enter the code:
+                      Open this link and enter the code:
                     </p>
                     <a
                       href={authUrl}
@@ -300,14 +313,14 @@ export function CodexAuth({ onSave, onBack, detectedVersion, initialAuthMethod, 
             {loginStatus === "complete" && (
               <div className="flex items-center gap-2 justify-center text-green-400">
                 <TickCircleFilled className="h-4 w-4" />
-                <span className="text-sm">signed in</span>
+                <span className="text-sm">Signed In</span>
               </div>
             )}
             {loginStatus === "failed" && (
               <div className="space-y-2 text-center">
                 <div className="flex items-center gap-2 justify-center text-red-400">
                   <CloseCircleFilled className="h-4 w-4" />
-                  <span className="text-xs">{error || "sign in failed"}</span>
+                  <span className="text-xs">{error || "Sign in failed."}</span>
                 </div>
                 <Button
                   onClick={() => {
@@ -317,7 +330,7 @@ export function CodexAuth({ onSave, onBack, detectedVersion, initialAuthMethod, 
                   variant="outline"
                   size="sm"
                 >
-                  try again
+                  Try Again
                 </Button>
               </div>
             )}
@@ -339,9 +352,9 @@ export function CodexAuth({ onSave, onBack, detectedVersion, initialAuthMethod, 
         )}
       </div>
 
-      {/* agent config selector */}
+      {/* profile selector */}
       <div className="space-y-1">
-        <label className="text-xs text-foreground/50">default agent config</label>
+        <label className="text-xs text-foreground/50">Profile for Your First Run</label>
         <select
           className="w-full h-8 px-3 text-xs rounded-md bg-muted focus:ring-1 focus:ring-accent border-0"
           value={model}
@@ -349,7 +362,7 @@ export function CodexAuth({ onSave, onBack, detectedVersion, initialAuthMethod, 
         >
           {profileOptions.map((p) => (
             <option key={p.id} value={p.id}>
-              {p.name}
+              {p.name}{!codexReadinessIds.has(p.id) ? " (cannot be verified here)" : ""}
             </option>
           ))}
         </select>
@@ -362,18 +375,19 @@ export function CodexAuth({ onSave, onBack, detectedVersion, initialAuthMethod, 
           className="flex items-center gap-1 text-xs text-foreground/40 hover:text-foreground transition-colors"
         >
           <ArrowLeft2Filled className="h-3.5 w-3.5" />
-          {backLabel ?? "back to tools"}
+          {backLabel ?? "Back to Tools"}
         </button>
         {showFooterSave && (
-          <Button
-            size="sm"
-            disabled={saving || loginStatus !== "complete"}
-            onClick={handleLoginDone}
-          >
-            {saving ? "saving..." : "save"}
-          </Button>
+          <BusyButton busy={isBusy} busyLabel="Saving…" onClick={handleLoginDone}>
+            Save and Check Codex
+          </BusyButton>
         )}
       </div>
+      {/* the "failed" loginStatus branch above already shows its own error;
+          this is only for the "clicked Save before finishing sign-in" guard */}
+      {authOption === "login" && loginStatus !== "failed" && error && (
+        <p className="text-right text-xs text-red-400">{error}</p>
+      )}
     </motion.div>
   );
 }

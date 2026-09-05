@@ -45,11 +45,15 @@ describe("CodexAuth", () => {
 
     const select = await screen.findByRole("combobox");
 
+    // Array order is not a safe onboarding decision: codex-default (the
+    // catalog's first/naive entry) has readiness disabled, so the dropdown
+    // must steer to a readiness-capable sibling (codex-terra) instead.
     await waitFor(() => {
-      expect(select).toHaveValue("codex-default");
+      expect(select).toHaveValue("codex-terra");
     });
 
-    expect(screen.getByRole("option", { name: "Codex / GPT-5.6 Sol" })).toHaveValue("codex-default");
+    expect(screen.getByRole("option", { name: "Codex / GPT-5.6 Terra" })).toHaveValue("codex-terra");
+    expect(screen.getByRole("option", { name: /Codex \/ GPT-5\.6 Sol \(cannot be verified here\)/ })).toHaveValue("codex-default");
     expect(screen.queryByRole("option", { name: "gpt-4o" })).toBeNull();
   });
 });
