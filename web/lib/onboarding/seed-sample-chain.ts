@@ -26,13 +26,16 @@ export interface SeedSampleChainResult {
 /**
  * The route a freshly-seeded sample chain should open to.
  *
- * /chains/{id}/run is the dedicated single-chain run page: it loads the chain,
- * pre-fills its default goal, and shows a prominent "start chain" button — so a
- * brand-new user lands somewhere they can immediately execute, not on an empty
- * list. We centralize it here so every caller navigates consistently.
+ * There is no dedicated /chains/{id}/run page (app/(workflows)/chains/[id]/
+ * only has edit/ and compare/) — every caller of this helper was navigating
+ * new users to a 404. /chains?chain={id} is the real, working surface: the
+ * chains page's own deep-link effect (app/(workflows)/chains/page.tsx) reads
+ * ?chain= (or ?id=), selects that chain, and opens its detail panel with the
+ * Run action one click away. We centralize it here so every caller navigates
+ * consistently.
  */
 export function sampleChainRunRoute(chainId: string): string {
-  return `/chains/${encodeURIComponent(chainId)}/run`;
+  return `/chains?chain=${encodeURIComponent(chainId)}`;
 }
 
 /**
