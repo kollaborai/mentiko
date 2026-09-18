@@ -19,6 +19,11 @@ for the acceptance contract governing exact task-start snapshots, one isolated
 worktree and PTY pair per graph node, integration-gated edges, crash-safe
 capacity, and terminal compare-and-swap publication.
 
+see: [database-lifecycle/README.md](./database-lifecycle/README.md) for the proposed
+database-owned task, workflow, step, run and event model, human/AI decision
+policies, transactional command delivery, and namespace migration contract.
+This is a target specification; the storage migration is not implemented.
+
 overview
 ========
 

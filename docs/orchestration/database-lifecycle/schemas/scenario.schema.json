@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mentiko.com/schemas/database-lifecycle/scenario-v1.json",
+  "title": "Mentiko database lifecycle scenario",
+  "type": "object",
+  "required": [
+    "scenario_id",
+    "schema_status",
+    "title",
+    "acceptance_case_ids",
+    "initial_state",
+    "actions",
+    "expected"
+  ],
+  "properties": {
+    "scenario_id": { "type": "string", "pattern": "^SCN-DBL-[0-9]{3}$" },
+    "schema_status": { "const": "proposed" },
+    "title": { "type": "string", "minLength": 1 },
+    "acceptance_case_ids": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "pattern": "^LIFECYCLE-AC-[0-9]{3}$" }
+    },
+    "classification": { "enum": ["reference-model", "negative", "contract-only", "measurement"] },
+    "initial_state": { "type": "object" },
+    "actions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["action_id", "kind", "input"],
+        "properties": {
+          "action_id": { "type": "string", "minLength": 1 },
+          "kind": { "type": "string", "minLength": 1 },
+          "input": { "type": "object" },
+          "principal": { "type": "object" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "expected": {
+      "type": "object",
+      "required": ["transitions", "commands", "final_state"],
+      "properties": {
+        "transitions": { "type": "array", "minItems": 1 },
+        "commands": { "type": "array" },
+        "final_state": { "type": "object" },
+        "negative_assertions": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

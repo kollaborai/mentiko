@@ -9,6 +9,7 @@ import { usePillNavPreferences, getPillNavShineGradient } from "@/lib/ui/pill-na
 import { useWorkspace } from "@/lib/ui-context/workspace-context";
 import { useUser } from "@/lib/ui-context/user-context";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { FLOATING_SURFACE_Z } from "@/lib/ui/floating-surface-z";
 import {
   consumeWelcomeOpenRequest,
   setOnboardingDismissed,
@@ -154,7 +155,8 @@ export function FloatingWelcomePanel({ workspacesDir }: { workspacesDir?: string
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm"
+            className="fixed inset-0 bg-black/40 backdrop-blur-sm"
+            style={{ zIndex: FLOATING_SURFACE_Z.kollaborBackdrop }}
             onClick={() => attemptClose()}
           />
 
@@ -167,9 +169,10 @@ export function FloatingWelcomePanel({ workspacesDir }: { workspacesDir?: string
             initial={{ opacity: 0, scale: 0.9, y: 30 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.9, y: 30 }}
-            transition={{ type: "spring", stiffness: 400, damping: 30, mass: 0.8 }}
-            className="fixed z-[45] left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-xl bg-background"
+            transition={{ type: "tween", duration: 0.32, ease: "easeOut", delay: 0.1 }}
+            className="fixed left-1/2 top-1/2 w-[calc(100vw-1rem)] max-w-3xl -translate-x-1/2 -translate-y-1/2 overflow-y-auto overscroll-contain rounded-lg bg-background max-h-[calc(100dvh-1rem)]"
             style={{
+              zIndex: FLOATING_SURFACE_Z.kollaborPrompt,
               boxShadow: "0 0 0 1px rgba(255,255,255,0.06), 0 20px 60px rgba(0,0,0,0.6)",
             }}
           >
@@ -199,7 +202,7 @@ export function FloatingWelcomePanel({ workspacesDir }: { workspacesDir?: string
             </button>
 
             {/* setup center content */}
-            <div className="relative z-[2] p-6">
+            <div className="relative z-[2] p-3 pt-6 sm:p-5 sm:pt-7">
               <SetupCenter
                 embedded
                 workspacesDir={resolvedWorkspacesDir}

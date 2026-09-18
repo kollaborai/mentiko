@@ -1,0 +1,233 @@
+{
+  "fixture_id": "FIX-DBL-001",
+  "schema_status": "proposed",
+  "title": "Manual task through chain selection, typed run, and accepted outcome",
+  "namespace": {
+    "id": "ns-fixture-001",
+    "org_id": "org-fixture-001",
+    "data_root": "<temporary-root>/namespaces/ns-fixture-001/data",
+    "artifact_root": "<temporary-root>/namespaces/ns-fixture-001/runs"
+  },
+  "current_runtime_observations": [
+    "The current task store already uses the namespace tasks.db with WAL, foreign keys, and a busy timeout.",
+    "The current typed AgentAttempt record is persisted inside run.json and has explicit startup, instruction, terminal, and release phases.",
+    "Workflow instances, step occurrences, lifecycle events, lifecycle commands, and artifact_refs are proposed records and are not current production tables."
+  ],
+  "initial_state": {
+    "tasks": [],
+    "workflow_instances": [],
+    "workflow_steps": [],
+    "runs": [],
+    "agent_attempts": [],
+    "lifecycle_events": [],
+    "lifecycle_commands": [],
+    "artifact_refs": [],
+    "execution_reservations": []
+  },
+  "actions": [
+    {
+      "action_id": "ACT-001",
+      "kind": "create_task",
+      "principal": { "type": "human", "id": "user-fixture", "scope": "task.write" },
+      "idempotency_key": "manual:create:task-fixture-001:v1",
+      "input": {
+        "receipt_command_id": "cmd-manual-create-001",
+        "task": {
+          "id": "task-fixture-001",
+          "org_id": "org-fixture-001",
+          "workspace_id": "workspace-fixture-001",
+          "title": "Publish the verified fixture result",
+          "acceptance_criteria_revision": 1,
+          "auto_run": false
+        },
+        "workflow": {
+          "id": "wf-fixture-001",
+          "kind": "task_fulfillment",
+          "definition_version": "task-fulfillment/v1",
+          "definition_digest": "sha256:definition-fixture-001",
+          "authority_epoch": 1,
+          "execution_retry_budget": 2
+        },
+        "steps": [
+          { "id": "step-select-001", "step_key": "select_chain", "kind": "select_chain", "actor_policy": "human", "status": "waiting", "waiting_reason": "selection_required" },
+          { "id": "step-execute-001", "step_key": "execute_chain", "kind": "execute_chain", "actor_policy": "worker", "status": "pending" },
+          { "id": "step-summary-001", "step_key": "summarize_outcome", "kind": "summarize_outcome", "actor_policy": "worker", "status": "pending" },
+          { "id": "step-finalize-001", "step_key": "finalize_task", "kind": "finalize_task", "actor_policy": "worker", "status": "pending" }
+        ]
+      }
+    },
+    {
+      "action_id": "ACT-002",
+      "kind": "select_chain",
+      "principal": { "type": "human", "id": "user-fixture", "scope": "task.select" },
+      "idempotency_key": "manual:select:task-fixture-001:v1",
+      "input": {
+        "receipt_command_id": "cmd-select-chain-001",
+        "workflow_id": "wf-fixture-001",
+        "selection_step_id": "step-select-001",
+        "execute_step_id": "step-execute-001",
+        "chain": {
+          "id": "chain-publish-verified-result",
+          "version": 3,
+          "digest": "sha256:chain-fixture-003"
+        },
+        "selection_mode": "manual"
+      }
+    },
+    {
+      "action_id": "ACT-003",
+      "kind": "claim_command",
+      "principal": { "type": "worker", "id": "worker-fixture", "scope": "lifecycle.dispatch" },
+      "idempotency_key": "claim:cmd-execute-task-fixture-001:g1",
+      "input": {
+        "command_id": "cmd-execute-task-001",
+        "owner": "worker-fixture",
+        "lease_generation": 1,
+        "lease_expires_at": "2026-09-06T10:00:30Z",
+        "run": { "id": "run-fixture-001", "attempt_number": 1 },
+        "attempt": { "id": "attempt-fixture-001", "agent_id": "publisher" },
+        "reservation": { "id": "reservation-fixture-001", "capacity_domain": "org-fixture-001:agents", "queue_order": 1 }
+      }
+    },
+    {
+      "action_id": "ACT-004",
+      "kind": "agent_progress",
+      "principal": { "type": "runner", "id": "runner-fixture", "scope": "runner.attempt" },
+      "idempotency_key": "attempt:attempt-fixture-001:queued",
+      "input": { "attempt_id": "attempt-fixture-001", "source_event_id": "runner-event-001", "to": "queued" }
+    },
+    {
+      "action_id": "ACT-005",
+      "kind": "agent_progress",
+      "principal": { "type": "runner", "id": "runner-fixture", "scope": "runner.attempt" },
+      "idempotency_key": "attempt:attempt-fixture-001:lease-acquired",
+      "input": { "attempt_id": "attempt-fixture-001", "source_event_id": "runner-event-002", "to": "lease_acquired" }
+    },
+    {
+      "action_id": "ACT-006",
+      "kind": "agent_progress",
+      "principal": { "type": "runner", "id": "runner-fixture", "scope": "runner.attempt" },
+      "idempotency_key": "attempt:attempt-fixture-001:pty-allocated",
+      "input": { "attempt_id": "attempt-fixture-001", "source_event_id": "runner-event-003", "to": "pty_allocated", "pty_session_id": "pty-fixture-001" }
+    },
+    {
+      "action_id": "ACT-007",
+      "kind": "agent_progress",
+      "principal": { "type": "runner", "id": "runner-fixture", "scope": "runner.attempt" },
+      "idempotency_key": "attempt:attempt-fixture-001:process-spawned",
+      "input": { "attempt_id": "attempt-fixture-001", "source_event_id": "runner-event-004", "to": "process_spawned", "process_pid": 41001 }
+    },
+    {
+      "action_id": "ACT-008",
+      "kind": "agent_progress",
+      "principal": { "type": "runner", "id": "runner-fixture", "scope": "runner.attempt" },
+      "idempotency_key": "attempt:attempt-fixture-001:ready",
+      "input": { "attempt_id": "attempt-fixture-001", "source_event_id": "runner-event-005", "to": "ready_for_instructions" }
+    },
+    {
+      "action_id": "ACT-009",
+      "kind": "agent_progress",
+      "principal": { "type": "runner", "id": "runner-fixture", "scope": "runner.attempt" },
+      "idempotency_key": "attempt:attempt-fixture-001:instructions-submitted",
+      "input": {
+        "attempt_id": "attempt-fixture-001",
+        "source_event_id": "runner-event-006",
+        "to": "instructions_submitted",
+        "instruction": {
+          "idempotency_key": "instruction:run-fixture-001:publisher:v1",
+          "path": "runs/run-fixture-001/artifacts/publisher-instructions.md",
+          "pointer": "@mentiko-instruction runs/run-fixture-001/artifacts/publisher-instructions.md"
+        }
+      }
+    },
+    {
+      "action_id": "ACT-010",
+      "kind": "agent_progress",
+      "principal": { "type": "runner", "id": "runner-fixture", "scope": "runner.attempt" },
+      "idempotency_key": "attempt:attempt-fixture-001:completed",
+      "input": { "attempt_id": "attempt-fixture-001", "source_event_id": "runner-event-007", "to": "completed" }
+    },
+    {
+      "action_id": "ACT-011",
+      "kind": "complete_run",
+      "principal": { "type": "runner", "id": "runner-fixture", "scope": "runner.result" },
+      "idempotency_key": "result:run-fixture-001:revision-1",
+      "input": {
+        "source_event_id": "runner-event-008",
+        "run_id": "run-fixture-001",
+        "attempt_id": "attempt-fixture-001",
+        "execute_step_id": "step-execute-001",
+        "summary_step_id": "step-summary-001",
+        "command_id": "cmd-execute-task-001",
+        "summary_command_id": "cmd-summary-task-001",
+        "artifact": {
+          "id": "artifact-fixture-001",
+          "kind": "execution_result",
+          "relative_path": "run-fixture-001/artifacts/execution-result.json",
+          "content": "{\"verdict\":\"ready\",\"acceptance\":[\"draft-available\"]}\n",
+          "digest": "sha256:e053deab4cc50c55c7bcb7bcd14377665704f868d4f8edb46b8c8b7dd785fb7c",
+          "schema_version": "execution-result/v1"
+        },
+        "accepted_result_revision": 1
+      }
+    },
+    {
+      "action_id": "ACT-012",
+      "kind": "accept_outcome",
+      "principal": { "type": "worker", "id": "outcome-evaluator-fixture", "scope": "task.outcome" },
+      "idempotency_key": "outcome:task-fixture-001:run-fixture-001:revision-1",
+      "input": {
+        "receipt_command_id": "cmd-outcome-001",
+        "summary_command_id": "cmd-summary-task-001",
+        "workflow_id": "wf-fixture-001",
+        "task_id": "task-fixture-001",
+        "summary_step_id": "step-summary-001",
+        "finalize_step_id": "step-finalize-001",
+        "source_run_id": "run-fixture-001",
+        "artifact_id": "artifact-fixture-001",
+        "accepted_result_revision": 1,
+        "acceptance_criteria_revision": 1,
+        "verdict": "close"
+      }
+    }
+  ],
+  "expected": {
+    "transitions": [
+      { "action_id": "ACT-001", "accepted": true, "event_types": ["task.created", "workflow.created"], "command_ids": ["cmd-manual-create-001"], "created_ids": ["task-fixture-001", "wf-fixture-001", "step-select-001", "step-execute-001", "step-summary-001", "step-finalize-001"], "must_not": ["run", "agent_attempt"] },
+      { "action_id": "ACT-002", "accepted": true, "event_types": ["chain.selected", "step.ready"], "command_ids": ["cmd-select-chain-001", "cmd-execute-task-001"], "must_not": ["run", "agent_attempt"] },
+      { "action_id": "ACT-003", "accepted": true, "event_types": ["command.leased", "run.reserved", "agent_attempt.created"], "command_ids": ["cmd-execute-task-001"], "created_ids": ["run-fixture-001", "attempt-fixture-001", "reservation-fixture-001"], "must_not": ["second_run", "second_attempt"] },
+      { "action_id": "ACT-004", "accepted": true, "event_types": ["agent_attempt.phase_changed"], "must_not": [] },
+      { "action_id": "ACT-005", "accepted": true, "event_types": ["agent_attempt.phase_changed"], "must_not": [] },
+      { "action_id": "ACT-006", "accepted": true, "event_types": ["agent_attempt.phase_changed"], "must_not": [] },
+      { "action_id": "ACT-007", "accepted": true, "event_types": ["agent_attempt.phase_changed"], "must_not": [] },
+      { "action_id": "ACT-008", "accepted": true, "event_types": ["agent_attempt.phase_changed"], "must_not": ["instruction_submission"] },
+      { "action_id": "ACT-009", "accepted": true, "event_types": ["agent_attempt.phase_changed", "instruction.intent.recorded"], "must_not": ["duplicate_instruction"] },
+      { "action_id": "ACT-010", "accepted": true, "event_types": ["agent_attempt.phase_changed"], "must_not": [] },
+      { "action_id": "ACT-011", "accepted": true, "event_types": ["artifact.accepted", "run.completed", "step.completed"], "command_ids": ["cmd-execute-task-001", "cmd-summary-task-001"], "created_ids": ["artifact-fixture-001"], "must_not": ["task.closed"] },
+      { "action_id": "ACT-012", "accepted": true, "event_types": ["outcome.accepted", "task.closed", "workflow.completed"], "command_ids": ["cmd-summary-task-001", "cmd-outcome-001"], "must_not": ["second_task", "second_dependency", "second_external_action"] }
+    ],
+    "final_state": {
+      "task_statuses": { "task-fixture-001": "closed" },
+      "workflow_statuses": { "wf-fixture-001": "completed" },
+      "step_statuses": {
+        "step-select-001": "succeeded",
+        "step-execute-001": "succeeded",
+        "step-summary-001": "succeeded",
+        "step-finalize-001": "succeeded"
+      },
+      "run_statuses": { "run-fixture-001": "completed" },
+      "attempt_phases": { "attempt-fixture-001": "completed" },
+      "command_statuses": {
+        "cmd-manual-create-001": "completed",
+        "cmd-select-chain-001": "completed",
+        "cmd-execute-task-001": "completed",
+        "cmd-summary-task-001": "completed",
+        "cmd-outcome-001": "completed"
+      },
+      "reservation_statuses": { "reservation-fixture-001": "released" },
+      "artifact_digests": { "artifact-fixture-001": "sha256:e053deab4cc50c55c7bcb7bcd14377665704f868d4f8edb46b8c8b7dd785fb7c" },
+      "run_count": 1,
+      "agent_attempt_count": 1
+    }
+  }
+}

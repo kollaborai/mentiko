@@ -38,7 +38,7 @@ const NEXT_ACTION_TO_STEP: Partial<Record<string, MilestoneStep>> = {
 };
 
 const MENTIKO_LOGO = (
-  <svg xmlns="http://www.w3.org/2000/svg" viewBox="-4 -5 32 32" className="h-11 w-11">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="-4 -5 32 32" className="h-10 w-10 sm:h-11 sm:w-11">
     <rect x="-4" y="-5" width="32" height="32" rx="6" fill="white"/>
     <path d="M14.0298 7.04057L11.9145 2.76797L7.37146 2.6136L6.37685 0L13.605 0.246633L17.0205 7.14525L14.0315 7.04412L14.0298 7.04057ZM20.3497 17.9474L12.7883 17.7345L14.2974 15.0961L18.9821 15.2274L21.2769 11.2174L24 11.5669L20.3497 17.9474ZM17.8597 13.9906L16.4783 11.2795L19.0822 7.29785L16.9825 3.17784L18.7231 1.00782L22.0643 7.564L17.8614 13.9924L17.8597 13.9906ZM9.69219 7.20736L5.00755 7.09025L2.72481 11.1073L0 10.7667L3.63307 4.37374L11.1962 4.56359L9.69392 7.20558L9.69219 7.20736ZM4.91603 15.6479L7.09002 19.7288L5.38916 21.9308L1.93049 15.4385L6.01772 8.93378L7.44742 11.6166L4.91603 15.6479ZM10.6074 21.8847L7.07273 15.0499L10.0635 15.0978L12.253 19.3314L16.7995 19.4041L17.8407 22L10.6091 21.8847H10.6074Z" fill="#0a0a0a"/>
   </svg>
@@ -53,7 +53,7 @@ const done = (key: MilestoneStep, state: SetupState) => { const s = state[key]; 
 // animation completing. (An exit-gated transition can get stuck — a
 // backgrounded/hidden tab pauses rAF, so the old step never finishes
 // animating out and the new one never mounts.)
-const enter = { initial: { opacity: 0, y: 6 }, animate: { opacity: 1, y: 0 }, transition: { duration: 0.18 } } as const;
+const enter = { initial: { opacity: 0, y: 4 }, animate: { opacity: 1, y: 0 }, transition: { duration: 0.2, ease: "easeOut", delay: 0.08 } } as const;
 
 // Optional side quest (spec: never required progress, never blocks). Shown
 // after the first successful chain by default. "not_available" is an honest
@@ -235,6 +235,19 @@ export function SetupCenter({
   const nextMilestoneLabel = mappedNext ? MILESTONES.find((m) => m.key === mappedNext)?.label : undefined;
   const hasProgress = completedCount > 0 || Boolean(state.provider?.selectedCli);
   const isAllSet = state.nextAction === "done" || completedCount === MILESTONES.length;
+  const isWelcomeStep = step === "welcome";
+  const headerTitle = isWelcomeStep
+    ? isAllSet
+      ? "You’re all set."
+      : hasProgress
+        ? "Continue setting up your first chain."
+        : "Let’s get your first chain running."
+    : "Set Up Your First Chain";
+  const headerDescription = isWelcomeStep
+    ? isAllSet
+      ? "Setup is complete. Run it again or build your own chain."
+      : "Choose a tool, connect a project, and run a small chain."
+    : "Complete each milestone to run your first chain.";
   const openChainBuilder = () => router.push("/chains?chain=onboarding-sample-v1");
   const checkInputBar = () => void runAction("input_bar_check", "input-bar", "/api/onboarding/input-bar/check", {});
 
@@ -254,15 +267,17 @@ export function SetupCenter({
 
   return (
     <main aria-labelledby="setup-center-heading" className={cn("w-full", !embedded && "flex min-h-screen flex-col items-center bg-background px-4 py-10 sm:py-14")}>
-      <div className="w-full max-w-xl">
-        <header className="flex flex-col items-center text-center">
-          <div className="mb-5">{MENTIKO_LOGO}</div>
-          <h1 id="setup-center-heading" tabIndex={-1} className="text-xl font-semibold tracking-tight">{isAllSet ? "You’re all set." : hasProgress ? "Continue setting up your first chain." : "Let’s get your first chain running."}</h1>
-          <p className="mt-2 max-w-md text-sm text-foreground/50">{isAllSet ? "Your setup is complete. Run the sample again or start building your own chain." : "Choose the AI tool you want to use, connect a project, and watch Mentiko run a small chain."}</p>
+      <div className="mx-auto w-full max-w-2xl">
+        <header className={cn("flex gap-3", embedded ? "items-center text-left" : "flex-col items-center text-center")}>
+          <div className={cn(!embedded && "mb-5")}>{MENTIKO_LOGO}</div>
+          <div className="min-w-0">
+            <h1 id="setup-center-heading" tabIndex={-1} className={cn("font-semibold tracking-tight", embedded ? "text-lg" : "text-xl")}>{headerTitle}</h1>
+            <p className={cn("text-foreground/50", embedded ? "mt-1 max-w-none text-xs" : "mt-2 max-w-md text-sm")}>{headerDescription}</p>
+          </div>
         </header>
 
         {(step !== "welcome" || isAllSet) && (
-          <nav aria-label="Setup progress" className="mt-8">
+          <nav aria-label="Setup progress" className="mt-5 sm:mt-6">
             <ol className="flex items-center gap-2">
               {MILESTONES.map((m, i) => {
                 const complete = done(m.key, state);
@@ -281,7 +296,7 @@ export function SetupCenter({
                         <span aria-hidden className="flex h-4 w-4 items-center justify-center">
                           {complete ? <TickCircleFilled className="h-3.5 w-3.5 text-foreground/60" /> : <span className={cn("flex h-4 w-4 items-center justify-center rounded-full border text-[9px]", active ? "border-amber-400 text-amber-300" : "border-foreground/20 text-foreground/40")}>{i + 1}</span>}
                         </span>
-                        <span className={cn("hidden text-[10px] sm:inline", active ? "text-foreground/70" : "text-foreground/40")}>{m.short}</span>
+                        <span className={cn("text-[9px] sm:text-[10px]", active ? "text-foreground/70" : "text-foreground/40")}>{m.short}</span>
                       </span>
                     </button>
                   </li>
@@ -292,7 +307,7 @@ export function SetupCenter({
           </nav>
         )}
 
-        <section aria-label="Setup actions" className="mt-6 min-w-0 rounded-xl border border-border/60 bg-card/20 p-5 sm:p-6">
+        <section aria-label="Setup actions" className="mt-4 min-w-0 rounded-lg border border-border/60 bg-card/20 p-4 sm:p-5">
           {error && <div role="alert" className="mb-4 flex items-center justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs"><span>{error}</span><BusyButton busy={loading} busyLabel="Retrying…" size="sm" variant="outline" onClick={() => void refresh()}>Retry</BusyButton></div>}
           {message && <p role="status" className="mb-4 text-xs text-foreground/60">{message}</p>}
           {loading && <p role="status" className="mb-4 text-xs text-foreground/45">Loading your setup progress…</p>}
@@ -305,19 +320,17 @@ export function SetupCenter({
                       <p className="text-sm text-foreground/60">
                         {selectedToolLabel || "Your tool"} ran your first chain on {selectedWorkspace?.name || state.workspace?.id || "your project"}.
                       </p>
-                      <div className="mt-4 flex flex-col items-center gap-2">
-                        <Button onClick={handleRequestClose} className="w-full gap-2 sm:w-auto">
+                      <div className="mt-3 flex flex-wrap items-center justify-center gap-x-4 gap-y-2">
+                        <Button onClick={handleRequestClose} className="gap-2">
                           Open Dashboard
                           <ArrowRight2Filled className="h-4 w-4" />
                         </Button>
-                        <div className="flex items-center gap-4">
-                          <button type="button" onClick={() => { userNavigatedRef.current = true; setStep("sampleRun"); }} className="text-xs text-foreground/40 transition-colors hover:text-foreground/60">
-                            Run Again
-                          </button>
-                          <button type="button" onClick={openChainBuilder} className="text-xs text-foreground/40 transition-colors hover:text-foreground/60">
-                            Open Chain Builder
-                          </button>
-                        </div>
+                        <button type="button" onClick={() => { userNavigatedRef.current = true; setStep("sampleRun"); }} className="text-xs text-foreground/40 transition-colors hover:text-foreground/60">
+                          Run Again
+                        </button>
+                        <button type="button" onClick={openChainBuilder} className="text-xs text-foreground/40 transition-colors hover:text-foreground/60">
+                          Open Chain Builder
+                        </button>
                       </div>
                     </>
                   ) : (
@@ -325,8 +338,8 @@ export function SetupCenter({
                       {hasProgress && nextMilestoneLabel && (
                         <p className="text-sm text-foreground/60">Next: <span className="text-foreground/90">{nextMilestoneLabel}</span>.</p>
                       )}
-                      <div className="mt-4 flex flex-col items-center gap-2">
-                        <Button onClick={handleGetStarted} className="w-full gap-2 sm:w-auto">
+                      <div className="mt-3 flex flex-wrap items-center justify-center gap-x-4 gap-y-2">
+                        <Button onClick={handleGetStarted} className="gap-2">
                           {hasProgress ? "Continue Setup" : "Get Started"}
                           <ArrowRight2Filled className="h-4 w-4" />
                         </Button>
@@ -361,9 +374,9 @@ export function SetupCenter({
               )}
               {step === "readiness" && (
                 <div>
-                  <h2 className="text-lg font-semibold">Check That Everything Works</h2>
-                  <p className="mt-1 text-sm text-foreground/50">We’ll run a bounded, non-mutating check with your selected tool and project.</p>
-                  <div className="mt-5 space-y-1.5 rounded-lg border border-border/60 p-4 text-sm">
+                  <h2 className="text-base font-semibold">Check That Everything Works</h2>
+                  <p className="mt-1 text-xs text-foreground/50">We’ll run a safe check with your selected tool and project.</p>
+                  <div className="mt-3 space-y-1 rounded-md border border-border/60 p-3 text-xs">
                     <p>AI Tool: <strong>{selectedToolLabel || "Not selected"}</strong></p>
                     {selectedProfileLabel && <p>Profile: <strong>{selectedProfileLabel}</strong></p>}
                     <p>Project: <strong>{selectedWorkspace?.name || state.workspace?.id || "Not selected"}</strong></p>
@@ -374,13 +387,13 @@ export function SetupCenter({
                       server's persisted status — a run stuck "in_progress"
                       server-side (orphaned/never reconciled) must not
                       permanently trap the button unclickable. */}
-                  <BusyButton busy={busy} busyLabel="Checking…" onClick={runReadiness} className="mt-5 w-full gap-2 sm:w-auto">
+                  <BusyButton busy={busy} busyLabel="Checking…" onClick={runReadiness} className="mt-4 gap-2">
                     Check that {selectedToolLabel || "your tool"} works
                     <ArrowRight2Filled className="h-4 w-4" />
                   </BusyButton>
                   {state.readiness?.runId && (
-                    <div className="mt-4">
-                      <OnboardingRunMonitor key={state.readiness.runId} runId={state.readiness.runId} title="Readiness check" onTerminal={() => void refresh()} />
+                    <div className="mt-3">
+                      <OnboardingRunMonitor key={state.readiness.runId} runId={state.readiness.runId} title="Readiness check" compact={embedded} onTerminal={() => void refresh()} />
                     </div>
                   )}
                 </div>
@@ -388,18 +401,18 @@ export function SetupCenter({
               {step === "sampleRun" && (
                 state.sampleRun?.status === "completed" ? (
                   <div>
-                    <h2 className="text-lg font-semibold">All set. Your first chain ran.</h2>
-                    <div className="mt-5 space-y-1.5 rounded-lg border border-border/60 p-4 text-sm">
+                    <h2 className="text-base font-semibold">All set. Your first chain ran.</h2>
+                    <div className="mt-3 space-y-1 rounded-md border border-border/60 p-3 text-xs">
                       <p>Tool: <strong>{selectedToolLabel || "Not selected"}</strong></p>
                       {selectedProfileLabel && <p>Profile: <strong>{selectedProfileLabel}</strong></p>}
                       <p>Project: <strong>{selectedWorkspace?.name || state.workspace?.id || "Not selected"}</strong></p>
                     </div>
                     {state.sampleRun?.runId && (
-                      <div className="mt-4">
-                        <OnboardingRunMonitor key={state.sampleRun.runId} runId={state.sampleRun.runId} title="Sample chain" onTerminal={() => void refresh()} />
+                      <div className="mt-3">
+                        <OnboardingRunMonitor key={state.sampleRun.runId} runId={state.sampleRun.runId} title="Sample chain" compact={embedded} onTerminal={() => void refresh()} />
                       </div>
                     )}
-                    <div className="mt-5 flex flex-wrap gap-2">
+                    <div className="mt-4 flex flex-wrap gap-2">
                       <Button variant="outline" onClick={() => router.push(`/runs/${state.sampleRun?.runId}`)}>
                         Open Full Run
                       </Button>
@@ -414,22 +427,22 @@ export function SetupCenter({
                   </div>
                 ) : (
                   <div>
-                    <h2 className="text-lg font-semibold">Run Your First Chain</h2>
-                    <p className="mt-1 text-sm text-foreground/50">Read the project name and return one short sentence. This sample does not modify files.</p>
-                    <div className="mt-5 space-y-1.5 rounded-lg border border-border/60 p-4 text-sm">
+                    <h2 className="text-base font-semibold">Run Your First Chain</h2>
+                    <p className="mt-1 text-xs text-foreground/50">Read the project name and return one short sentence. This sample does not modify files.</p>
+                    <div className="mt-3 space-y-1 rounded-md border border-border/60 p-3 text-xs">
                       <p>Tool: <strong>{selectedToolLabel || "Not selected"}</strong></p>
                       {selectedProfileLabel && <p>Profile: <strong>{selectedProfileLabel}</strong></p>}
                       <p>Project: <strong>{selectedWorkspace?.name || state.workspace?.id || "Not selected"}</strong></p>
                       <p>Status: <strong>{statusText(state.sampleRun?.status)}</strong></p>
                       {state.sampleRun?.runId && <p className="mt-2 text-xs text-foreground/45">Run ID: {state.sampleRun.runId}</p>}
                     </div>
-                    <BusyButton busy={busy} busyLabel="Running…" onClick={runSample} className="mt-5 gap-2">
+                    <BusyButton busy={busy} busyLabel="Running…" onClick={runSample} className="mt-4 gap-2">
                       Run a sample chain
                       <ArrowRight2Filled className="h-4 w-4" />
                     </BusyButton>
                     {state.sampleRun?.runId && (
-                      <div className="mt-4">
-                        <OnboardingRunMonitor key={state.sampleRun.runId} runId={state.sampleRun.runId} title="Sample chain" onTerminal={() => void refresh()} />
+                      <div className="mt-3">
+                        <OnboardingRunMonitor key={state.sampleRun.runId} runId={state.sampleRun.runId} title="Sample chain" compact={embedded} onTerminal={() => void refresh()} />
                       </div>
                     )}
                   </div>

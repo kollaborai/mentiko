@@ -156,7 +156,31 @@ docker run -d \
   ghcr.io/kollaborai/mentiko:latest
 ```
 
-Logs: `docker logs -f mentiko`. Stop: `docker stop mentiko`.
+To expose the UI on a different host port, change the host side of the
+`HOST:CONTAINER` mapping. This example runs a separate local instance at
+`http://localhost:2320` and maps its terminal websocket bridge to port `2321`:
+
+```bash
+docker run -d \
+  --name mentiko-2320 \
+  --restart unless-stopped \
+  -p 2320:3000 \
+  -p 2321:3099 \
+  -v mentiko-data-2320:/app \
+  -e BETTER_AUTH_SECRET="$(openssl rand -hex 32)" \
+  -e BETTER_AUTH_URL=http://localhost:2320 \
+  -e WS_PORT=2321 \
+  ghcr.io/kollaborai/mentiko:latest
+```
+
+Open [http://localhost:2320/signup](http://localhost:2320/signup) after the
+container is ready. Use a distinct container name and data volume for a
+separate instance; do not mount the same data volume into multiple running
+Mentiko containers.
+
+For the default container, view logs with `docker logs -f mentiko` and stop it
+with `docker stop mentiko`. For the alternate-port example, use
+`docker logs -f mentiko-2320` and `docker stop mentiko-2320`.
 
 For production, put a reverse proxy (caddy, nginx, traefik) in front of
 port 3000 to terminate TLS. Set `BETTER_AUTH_URL=https://your-domain` so

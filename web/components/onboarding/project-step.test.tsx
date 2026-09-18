@@ -77,7 +77,7 @@ describe("ProjectStep", () => {
     );
 
     expect(screen.getByText("Connect a project")).toBeInTheDocument();
-    expect(screen.getByText(/Your agents need a project folder/)).toBeInTheDocument();
+    expect(screen.getByText("Choose where your agents will work.")).toBeInTheDocument();
     expect(screen.getByText("My Workspace")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /use this project/i })).toBeInTheDocument();
     expect(screen.getByText("GitHub")).toBeInTheDocument();

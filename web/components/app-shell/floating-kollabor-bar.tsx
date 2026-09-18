@@ -24,6 +24,8 @@ import {
   sendMessage as engineSendMessage,
   respondToPermission as engineRespondToPermission,
   ping as enginePing,
+  cancelTurn as engineCancelTurn,
+  clearSessionHistory as engineClearSessionHistory,
   setKollaborEngineStorageScope,
   clearKollaborEngineStoredSession,
   type KollaborTurnContext,
@@ -376,6 +378,7 @@ export function FloatingKollaborBar() {
 
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const sendingRef = useRef<boolean>(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
   const pendingToolInstancesRef = useRef<Map<string, string[]>>(new Map());
   // message stashed while the first-run mode choice is pending
   const pendingFirstMessageRef = useRef<string | null>(null);
@@ -1203,6 +1206,77 @@ export function FloatingKollaborBar() {
     !codexAuthPromptOpen &&
     !!error;
 
+  const resetEngineSession = useCallback(async () => {
+    const sid = useKollaborBarStore.getState().sessionId;
+    // Abort any in-flight stream before replacing its session. Keep the
+    // tenant/user-scoped identity intact; only the ephemeral session id is
+    // discarded.
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+    if (sid) {
+      try {
+        await engineCancelTurn(sid);
+      } catch {
+        // A dead daemon is already reset; do not block reconnect on cleanup.
+      }
+    }
+    setError(null);
+    setEngineError(null);
+    clearMessages();
+    // Prefer the engine's history reset so configured agent/session state and
+    // the stable session id survive Clear. If the daemon is already gone (or
+    // an older engine lacks this endpoint), fall back to scoped recreation.
+    if (sid) {
+      try {
+        await engineClearSessionHistory(sid);
+        return;
+      } catch {
+        // Continue with a scoped session reset below.
+      }
+    }
+    clearKollaborEngineStoredSession();
+    setSessionId(null);
+    setConnected(false);
+    setConnecting(true);
+    try {
+      const { sessionId: nextSessionId, sessionToken } = await getOrCreateSession(
+        sessionRequestRef.current ?? {},
+      );
+      syncSessionToken(sessionToken);
+      setSessionId(nextSessionId);
+      setConnected(true);
+      setConnecting(false);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setConnecting(false);
+      setError(`session reset failed: ${msg}`);
+      setEngineError(msg);
+    }
+  }, [
+    clearMessages,
+    setConnected,
+    setConnecting,
+    setEngineError,
+    setError,
+    setSessionId,
+  ]);
+
+  const handleStop = useCallback(async () => {
+    const sid = useKollaborBarStore.getState().sessionId;
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+    try {
+      if (sid) await engineCancelTurn(sid);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(`stop failed: ${msg}`);
+    } finally {
+      sendingRef.current = false;
+      finishDraft();
+      pendingToolInstancesRef.current.clear();
+    }
+  }, [finishDraft, setError]);
+
   const activeAskMessage = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i -= 1) {
       const message = messages[i];
@@ -1218,6 +1292,8 @@ export function FloatingKollaborBar() {
     pendingToolInstancesRef.current.clear();
     pushMessage({ id: uid, role: "user", content, timestamp: Date.now() });
     sendingRef.current = true;
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
     startDraft();
     // Tell the assistant where the user is and whether they're new, so it can
     // give screen-aware, onboarding-aware help. Built fresh per turn from the
@@ -1231,7 +1307,7 @@ export function FloatingKollaborBar() {
 
       do {
         shouldRetry = false;
-        for await (const ev of engineSendMessage(activeSessionId, content, turnContext)) {
+        for await (const ev of engineSendMessage(activeSessionId, content, turnContext, abortController.signal)) {
           switch (ev.type) {
           case "token":
             if (ev.text) appendDraftText(ev.text);
@@ -1322,6 +1398,13 @@ export function FloatingKollaborBar() {
             break;
           case "error": {
             const msg = "message" in ev ? ev.message : "engine error";
+            // A local Stop/Clear abort deliberately closes the SSE stream.
+            // Do not surface that expected cancellation as an engine error or
+            // attempt stale-session recovery from the synthetic abort event.
+            if (abortController.signal.aborted || ev.code === "aborted") {
+              finishDraft();
+              break;
+            }
             // Session expired or engine restarted: clear stale IDs and reconnect.
             if (isRecoverableKollaborSessionError(msg)) {
               clearKollaborEngineStoredSession();
@@ -1362,12 +1445,13 @@ export function FloatingKollaborBar() {
       } while (shouldRetry);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      setError(`send failed: ${msg}`);
+      if (!abortController.signal.aborted) setError(`send failed: ${msg}`);
       setConnecting(false);
       finishDraft();
       pendingToolInstancesRef.current.clear();
     } finally {
       sendingRef.current = false;
+      abortControllerRef.current = null;
       pendingToolInstancesRef.current.clear();
     }
   }, [
@@ -1437,8 +1521,28 @@ export function FloatingKollaborBar() {
       return;
     }
 
-    // anything sent to the engine needs an idle, connected session.
-    if (sendingRef.current || !state.connected || !state.sessionId) return;
+    // Anything sent to the engine needs an idle, connected session. Never
+    // silently drop user input: the bar is also the recovery surface.
+    if (sendingRef.current) return;
+    if (!state.connected || !state.sessionId) {
+      setError(state.connecting ? "still connecting…" : "Kollabor is offline — retrying connection…");
+      setConnecting(true);
+      try {
+        const { sessionId: nextSessionId, sessionToken } = await getOrCreateSession(
+          sessionRequestRef.current ?? {},
+        );
+        syncSessionToken(sessionToken);
+        setSessionId(nextSessionId);
+        setConnected(true);
+        setConnecting(false);
+        setError(null);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setConnecting(false);
+        setError(`connection failed: ${msg}`);
+      }
+      return;
+    }
 
     // first run: let the user pick approval vs YOLO before the first real send.
     if (!state.yoloPromptSeen) {
@@ -1465,6 +1569,10 @@ export function FloatingKollaborBar() {
     setYoloMode,
     setYoloPromptSeen,
     flushPendingApprovals,
+    setConnected,
+    setConnecting,
+    setError,
+    setSessionId,
   ]);
 
   const handleModeChoice = useCallback(
@@ -1796,11 +1904,23 @@ export function FloatingKollaborBar() {
             transition={{ duration: 0.2 }}
             className="pointer-events-auto self-end flex items-center gap-2"
           >
+            {sendingRef.current && (
+              <button
+                type="button"
+                onClick={() => void handleStop()}
+                aria-label="stop response"
+                title="stop response"
+                className="h-6 rounded-full border border-red-400/50 bg-red-500/10 px-2.5 text-[11px] text-red-400 hover:bg-red-500/20 transition-colors shadow-sm backdrop-blur"
+              >
+                stop
+              </button>
+            )}
             {messages.length > 0 && (
               <button
                 type="button"
-                onClick={() => clearMessages()}
+                onClick={() => void resetEngineSession()}
                 className="h-6 rounded-full border border-border/60 bg-background/80 px-2.5 text-[11px] text-muted-foreground hover:text-foreground hover:bg-background transition-colors shadow-sm backdrop-blur"
+                title="clear transcript and reconnect"
               >
                 clear
               </button>

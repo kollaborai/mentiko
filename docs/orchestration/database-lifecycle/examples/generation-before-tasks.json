@@ -1,0 +1,49 @@
+{
+  "example_id": "EX-DBL-002",
+  "schema_status": "proposed",
+  "title": "Generation workflow before output tasks exist",
+  "provenance": {
+    "current_runtime": [
+      "Task generation and import currently use existing run/job and task adapters; these proposed workflow and provenance rows are not production tables.",
+      "The generation run can be agent-backed while deterministic task import remains a separate transition."
+    ],
+    "proposed_model": [
+      "The generation workflow has no subject task.",
+      "Each output key is stable across import replay and becomes the source identity for exactly one task."
+    ]
+  },
+  "records": {
+    "tasks": [
+      { "namespace_id": "ns-generation-001", "org_id": "org-fixture-001", "id": "task-generated-a", "workspace_id": "workspace-fixture-001", "status": "open", "source_run_id": "run-generation-001", "source_output_key": "lead-a", "acceptance_criteria_revision": 1, "active_workflow_id": "wf-generated-a", "version": 1 },
+      { "namespace_id": "ns-generation-001", "org_id": "org-fixture-001", "id": "task-generated-b", "workspace_id": "workspace-fixture-001", "status": "open", "source_run_id": "run-generation-001", "source_output_key": "lead-b", "acceptance_criteria_revision": 1, "active_workflow_id": "wf-generated-b", "version": 1 }
+    ],
+    "workflow_instances": [
+      { "namespace_id": "ns-generation-001", "org_id": "org-fixture-001", "id": "wf-generation-001", "kind": "task_generation", "definition_version": "task-generation/v1", "definition_digest": "sha256:generation-definition-001", "authority_epoch": 1, "subject_task_id": null, "status": "completed", "input_revision": 1, "execution_retry_budget": 0, "execution_retries_used": 0, "trigger_provenance": { "kind": "schedule", "source": "schedule-001", "occurrence_id": "2026-09-06T10:00:00Z" } },
+      { "namespace_id": "ns-generation-001", "org_id": "org-fixture-001", "id": "wf-generated-a", "kind": "task_fulfillment", "definition_version": "task-fulfillment/v1", "definition_digest": "sha256:fulfillment-definition-001", "authority_epoch": 1, "subject_task_id": "task-generated-a", "status": "waiting", "input_revision": 1, "execution_retry_budget": 2, "execution_retries_used": 0, "trigger_provenance": { "kind": "generation_import", "source": "run-generation-001", "occurrence_id": "lead-a" } },
+      { "namespace_id": "ns-generation-001", "org_id": "org-fixture-001", "id": "wf-generated-b", "kind": "task_fulfillment", "definition_version": "task-fulfillment/v1", "definition_digest": "sha256:fulfillment-definition-001", "authority_epoch": 1, "subject_task_id": "task-generated-b", "status": "waiting", "input_revision": 1, "execution_retry_budget": 2, "execution_retries_used": 0, "trigger_provenance": { "kind": "generation_import", "source": "run-generation-001", "occurrence_id": "lead-b" } }
+    ],
+    "workflow_steps": [
+      { "namespace_id": "ns-generation-001", "id": "step-generate-001", "workflow_id": "wf-generation-001", "step_key": "generate_tasks", "visit": 1, "expansion_key": "default", "kind": "generate_chain", "status": "succeeded", "actor_policy": "worker", "trigger_kind": "schedule", "result_revision": 1 }
+    ],
+    "runs": [
+      { "namespace_id": "ns-generation-001", "org_id": "org-fixture-001", "id": "run-generation-001", "workflow_id": "wf-generation-001", "step_id": "step-generate-001", "attempt_number": 1, "chain_id": "chain-lead-generator", "chain_version": 2, "chain_digest": "sha256:chain-generation-002", "workspace_identity": { "workspace_id": "workspace-fixture-001", "mode": "local" }, "status": "completed", "status_reason": "generation_artifact_accepted", "accepted_result_revision": 1 }
+    ],
+    "agent_attempts": [
+      { "namespace_id": "ns-generation-001", "id": "attempt-generation-001", "run_id": "run-generation-001", "node_occurrence_id": "lead-generator:visit-1", "agent_id": "lead-generator", "phase": "completed", "instruction_receipt": { "idempotency_key": "instruction:run-generation-001:lead-generator:v1" }, "workspace_identity": { "workspace_id": "workspace-fixture-001" }, "evidence_refs": ["artifact-generation-001"] }
+    ],
+    "lifecycle_events": [
+      { "event_id": "evt-generation-001", "sequence": 1, "type": "generation.completed", "aggregate_type": "workflow", "aggregate_id": "wf-generation-001", "workflow_id": "wf-generation-001", "run_id": "run-generation-001", "actor": { "type": "runner", "id": "lead-generator" }, "source": "runner", "occurred_at": "2026-09-06T10:00:10Z", "recorded_at": "2026-09-06T10:00:11Z", "validation_outcome": "accepted" },
+      { "event_id": "evt-generation-002", "sequence": 2, "type": "task.created", "aggregate_type": "task", "aggregate_id": "task-generated-a", "workflow_id": "wf-generated-a", "run_id": "run-generation-001", "actor": { "type": "system", "id": "task-import" }, "source": "generation-import", "source_event_id": "run-generation-001:lead-a", "occurred_at": "2026-09-06T10:00:12Z", "recorded_at": "2026-09-06T10:00:12Z", "validation_outcome": "accepted" },
+      { "event_id": "evt-generation-003", "sequence": 3, "type": "task.created", "aggregate_type": "task", "aggregate_id": "task-generated-b", "workflow_id": "wf-generated-b", "run_id": "run-generation-001", "actor": { "type": "system", "id": "task-import" }, "source": "generation-import", "source_event_id": "run-generation-001:lead-b", "occurred_at": "2026-09-06T10:00:12Z", "recorded_at": "2026-09-06T10:00:12Z", "validation_outcome": "accepted" },
+      { "event_id": "evt-generation-004", "sequence": 4, "type": "generation.import.replayed", "aggregate_type": "workflow", "aggregate_id": "wf-generation-001", "workflow_id": "wf-generation-001", "run_id": "run-generation-001", "actor": { "type": "system", "id": "task-import" }, "source": "generation-import", "source_event_id": "run-generation-001:replay-1", "occurred_at": "2026-09-06T10:00:13Z", "recorded_at": "2026-09-06T10:00:13Z", "validation_outcome": "accepted" }
+    ],
+    "lifecycle_commands": [
+      { "namespace_id": "ns-generation-001", "command_id": "cmd-workflow-generated-a", "action_key": "workflow:task-generated-a", "kind": "start_task_workflow", "idempotency_key": "run-generation-001:lead-a", "target_identities": { "task_id": "task-generated-a", "workflow_id": "wf-generated-a" }, "principal": { "type": "system", "id": "task-import" }, "scope": "task.create", "authority_epoch": 1, "status": "queued", "delivery_count": 0, "lease_generation": 0 },
+      { "namespace_id": "ns-generation-001", "command_id": "cmd-workflow-generated-b", "action_key": "workflow:task-generated-b", "kind": "start_task_workflow", "idempotency_key": "run-generation-001:lead-b", "target_identities": { "task_id": "task-generated-b", "workflow_id": "wf-generated-b" }, "principal": { "type": "system", "id": "task-import" }, "scope": "task.create", "authority_epoch": 1, "status": "queued", "delivery_count": 0, "lease_generation": 0 }
+    ],
+    "artifact_refs": [
+      { "namespace_id": "ns-generation-001", "id": "artifact-generation-001", "org_id": "org-fixture-001", "run_id": "run-generation-001", "attempt_id": "attempt-generation-001", "kind": "generated_task_items", "storage_path": "run-generation-001/artifacts/generated-items.json", "digest": "sha256:generation-artifact-001", "size_bytes": 128, "schema_version": "generated-items/v1", "validation_result": "accepted" }
+    ],
+    "execution_reservations": []
+  }
+}

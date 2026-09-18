@@ -500,9 +500,9 @@ export function ProviderStep({
   // ── provider picker (Step 1 default view) ────────────────────────────
   return (
     <div>
-      <h2 className="text-lg font-semibold">Choose Your AI Tool</h2>
-      <p className="mt-1 text-sm text-foreground/50">Select a tool to use for your first run. Found tools are shown first.</p>
-      <div className="mt-5 grid gap-3 sm:grid-cols-2">
+      <h2 className="text-base font-semibold">Choose Your AI Tool</h2>
+      <p className="mt-1 text-xs text-foreground/50">Select a tool for your first run. Found tools appear first.</p>
+      <div className="mt-4 grid gap-2 sm:grid-cols-2 md:grid-cols-3">
         {sortedTools.map((tool) => {
           const info = detected.find((d) => d.name === tool.id);
           const isCurrent = providerState.selectedCli === tool.id || providerState.selectedCli === getBundleProviderForTool(tool.id);
@@ -512,24 +512,24 @@ export function ProviderStep({
               type="button"
               onClick={() => openTool(tool.id)}
               className={cn(
-                "rounded-lg border border-border/60 bg-card/20 p-4 text-left transition hover:border-foreground/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                "rounded-md border border-border/60 bg-card/20 p-3 text-left transition hover:border-foreground/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                 isCurrent && "border-amber-400/60 bg-amber-400/5",
               )}
             >
               <span className="flex items-start gap-3">
-                <ProviderLogo id={tool.id} className={cn("h-8 w-8 shrink-0", tool.color)} />
+                <ProviderLogo id={tool.id} className={cn("h-7 w-7 shrink-0", tool.color)} />
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center justify-between gap-2">
                     <span className="text-sm font-medium">{tool.name}</span>
                     {tool.id === "codex" && <span className="shrink-0 text-[10px] text-amber-300">Recommended</span>}
                   </span>
-                  <span className="mt-1 block text-xs text-foreground/50">{tool.description}</span>
-                  <span className="mt-2 block text-[10px] text-foreground/40">
+                  <span className="mt-1 block text-[11px] leading-snug text-foreground/50">{tool.description}</span>
+                  <span className="mt-1.5 block text-[10px] text-foreground/40">
                     {detectedStatusLabel(detecting, info)} · {authStatusLabel(info)}
                   </span>
                 </span>
               </span>
-              <span className="mt-3 block text-right text-[11px] text-amber-300">
+              <span className="mt-2.5 block text-right text-[11px] text-amber-300">
                 {info?.found ? `Use ${tool.name}` : `Set up ${tool.name}`}
               </span>
             </button>

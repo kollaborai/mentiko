@@ -1,0 +1,18 @@
+{
+  "contract_id": "database-lifecycle-transition/v1",
+  "status": "proposed",
+  "source": "../spec.md#6-transition-and-delivery-protocol",
+  "scope": "reference model and future namespace transition service",
+  "invariants": [
+    { "id": "LIFECYCLE-INV-001", "rule": "State changes, accepted event records, and resulting commands commit atomically on one namespace SQLite connection.", "negative": "No partial task/workflow/event/command state after a pre-commit failure." },
+    { "id": "LIFECYCLE-INV-002", "rule": "A command delivery lease is separate from physical execution capacity and does not prove a PTY or external action stopped.", "negative": "Lease expiry must not release a live reservation or accept a stale result." },
+    { "id": "LIFECYCLE-INV-003", "rule": "Every accepted result is bound to organization, namespace, workspace, workflow, step, run/attempt lineage, input revision and evidence.", "negative": "A colliding ID from another scope cannot advance the current occurrence." },
+    { "id": "LIFECYCLE-INV-004", "rule": "A duplicate action identity returns the recorded durable result without repeating state changes or external effects.", "negative": "Reusing an idempotency identity with different input is a conflict." },
+    { "id": "LIFECYCLE-INV-005", "rule": "Human and deterministic steps can complete without a synthetic AgentAttempt; automated steps reserve their run and attempt before launch.", "negative": "Manual creation or selection must not create an agent run merely to satisfy a schema." },
+    { "id": "LIFECYCLE-INV-006", "rule": "A run completion is evidence for its execution step only; outcome acceptance is a separate checked transition.", "negative": "A completed run or artifact alone cannot close a task." },
+    { "id": "LIFECYCLE-INV-007", "rule": "Retry counters are scoped to their policy and workflow episode.", "negative": "Analysis retries, command redelivery, chain changes, or decision round-trips cannot reset execution budget." },
+    { "id": "LIFECYCLE-INV-008", "rule": "AI advice is not authority; selection requires explicit policy, current options/input revisions and non-revoked scope.", "negative": "A skill, confidence score, or advisor output cannot select a gate." },
+    { "id": "LIFECYCLE-INV-009", "rule": "File artifacts and transcripts are evidence referenced by immutable, digest-checked database records; files are not a second state writer.", "negative": "An unreferenced or changed artifact cannot complete a step." },
+    { "id": "LIFECYCLE-INV-010", "rule": "Restart and late evidence preserve history and can only apply through an explicit identity- and revision-checked correction.", "negative": "Stale completions, summaries, projectors, or legacy writers cannot advance newer state." }
+  ]
+}

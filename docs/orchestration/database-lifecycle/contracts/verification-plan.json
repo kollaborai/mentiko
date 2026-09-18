@@ -1,0 +1,33 @@
+{
+  "plan_id": "database-lifecycle-verification/v1",
+  "status": "proposed",
+  "source": "../spec.md#11-acceptance-and-evidence",
+  "reference_model": {
+    "fixture": "../fixtures/task-fulfillment-happy-path.json",
+    "example": "../examples/task-fulfillment-happy-path.json",
+    "runner": "../verification/run-reference-model.mjs",
+    "proves": ["fixture schema consistency", "temporary SQLite transaction behavior", "artifact digest binding", "run-versus-outcome separation"],
+    "does_not_prove": ["production runtime parity", "namespace migration safety", "live PTY behavior", "tenant deployment"]
+  },
+  "scenario_suite": {
+    "fixture": "../fixtures/scenario-suite.json",
+    "schema": "../schemas/scenario.schema.json",
+    "validation": "shape, stable IDs, acceptance coverage, negative-effect declarations"
+  },
+  "runtime_gate": {
+    "status": "not_started",
+    "required_before_migration": [
+      "isolated namespace integration tests against the real task store",
+      "typed runner and worker crash/restart probes",
+      "database-backed adapters with packaged bundle proof",
+      "live API/UI scope and frontier verification",
+      "representative workload performance baseline"
+    ]
+  },
+  "case_layers": [
+    { "case_range": "LIFECYCLE-AC-001..LIFECYCLE-AC-008", "layer": "reference model plus isolated transition integration", "status": "fixture coverage only" },
+    { "case_range": "LIFECYCLE-AC-009..LIFECYCLE-AC-014", "layer": "fault-injection worker/runner integration", "status": "scenario contract only" },
+    { "case_range": "LIFECYCLE-AC-015..LIFECYCLE-AC-020", "layer": "fan-out, cutover, import, backup and rollback rehearsal", "status": "scenario contract only" },
+    { "case_range": "LIFECYCLE-AC-021..LIFECYCLE-AC-022", "layer": "view/runtime and representative workload measurement", "status": "scenario contract only" }
+  ]
+}

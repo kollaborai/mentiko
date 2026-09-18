@@ -55,14 +55,33 @@ async function proxyEngine(
   const { path: pathParts = [] } = await context.params;
   const path = pathParts.map((part) => encodeURIComponent(part)).join("/");
 
-  // B4: block PATCH and DELETE — no legitimate browser use; prevents direct
-  // mutation of engine session state (e.g. session.user_token) via the proxy.
-  // Exception: DELETE /profiles/{name} is allowed for profile management UI.
+  // B4: allow only the narrowly scoped lifecycle mutations needed by the
+  // browser composer. Arbitrary PATCH/DELETE forwarding would let a browser
+  // caller mutate or remove unrelated engine state (including identities).
+  // Profile deletion remains the one pre-existing profile-management route.
   const isProfileDelete =
     request.method === "DELETE" &&
     pathParts.length === 2 &&
     pathParts[0] === "profiles";
-  if (request.method === "PATCH" || (request.method === "DELETE" && !isProfileDelete)) {
+  const isSessionHistoryDelete =
+    request.method === "DELETE" &&
+    pathParts.length === 3 &&
+    pathParts[0] === "sessions" &&
+    pathParts[2] === "history";
+  const isSessionStop =
+    request.method === "DELETE" &&
+    pathParts.length === 2 &&
+    pathParts[0] === "sessions";
+  // Keep the existing POST contract intact (turns, permission responses,
+  // and session creation all use POST). Only PATCH and unapproved DELETE
+  // mutations are blocked by this proxy guard.
+  const isAllowedMutation =
+    request.method !== "PATCH" &&
+    (request.method !== "DELETE" ||
+      isProfileDelete ||
+      isSessionHistoryDelete ||
+      isSessionStop);
+  if (!isAllowedMutation) {
     return NextResponse.json({ error: "method not allowed" }, { status: 405 });
   }
   const upstreamUrl = `${ENGINE_BASE_URL}/${path}${request.nextUrl.search}`;

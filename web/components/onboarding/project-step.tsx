@@ -69,16 +69,16 @@ interface ProjectSourceCard {
 }
 
 const PRIMARY_CARDS: ProjectSourceCard[] = [
-  { key: "github", title: "GitHub", description: "Browse repositories you can access.", Icon: CommandSquareFilled },
-  { key: "local", title: "Local folder", description: "Use a folder already on this machine.", Icon: FolderOpenFilled },
+  { key: "github", title: "GitHub", description: "Browse accessible repositories.", Icon: CommandSquareFilled },
+  { key: "local", title: "Local folder", description: "Use a folder on this machine.", Icon: FolderOpenFilled },
   { key: "new", title: "New project", description: "Start with an empty project.", Icon: MagicStarFilled },
 ];
 
 const MORE_WAYS_CARDS: ProjectSourceCard[] = [
-  { key: "upload", title: "Upload ZIP", description: "Bring in a ZIP file.", Icon: ExportFilled },
-  { key: "gitUrl", title: "Other Git URL", description: "Paste a URL.", Icon: GlobalFilled },
-  { key: "ssh", title: "SSH", description: "Connect to a project on a remote server.", Icon: TerminalIcon },
-  { key: "docker", title: "Docker", description: "Run agents inside a container.", Icon: BoxFilled },
+  { key: "upload", title: "Upload ZIP", description: "Bring in a ZIP.", Icon: ExportFilled },
+  { key: "gitUrl", title: "Other Git URL", description: "Paste a Git URL.", Icon: GlobalFilled },
+  { key: "ssh", title: "SSH", description: "Use a remote project.", Icon: TerminalIcon },
+  { key: "docker", title: "Docker", description: "Run agents in a container.", Icon: BoxFilled },
 ];
 
 interface GithubRepo {
@@ -426,16 +426,16 @@ export function ProjectStep({ workspacesDir, workspaces, selectedWorkspaceId, bu
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div className="text-center">
-        <h2 className="mb-1 text-lg font-semibold">Connect a project</h2>
-        <p className="text-sm text-foreground/50">Your agents need a project folder when a chain reads or changes files.</p>
+        <h2 className="mb-1 text-base font-semibold">Connect a project</h2>
+        <p className="text-xs text-foreground/50">Choose where your agents will work.</p>
       </div>
 
       {workspaces.length > 0 && (
-        <div className="space-y-2">
+        <div className="space-y-1.5">
           <p className="text-xs text-foreground/50">Existing projects</p>
-          <div className="space-y-1.5">
+          <div className="space-y-1">
             {workspaces.map((workspace) => {
               const selected = workspace.id === selectedWorkspaceId;
               const rowBusy = isBusyFor(workspace.id);
@@ -443,7 +443,7 @@ export function ProjectStep({ workspacesDir, workspaces, selectedWorkspaceId, bu
                 <div
                   key={workspace.id}
                   className={cn(
-                    "flex items-center justify-between gap-3 rounded-lg border px-3 py-2",
+                    "flex items-center justify-between gap-3 rounded-md border px-3 py-1.5",
                     selected ? "border-amber-400/60 bg-amber-400/10" : "border-border/60 bg-card/20",
                   )}
                 >
@@ -479,10 +479,10 @@ export function ProjectStep({ workspacesDir, workspaces, selectedWorkspaceId, bu
             key={card.key}
             type="button"
             onClick={() => setView(card.key)}
-            className="group flex flex-col items-start gap-2 rounded-lg border border-border/60 bg-card/20 p-4 text-left transition-colors hover:bg-accent/40"
+            className="group flex flex-col items-start gap-1.5 rounded-md border border-border/60 bg-card/20 p-3 text-left transition-colors hover:bg-accent/40"
           >
             <div className="flex w-full items-center justify-between">
-              <card.Icon className="h-5 w-5 text-foreground/40 transition-colors group-hover:text-foreground/70" />
+              <card.Icon className="h-4 w-4 text-foreground/40 transition-colors group-hover:text-foreground/70" />
               {card.key === "github" && githubStatus === "connected" && (
                 <span className="rounded-full bg-amber-400/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-400">
                   Recommended
@@ -491,7 +491,7 @@ export function ProjectStep({ workspacesDir, workspaces, selectedWorkspaceId, bu
             </div>
             <div>
               <p className="text-xs font-medium">{card.title}</p>
-              <p className="text-[10px] text-foreground/40">{card.description}</p>
+              <p className="text-[10px] leading-snug text-foreground/40">{card.description}</p>
             </div>
           </button>
         ))}
@@ -514,7 +514,7 @@ export function ProjectStep({ workspacesDir, workspaces, selectedWorkspaceId, bu
               key={card.key}
               type="button"
               onClick={() => setView(card.key)}
-              className="flex flex-col items-start gap-1.5 rounded-lg border border-border/60 bg-card/20 p-3 text-left transition-colors hover:bg-accent/40"
+              className="flex flex-col items-start gap-1 rounded-md border border-border/60 bg-card/20 p-2.5 text-left transition-colors hover:bg-accent/40"
             >
               <card.Icon className="h-4 w-4 text-foreground/40" />
               <p className="text-[11px] font-medium">{card.title}</p>

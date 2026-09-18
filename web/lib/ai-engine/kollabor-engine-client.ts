@@ -822,7 +822,7 @@ export async function* sendMessage(
   }
 }
 
-/** Cancel the current turn on a session. */
+/** Cancel the current turn on a session. The operation is idempotent. */
 export async function cancelTurn(
   sessionId: string,
   signal?: AbortSignal,
@@ -832,6 +832,34 @@ export async function cancelTurn(
     { method: "POST", signal },
   );
   await throwIfNotOk(res, "cancelTurn");
+}
+
+/**
+ * Clear the remote transcript while keeping the daemon, session id, configured
+ * agent, and tenant-scoped identity intact. Kollabor exposes this as DELETE
+ * /sessions/:id/history (older engines may expose POST /clear-history).
+ */
+export async function clearSessionHistory(
+  sessionId: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  const res = await authFetch(
+    `/sessions/${encodeURIComponent(sessionId)}/history`,
+    { method: "DELETE", signal },
+  );
+  await throwIfNotOk(res, "clearSessionHistory");
+}
+
+/** Stop/remove a session daemon. Use only for explicit teardown, not Clear. */
+export async function stopSession(
+  sessionId: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  const res = await authFetch(
+    `/sessions/${encodeURIComponent(sessionId)}`,
+    { method: "DELETE", signal },
+  );
+  await throwIfNotOk(res, "stopSession");
 }
 
 /**

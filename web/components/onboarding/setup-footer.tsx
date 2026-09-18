@@ -63,7 +63,7 @@ export function SetupFooter({
   busy?: boolean;
 }) {
   return (
-    <div className="mt-6 flex items-center justify-between border-t border-border/60 pt-4">
+    <div className="mt-4 flex items-center justify-between border-t border-border/60 pt-3">
       {onBack ? (
         <button
           type="button"

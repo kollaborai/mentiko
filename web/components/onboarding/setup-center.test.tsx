@@ -79,6 +79,8 @@ describe("SetupCenter", () => {
     // Title Case rail labels (defect #4) — not the old unexplained lowercase.
     expect(within(rail).getByText("Project")).toBeInTheDocument();
     expect(within(rail).queryByText("project")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Set Up Your First Chain" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "You’re all set." })).not.toBeInTheDocument();
   });
 
   it("renders exactly one step at a time when navigating the rail (defect #1)", async () => {

@@ -357,7 +357,7 @@ export function OnboardingRunMonitor({ runId, title, compact = false, onTerminal
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
-        transition={{ duration: 0.2 }}
+        transition={{ duration: 0.2, ease: "easeOut", delay: 0.08 }}
         className="flex items-center gap-3 rounded-lg border border-border/60 bg-card/20 px-3 py-2"
       >
         <LiveDot active={isLive} />
@@ -382,7 +382,7 @@ export function OnboardingRunMonitor({ runId, title, compact = false, onTerminal
     <motion.div
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.2 }}
+      transition={{ duration: 0.2, ease: "easeOut", delay: 0.08 }}
       className="space-y-3 rounded-lg border border-border/60 bg-card/20 p-4"
     >
       <div className="flex items-center justify-between gap-2">

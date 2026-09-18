@@ -1,0 +1,30 @@
+{
+  "contract_id": "database-lifecycle-acceptance/v1",
+  "status": "proposed",
+  "source": "../spec.md#11-acceptance-and-evidence",
+  "note": "These IDs are stable verification handles. They do not claim that the production migration is implemented.",
+  "cases": [
+    { "id": "LIFECYCLE-AC-001", "case": 1, "title": "manual task creation", "scenarios": ["SCN-DBL-001"], "production_evidence": ["isolated database transaction", "no synthetic agent run", "explicit auto-run wait"] },
+    { "id": "LIFECYCLE-AC-002", "case": 2, "title": "generation before tasks and idempotent import", "scenarios": ["SCN-DBL-002"], "production_evidence": ["stable output key uniqueness", "100 replay import"] },
+    { "id": "LIFECYCLE-AC-003", "case": 3, "title": "manual and automatic chain selection", "scenarios": ["SCN-DBL-003"], "production_evidence": ["same chain binding", "eligible bypass reasons"] },
+    { "id": "LIFECYCLE-AC-004", "case": 4, "title": "trigger convergence and duplicate delivery", "scenarios": ["SCN-DBL-004"], "production_evidence": ["source-specific identity", "duplicate reuse", "distinct scheduled occurrences"] },
+    { "id": "LIFECYCLE-AC-005", "case": 5, "title": "bounded execution and summary retry budget", "scenarios": ["SCN-DBL-005"], "production_evidence": ["workflow-scoped counter", "no reset through chain or decision changes"] },
+    { "id": "LIFECYCLE-AC-006", "case": 6, "title": "outcome evidence keeps task open", "scenarios": ["SCN-DBL-006"], "production_evidence": ["source run binding", "criteria revision", "artifact validation"] },
+    { "id": "LIFECYCLE-AC-007", "case": 7, "title": "human gate and delegated AI authority", "scenarios": ["SCN-DBL-007"], "production_evidence": ["restart-safe wait", "advisor cannot select", "revocation"] },
+    { "id": "LIFECYCLE-AC-008", "case": 8, "title": "concurrent selections and stale options", "scenarios": ["SCN-DBL-008"], "production_evidence": ["one accepted choice", "options revision conflict", "idempotent apply"] },
+    { "id": "LIFECYCLE-AC-009", "case": 9, "title": "transaction crash boundaries", "scenarios": ["SCN-DBL-009"], "production_evidence": ["before-commit rollback", "after-commit recovery"] },
+    { "id": "LIFECYCLE-AC-010", "case": 10, "title": "dispatcher crash boundaries", "scenarios": ["SCN-DBL-010"], "production_evidence": ["same attempt recovery", "ambiguous instruction wait", "no capacity leak"] },
+    { "id": "LIFECYCLE-AC-011", "case": 11, "title": "lease generation and live capacity", "scenarios": ["SCN-DBL-010"], "production_evidence": ["compare-and-swap lease", "stale result rejection", "live reservation retention"] },
+    { "id": "LIFECYCLE-AC-012", "case": 12, "title": "unknown external delivery", "scenarios": ["SCN-DBL-011"], "production_evidence": ["receipt reconciliation", "unknown_delivery wait"] },
+    { "id": "LIFECYCLE-AC-013", "case": 13, "title": "degraded infrastructure never becomes success", "scenarios": ["SCN-DBL-012"], "production_evidence": ["worker downtime", "busy timeout", "disk and PTY errors"] },
+    { "id": "LIFECYCLE-AC-014", "case": 14, "title": "late and stale results", "scenarios": ["SCN-DBL-006"], "production_evidence": ["current occurrence guard", "criteria revision guard", "explicit correction"] },
+    { "id": "LIFECYCLE-AC-015", "case": 15, "title": "fan-out, fan-in and workspace isolation", "scenarios": ["SCN-DBL-013"], "production_evidence": ["30-target restart", "FIFO capacity", "cleanup receipts"] },
+    { "id": "LIFECYCLE-AC-016", "case": 16, "title": "cancellation and manual close", "scenarios": ["SCN-DBL-014"], "production_evidence": ["dependent suppression", "exact-session settlement", "late evidence retention"] },
+    { "id": "LIFECYCLE-AC-017", "case": 17, "title": "scope and authorization isolation", "scenarios": ["SCN-DBL-015"], "production_evidence": ["org namespace workspace and authority rejection"] },
+    { "id": "LIFECYCLE-AC-018", "case": 18, "title": "projector and cutover ownership", "scenarios": ["SCN-DBL-016"], "production_evidence": ["authority epoch", "stale export rejection", "legacy writer blocked"] },
+    { "id": "LIFECYCLE-AC-019", "case": 19, "title": "historical import", "scenarios": ["SCN-DBL-017"], "production_evidence": ["preserved IDs and waits", "no invented completion", "idempotent rerun"] },
+    { "id": "LIFECYCLE-AC-020", "case": 20, "title": "backup restore and application rollback", "scenarios": ["SCN-DBL-018"], "production_evidence": ["WAL-safe backup", "receipt-aware restore", "no blind redispatch"] },
+    { "id": "LIFECYCLE-AC-021", "case": 21, "title": "views and eligible frontier", "scenarios": ["SCN-DBL-019"], "production_evidence": ["restart-consistent projections", "wait explanations", "responsive UI proof"] },
+    { "id": "LIFECYCLE-AC-022", "case": 22, "title": "representative workload baseline", "scenarios": ["SCN-DBL-020"], "production_evidence": ["frontier latency", "write contention", "command latency", "event volume", "no directory scan"] }
+  ]
+}

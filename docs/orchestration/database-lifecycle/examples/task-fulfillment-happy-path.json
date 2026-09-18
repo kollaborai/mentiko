@@ -1,0 +1,139 @@
+{
+  "example_id": "EX-DBL-001",
+  "schema_status": "proposed",
+  "title": "Concrete final records for FIX-DBL-001",
+  "provenance": {
+    "current_runtime": [
+      "tasks.db is a current namespace database boundary, but these lifecycle tables are not current production tables.",
+      "The AgentAttempt shape and phase names are borrowed from the current typed runner contract.",
+      "The final task/run/step/event/command join is a proposed database projection, not a live query result."
+    ],
+    "proposed_model": [
+      "All records belong to namespace ns-fixture-001 and org org-fixture-001.",
+      "The execution result is accepted only after the artifact digest and acceptance-criteria revision match.",
+      "The task is closed by outcome acceptance, not by run completion."
+    ]
+  },
+  "records": {
+    "tasks": [
+      {
+        "namespace_id": "ns-fixture-001",
+        "org_id": "org-fixture-001",
+        "id": "task-fixture-001",
+        "workspace_id": "workspace-fixture-001",
+        "title": "Publish the verified fixture result",
+        "status": "closed",
+        "acceptance_criteria_revision": 1,
+        "active_workflow_id": "wf-fixture-001",
+        "version": 2
+      }
+    ],
+    "workflow_instances": [
+      {
+        "namespace_id": "ns-fixture-001",
+        "org_id": "org-fixture-001",
+        "id": "wf-fixture-001",
+        "kind": "task_fulfillment",
+        "definition_version": "task-fulfillment/v1",
+        "definition_digest": "sha256:definition-fixture-001",
+        "authority_epoch": 1,
+        "subject_task_id": "task-fixture-001",
+        "status": "completed",
+        "input_revision": 1,
+        "execution_retry_budget": 2,
+        "execution_retries_used": 0,
+        "trigger_provenance": { "kind": "manual", "source": "user-fixture", "occurrence_id": "manual:create:task-fixture-001:v1" }
+      }
+    ],
+    "workflow_steps": [
+      { "namespace_id": "ns-fixture-001", "id": "step-select-001", "workflow_id": "wf-fixture-001", "step_key": "select_chain", "visit": 1, "expansion_key": "default", "kind": "select_chain", "status": "succeeded", "actor_policy": "human", "trigger_kind": "manual", "result_revision": 1 },
+      { "namespace_id": "ns-fixture-001", "id": "step-execute-001", "workflow_id": "wf-fixture-001", "step_key": "execute_chain", "visit": 1, "expansion_key": "default", "kind": "execute_chain", "status": "succeeded", "actor_policy": "worker", "trigger_kind": "manual", "current_run_id": "run-fixture-001", "result_revision": 1, "chain_id": "chain-publish-verified-result", "chain_version": 3, "chain_digest": "sha256:chain-fixture-003" },
+      { "namespace_id": "ns-fixture-001", "id": "step-summary-001", "workflow_id": "wf-fixture-001", "step_key": "summarize_outcome", "visit": 1, "expansion_key": "default", "kind": "summarize_outcome", "status": "succeeded", "actor_policy": "worker", "trigger_kind": "run_completion", "result_revision": 1 },
+      { "namespace_id": "ns-fixture-001", "id": "step-finalize-001", "workflow_id": "wf-fixture-001", "step_key": "finalize_task", "visit": 1, "expansion_key": "default", "kind": "finalize_task", "status": "succeeded", "actor_policy": "worker", "trigger_kind": "outcome_acceptance", "result_revision": 1 }
+    ],
+    "runs": [
+      {
+        "namespace_id": "ns-fixture-001",
+        "org_id": "org-fixture-001",
+        "id": "run-fixture-001",
+        "workflow_id": "wf-fixture-001",
+        "step_id": "step-execute-001",
+        "attempt_number": 1,
+        "chain_id": "chain-publish-verified-result",
+        "chain_version": 3,
+        "chain_digest": "sha256:chain-fixture-003",
+        "workspace_identity": { "workspace_id": "workspace-fixture-001", "mode": "local", "baseline": "commit-fixture-001" },
+        "status": "completed",
+        "status_reason": "accepted_artifact",
+        "accepted_result_revision": 1
+      }
+    ],
+    "agent_attempts": [
+      {
+        "namespace_id": "ns-fixture-001",
+        "id": "attempt-fixture-001",
+        "run_id": "run-fixture-001",
+        "node_occurrence_id": "publisher:visit-1",
+        "agent_id": "publisher",
+        "phase": "completed",
+        "instruction_receipt": {
+          "idempotency_key": "instruction:run-fixture-001:publisher:v1",
+          "submitted_at": "2026-09-06T09:00:13Z",
+          "path": "runs/run-fixture-001/artifacts/publisher-instructions.md",
+          "pointer": "@mentiko-instruction runs/run-fixture-001/artifacts/publisher-instructions.md"
+        },
+        "pty_daemon_id": "pty-daemon-fixture",
+        "pty_session_id": "pty-fixture-001",
+        "monitor_session_id": "monitor-fixture-001",
+        "process_pid": 41001,
+        "workspace_identity": { "workspace_id": "workspace-fixture-001", "baseline": "commit-fixture-001" },
+        "evidence_refs": ["artifact-fixture-001", "evt-fixture-015"],
+        "transitions": [
+          ["created", "queued"],
+          ["queued", "lease_acquired"],
+          ["lease_acquired", "pty_allocated"],
+          ["pty_allocated", "process_spawned"],
+          ["process_spawned", "ready_for_instructions"],
+          ["ready_for_instructions", "instructions_submitted"],
+          ["instructions_submitted", "completed"]
+        ]
+      }
+    ],
+    "lifecycle_events": [
+      { "event_id": "evt-fixture-001", "sequence": 1, "type": "task.created", "aggregate_type": "task", "aggregate_id": "task-fixture-001", "workflow_id": "wf-fixture-001", "actor": { "type": "human", "id": "user-fixture" }, "source": "manual-api", "source_event_id": "ACT-001", "occurred_at": "2026-09-06T09:00:00Z", "recorded_at": "2026-09-06T09:00:00Z", "validation_outcome": "accepted" },
+      { "event_id": "evt-fixture-002", "sequence": 2, "type": "workflow.created", "aggregate_type": "workflow", "aggregate_id": "wf-fixture-001", "workflow_id": "wf-fixture-001", "actor": { "type": "human", "id": "user-fixture" }, "source": "transition-service", "causation_id": "evt-fixture-001", "occurred_at": "2026-09-06T09:00:00Z", "recorded_at": "2026-09-06T09:00:00Z", "validation_outcome": "accepted" },
+      { "event_id": "evt-fixture-003", "sequence": 3, "type": "chain.selected", "aggregate_type": "step", "aggregate_id": "step-select-001", "workflow_id": "wf-fixture-001", "step_id": "step-select-001", "actor": { "type": "human", "id": "user-fixture" }, "source": "manual-api", "occurred_at": "2026-09-06T09:00:01Z", "recorded_at": "2026-09-06T09:00:01Z", "validation_outcome": "accepted" },
+      { "event_id": "evt-fixture-004", "sequence": 4, "type": "step.ready", "aggregate_type": "step", "aggregate_id": "step-execute-001", "workflow_id": "wf-fixture-001", "step_id": "step-execute-001", "actor": { "type": "system", "id": "transition-service" }, "source": "transition-service", "causation_id": "evt-fixture-003", "occurred_at": "2026-09-06T09:00:01Z", "recorded_at": "2026-09-06T09:00:01Z", "validation_outcome": "accepted" },
+      { "event_id": "evt-fixture-005", "sequence": 5, "type": "command.leased", "aggregate_type": "command", "aggregate_id": "cmd-execute-task-001", "workflow_id": "wf-fixture-001", "step_id": "step-execute-001", "run_id": "run-fixture-001", "actor": { "type": "worker", "id": "worker-fixture" }, "source": "dispatcher", "occurred_at": "2026-09-06T09:00:02Z", "recorded_at": "2026-09-06T09:00:02Z", "validation_outcome": "accepted" },
+      { "event_id": "evt-fixture-006", "sequence": 6, "type": "run.reserved", "aggregate_type": "run", "aggregate_id": "run-fixture-001", "workflow_id": "wf-fixture-001", "step_id": "step-execute-001", "run_id": "run-fixture-001", "actor": { "type": "worker", "id": "worker-fixture" }, "source": "transition-service", "causation_id": "evt-fixture-005", "occurred_at": "2026-09-06T09:00:02Z", "recorded_at": "2026-09-06T09:00:02Z", "validation_outcome": "accepted" },
+      { "event_id": "evt-fixture-007", "sequence": 7, "type": "agent_attempt.created", "aggregate_type": "agent_attempt", "aggregate_id": "attempt-fixture-001", "workflow_id": "wf-fixture-001", "step_id": "step-execute-001", "run_id": "run-fixture-001", "attempt_id": "attempt-fixture-001", "actor": { "type": "worker", "id": "worker-fixture" }, "source": "transition-service", "causation_id": "evt-fixture-006", "occurred_at": "2026-09-06T09:00:02Z", "recorded_at": "2026-09-06T09:00:02Z", "validation_outcome": "accepted" },
+      { "event_id": "evt-fixture-008", "sequence": 8, "type": "agent_attempt.phase_changed", "aggregate_type": "agent_attempt", "aggregate_id": "attempt-fixture-001", "workflow_id": "wf-fixture-001", "step_id": "step-execute-001", "run_id": "run-fixture-001", "attempt_id": "attempt-fixture-001", "actor": { "type": "runner", "id": "runner-fixture" }, "source": "runner", "occurred_at": "2026-09-06T09:00:03Z", "recorded_at": "2026-09-06T09:00:03Z", "validation_outcome": "accepted" },
+      { "event_id": "evt-fixture-009", "sequence": 9, "type": "agent_attempt.phase_changed", "aggregate_type": "agent_attempt", "aggregate_id": "attempt-fixture-001", "workflow_id": "wf-fixture-001", "step_id": "step-execute-001", "run_id": "run-fixture-001", "attempt_id": "attempt-fixture-001", "actor": { "type": "runner", "id": "runner-fixture" }, "source": "runner", "occurred_at": "2026-09-06T09:00:04Z", "recorded_at": "2026-09-06T09:00:04Z", "validation_outcome": "accepted" },
+      { "event_id": "evt-fixture-010", "sequence": 10, "type": "agent_attempt.phase_changed", "aggregate_type": "agent_attempt", "aggregate_id": "attempt-fixture-001", "workflow_id": "wf-fixture-001", "step_id": "step-execute-001", "run_id": "run-fixture-001", "attempt_id": "attempt-fixture-001", "actor": { "type": "runner", "id": "runner-fixture" }, "source": "runner", "occurred_at": "2026-09-06T09:00:05Z", "recorded_at": "2026-09-06T09:00:05Z", "validation_outcome": "accepted" },
+      { "event_id": "evt-fixture-011", "sequence": 11, "type": "agent_attempt.phase_changed", "aggregate_type": "agent_attempt", "aggregate_id": "attempt-fixture-001", "workflow_id": "wf-fixture-001", "step_id": "step-execute-001", "run_id": "run-fixture-001", "attempt_id": "attempt-fixture-001", "actor": { "type": "runner", "id": "runner-fixture" }, "source": "runner", "occurred_at": "2026-09-06T09:00:06Z", "recorded_at": "2026-09-06T09:00:06Z", "validation_outcome": "accepted" },
+      { "event_id": "evt-fixture-012", "sequence": 12, "type": "agent_attempt.phase_changed", "aggregate_type": "agent_attempt", "aggregate_id": "attempt-fixture-001", "workflow_id": "wf-fixture-001", "step_id": "step-execute-001", "run_id": "run-fixture-001", "attempt_id": "attempt-fixture-001", "actor": { "type": "runner", "id": "runner-fixture" }, "source": "runner", "occurred_at": "2026-09-06T09:00:07Z", "recorded_at": "2026-09-06T09:00:07Z", "validation_outcome": "accepted" },
+      { "event_id": "evt-fixture-013", "sequence": 13, "type": "agent_attempt.phase_changed", "aggregate_type": "agent_attempt", "aggregate_id": "attempt-fixture-001", "workflow_id": "wf-fixture-001", "step_id": "step-execute-001", "run_id": "run-fixture-001", "attempt_id": "attempt-fixture-001", "actor": { "type": "runner", "id": "runner-fixture" }, "source": "runner", "occurred_at": "2026-09-06T09:00:08Z", "recorded_at": "2026-09-06T09:00:08Z", "validation_outcome": "accepted" },
+      { "event_id": "evt-fixture-014", "sequence": 14, "type": "instruction.intent.recorded", "aggregate_type": "agent_attempt", "aggregate_id": "attempt-fixture-001", "workflow_id": "wf-fixture-001", "step_id": "step-execute-001", "run_id": "run-fixture-001", "attempt_id": "attempt-fixture-001", "actor": { "type": "runner", "id": "runner-fixture" }, "source": "runner", "occurred_at": "2026-09-06T09:00:08Z", "recorded_at": "2026-09-06T09:00:08Z", "validation_outcome": "accepted" },
+      { "event_id": "evt-fixture-015", "sequence": 15, "type": "agent_attempt.phase_changed", "aggregate_type": "agent_attempt", "aggregate_id": "attempt-fixture-001", "workflow_id": "wf-fixture-001", "step_id": "step-execute-001", "run_id": "run-fixture-001", "attempt_id": "attempt-fixture-001", "actor": { "type": "runner", "id": "runner-fixture" }, "source": "runner", "occurred_at": "2026-09-06T09:00:09Z", "recorded_at": "2026-09-06T09:00:09Z", "validation_outcome": "accepted" },
+      { "event_id": "evt-fixture-016", "sequence": 16, "type": "artifact.accepted", "aggregate_type": "artifact", "aggregate_id": "artifact-fixture-001", "workflow_id": "wf-fixture-001", "step_id": "step-execute-001", "run_id": "run-fixture-001", "attempt_id": "attempt-fixture-001", "actor": { "type": "runner", "id": "runner-fixture" }, "source": "runner", "occurred_at": "2026-09-06T09:00:10Z", "recorded_at": "2026-09-06T09:00:10Z", "validation_outcome": "accepted" },
+      { "event_id": "evt-fixture-017", "sequence": 17, "type": "run.completed", "aggregate_type": "run", "aggregate_id": "run-fixture-001", "workflow_id": "wf-fixture-001", "step_id": "step-execute-001", "run_id": "run-fixture-001", "attempt_id": "attempt-fixture-001", "actor": { "type": "transition-service", "id": "lifecycle" }, "source": "transition-service", "occurred_at": "2026-09-06T09:00:10Z", "recorded_at": "2026-09-06T09:00:10Z", "validation_outcome": "accepted" },
+      { "event_id": "evt-fixture-018", "sequence": 18, "type": "step.completed", "aggregate_type": "step", "aggregate_id": "step-execute-001", "workflow_id": "wf-fixture-001", "step_id": "step-execute-001", "run_id": "run-fixture-001", "actor": { "type": "transition-service", "id": "lifecycle" }, "source": "transition-service", "causation_id": "evt-fixture-017", "occurred_at": "2026-09-06T09:00:10Z", "recorded_at": "2026-09-06T09:00:10Z", "validation_outcome": "accepted" },
+      { "event_id": "evt-fixture-019", "sequence": 19, "type": "outcome.accepted", "aggregate_type": "workflow", "aggregate_id": "wf-fixture-001", "workflow_id": "wf-fixture-001", "step_id": "step-summary-001", "run_id": "run-fixture-001", "actor": { "type": "worker", "id": "outcome-evaluator-fixture" }, "source": "outcome-evaluator", "occurred_at": "2026-09-06T09:00:11Z", "recorded_at": "2026-09-06T09:00:11Z", "validation_outcome": "accepted" },
+      { "event_id": "evt-fixture-020", "sequence": 20, "type": "task.closed", "aggregate_type": "task", "aggregate_id": "task-fixture-001", "workflow_id": "wf-fixture-001", "step_id": "step-finalize-001", "run_id": "run-fixture-001", "actor": { "type": "worker", "id": "outcome-evaluator-fixture" }, "source": "outcome-evaluator", "causation_id": "evt-fixture-019", "occurred_at": "2026-09-06T09:00:11Z", "recorded_at": "2026-09-06T09:00:11Z", "validation_outcome": "accepted" },
+      { "event_id": "evt-fixture-021", "sequence": 21, "type": "workflow.completed", "aggregate_type": "workflow", "aggregate_id": "wf-fixture-001", "workflow_id": "wf-fixture-001", "actor": { "type": "transition-service", "id": "lifecycle" }, "source": "transition-service", "causation_id": "evt-fixture-020", "occurred_at": "2026-09-06T09:00:11Z", "recorded_at": "2026-09-06T09:00:11Z", "validation_outcome": "accepted" }
+    ],
+    "lifecycle_commands": [
+      { "namespace_id": "ns-fixture-001", "command_id": "cmd-manual-create-001", "action_key": "request:ACT-001", "kind": "request_receipt", "idempotency_key": "manual:create:task-fixture-001:v1", "target_identities": { "task_id": "task-fixture-001", "workflow_id": "wf-fixture-001" }, "principal": { "type": "human", "id": "user-fixture" }, "scope": "task.write", "authority_epoch": 1, "status": "completed", "delivery_count": 1, "lease_generation": 1 },
+      { "namespace_id": "ns-fixture-001", "command_id": "cmd-select-chain-001", "action_key": "request:ACT-002", "kind": "request_receipt", "idempotency_key": "manual:select:task-fixture-001:v1", "target_identities": { "workflow_id": "wf-fixture-001", "step_id": "step-select-001" }, "principal": { "type": "human", "id": "user-fixture" }, "scope": "task.select", "authority_epoch": 1, "status": "completed", "delivery_count": 1, "lease_generation": 1 },
+      { "namespace_id": "ns-fixture-001", "command_id": "cmd-execute-task-001", "action_key": "execute:wf-fixture-001:step-execute-001:visit-1", "kind": "execute_chain", "idempotency_key": null, "target_identities": { "workflow_id": "wf-fixture-001", "step_id": "step-execute-001", "run_id": "run-fixture-001" }, "principal": { "type": "system", "id": "transition-service" }, "scope": "lifecycle.dispatch", "authority_epoch": 1, "status": "completed", "delivery_count": 1, "lease_owner": "worker-fixture", "lease_generation": 1, "result_ref": "artifact-fixture-001" },
+      { "namespace_id": "ns-fixture-001", "command_id": "cmd-summary-task-001", "action_key": "summary:run-fixture-001:revision-1", "kind": "summarize_outcome", "idempotency_key": null, "target_identities": { "workflow_id": "wf-fixture-001", "step_id": "step-summary-001", "source_run_id": "run-fixture-001" }, "principal": { "type": "system", "id": "transition-service" }, "scope": "lifecycle.summary", "authority_epoch": 1, "status": "completed", "delivery_count": 0, "lease_generation": 0, "result_ref": "artifact-fixture-001" },
+      { "namespace_id": "ns-fixture-001", "command_id": "cmd-outcome-001", "action_key": "request:ACT-012", "kind": "request_receipt", "idempotency_key": "outcome:task-fixture-001:run-fixture-001:revision-1", "target_identities": { "task_id": "task-fixture-001", "workflow_id": "wf-fixture-001" }, "principal": { "type": "worker", "id": "outcome-evaluator-fixture" }, "scope": "task.outcome", "authority_epoch": 1, "status": "completed", "delivery_count": 1, "lease_generation": 1, "result_ref": "artifact-fixture-001" }
+    ],
+    "artifact_refs": [
+      { "namespace_id": "ns-fixture-001", "id": "artifact-fixture-001", "org_id": "org-fixture-001", "run_id": "run-fixture-001", "attempt_id": "attempt-fixture-001", "kind": "execution_result", "storage_path": "run-fixture-001/artifacts/execution-result.json", "digest": "sha256:e053deab4cc50c55c7bcb7bcd14377665704f868d4f8edb46b8c8b7dd785fb7c", "size_bytes": 58, "schema_version": "execution-result/v1", "validation_result": "accepted" }
+    ],
+    "execution_reservations": [
+      { "namespace_id": "ns-fixture-001", "id": "reservation-fixture-001", "org_id": "org-fixture-001", "run_id": "run-fixture-001", "attempt_id": "attempt-fixture-001", "capacity_domain": "org-fixture-001:agents", "queue_order": 1, "status": "released", "owner": "worker-fixture", "generation": 1, "released_at": "2026-09-06T09:00:10Z", "release_evidence": { "artifact_id": "artifact-fixture-001", "cleanup": "verified" } }
+    ]
+  }
+}

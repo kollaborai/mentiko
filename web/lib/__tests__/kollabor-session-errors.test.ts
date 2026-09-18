@@ -10,6 +10,8 @@ describe("isRecoverableKollaborSessionError", () => {
     "Invalid or expired session token",
     "session token expired",
     "token expired before refresh",
+    "HTTP 409 — Session daemon is not running",
+    "409 Conflict: stale session daemon",
   ])("treats %s as recoverable", (message) => {
     expect(isRecoverableKollaborSessionError(message)).toBe(true);
   });

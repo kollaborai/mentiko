@@ -1,0 +1,399 @@
+{
+  "suite_id": "database-lifecycle-scenarios/v1",
+  "schema_status": "proposed",
+  "note": "These are deterministic mock scenarios. The reference harness validates their shape and executes FIX-DBL-001; the remaining scenarios require production-boundary tests before implementation claims are made.",
+  "scenarios": [
+    {
+      "scenario_id": "SCN-DBL-001",
+      "schema_status": "proposed",
+      "title": "Manual task creation waits without an agent run",
+      "acceptance_case_ids": ["LIFECYCLE-AC-001"],
+      "classification": "contract-only",
+      "initial_state": { "tasks": [], "runs": [], "agent_attempts": [] },
+      "actions": [{ "action_id": "M-001", "kind": "create_task", "input": { "task_id": "task-manual-001", "auto_run": false, "workflow_id": "wf-manual-001" } }],
+      "expected": { "transitions": [{ "action_id": "M-001", "accepted": true, "event_types": ["task.created", "workflow.created"], "commands": [], "must_not": ["synthetic_agent_run", "synthetic_agent_attempt"] }], "commands": [], "final_state": { "task": "open", "workflow": "waiting", "selection_wait": "selection_required", "run_count": 0, "agent_attempt_count": 0 } },
+      "negative_assertions": ["Manual creation does not create a fake run to make the task look executable."]
+    },
+    {
+      "scenario_id": "SCN-DBL-002",
+      "schema_status": "proposed",
+      "title": "Generation precedes output tasks and repeated import is inert",
+      "acceptance_case_ids": ["LIFECYCLE-AC-002", "LIFECYCLE-AC-019"],
+      "classification": "contract-only",
+      "initial_state": { "subject_task_id": null, "generation_run_id": "run-generation-001", "tasks": [] },
+      "actions": [
+        { "action_id": "G-001", "kind": "generation_completed", "input": { "run_id": "run-generation-001", "output_keys": ["lead-a", "lead-b"], "result_revision": 1 } },
+        { "action_id": "G-002", "kind": "import_generated_tasks", "input": { "run_id": "run-generation-001", "output_keys": ["lead-a", "lead-b"] } },
+        { "action_id": "G-003", "kind": "import_generated_tasks", "input": { "run_id": "run-generation-001", "output_keys": ["lead-a", "lead-b"], "replay": true } }
+      ],
+      "expected": { "transitions": [
+        { "action_id": "G-001", "accepted": true, "event_types": ["generation.completed"], "commands": [], "must_not": ["task.created"] },
+        { "action_id": "G-002", "accepted": true, "event_types": ["task.created", "task.created"], "commands": ["task-workflow:lead-a", "task-workflow:lead-b"], "must_not": ["duplicate_output"] },
+        { "action_id": "G-003", "accepted": true, "event_types": ["generation.import.replayed"], "commands": [], "must_not": ["task.created", "second_workflow"] }
+      ], "commands": ["task-workflow:lead-a", "task-workflow:lead-b"], "final_state": { "task_ids": ["task-lead-a", "task-lead-b"], "generation_imports": 1, "workflow_count": 2 } },
+      "negative_assertions": ["Missing or malformed generation output is not a successful empty result.", "Output-key uniqueness, not text equality, prevents duplicate creation."]
+    },
+    {
+      "scenario_id": "SCN-DBL-003",
+      "schema_status": "proposed",
+      "title": "Manual and automatic selection bind the same validated chain",
+      "acceptance_case_ids": ["LIFECYCLE-AC-003"],
+      "classification": "contract-only",
+      "initial_state": { "workflow_id": "wf-select-001", "selection_step": "waiting", "chain_candidates": ["chain-a"] },
+      "actions": [
+        { "action_id": "S-001", "kind": "select_chain", "input": { "mode": "manual", "chain_id": "chain-a", "chain_version": 4, "chain_digest": "sha256:chain-a" } },
+        { "action_id": "S-002", "kind": "select_chain", "input": { "mode": "automatic", "chain_id": "chain-a", "chain_version": 4, "chain_digest": "sha256:chain-a", "comparison_only": true } }
+      ],
+      "expected": { "transitions": [
+        { "action_id": "S-001", "accepted": true, "event_types": ["chain.selected", "step.ready"], "commands": ["execute:wf-select-001"], "must_not": ["agent_run_before_dispatch"] },
+        { "action_id": "S-002", "accepted": true, "event_types": ["selection.compared"], "commands": [], "must_not": ["second_chain_binding", "second_execute_command"] }
+      ], "commands": ["execute:wf-select-001"], "final_state": { "chain_id": "chain-a", "chain_version": 4, "chain_digest": "sha256:chain-a", "execute_command_count": 1 } },
+      "negative_assertions": ["A supplied chain skips only eligible steps and records the bypass reason."]
+    },
+    {
+      "scenario_id": "SCN-DBL-004",
+      "schema_status": "proposed",
+      "title": "Trigger adapters deduplicate deliveries without collapsing schedule occurrences",
+      "acceptance_case_ids": ["LIFECYCLE-AC-004"],
+      "classification": "contract-only",
+      "initial_state": { "workflow_id": "wf-trigger-001", "admission": "empty" },
+      "actions": [
+        { "action_id": "T-001", "kind": "webhook_delivery", "input": { "source": "github", "delivery_id": "delivery-001" } },
+        { "action_id": "T-002", "kind": "webhook_delivery", "input": { "source": "github", "delivery_id": "delivery-001" } },
+        { "action_id": "T-003", "kind": "schedule_delivery", "input": { "schedule_id": "schedule-001", "occurrence_at": "2026-09-06T10:00:00Z" } },
+        { "action_id": "T-004", "kind": "schedule_delivery", "input": { "schedule_id": "schedule-001", "occurrence_at": "2026-09-06T10:05:00Z" } }
+      ],
+      "expected": { "transitions": [
+        { "action_id": "T-001", "accepted": true, "event_types": ["trigger.accepted"], "commands": ["launch:delivery-001"], "must_not": [] },
+        { "action_id": "T-002", "accepted": true, "event_types": ["trigger.duplicate"], "commands": [], "must_not": ["second_launch"] },
+        { "action_id": "T-003", "accepted": true, "event_types": ["trigger.accepted"], "commands": ["launch:schedule-001:2026-09-06T10:00:00Z"], "must_not": [] },
+        { "action_id": "T-004", "accepted": true, "event_types": ["trigger.accepted"], "commands": ["launch:schedule-001:2026-09-06T10:05:00Z"], "must_not": ["schedule_occurrence_collapse"] }
+      ], "commands": ["launch:delivery-001", "launch:schedule-001:2026-09-06T10:00:00Z", "launch:schedule-001:2026-09-06T10:05:00Z"], "final_state": { "launch_count": 3, "duplicate_count": 1 } },
+      "negative_assertions": ["A payload hash alone is not an idempotency identity when a source has no stable delivery ID."]
+    },
+    {
+      "scenario_id": "SCN-DBL-005",
+      "schema_status": "proposed",
+      "title": "Execution retries and summary retries share one workflow budget",
+      "acceptance_case_ids": ["LIFECYCLE-AC-005"],
+      "classification": "contract-only",
+      "initial_state": { "workflow_id": "wf-retry-001", "execution_retry_budget": 2, "execution_retries_used": 0, "decision_rounds_used": 0 },
+      "actions": [
+        { "action_id": "R-001", "kind": "execution_failed", "input": { "run_id": "run-retry-001", "retryable": true } },
+        { "action_id": "R-002", "kind": "execution_failed", "input": { "run_id": "run-retry-002", "retryable": true } },
+        { "action_id": "R-003", "kind": "execution_failed", "input": { "run_id": "run-retry-003", "retryable": true } },
+        { "action_id": "R-004", "kind": "summary_verdict", "input": { "source_run_id": "run-retry-003", "verdict": "retry" } },
+        { "action_id": "R-005", "kind": "decision_round_trip", "input": { "source_run_id": "run-retry-003" } }
+      ],
+      "expected": { "transitions": [
+        { "action_id": "R-001", "accepted": true, "event_types": ["execution.failed", "retry.requested"], "commands": ["retry:run-retry-002"], "must_not": ["summary_command"] },
+        { "action_id": "R-002", "accepted": true, "event_types": ["execution.failed", "retry.requested"], "commands": ["retry:run-retry-003"], "must_not": ["summary_command"] },
+        { "action_id": "R-003", "accepted": true, "event_types": ["execution.failed", "summary.requested"], "commands": ["summary:run-retry-003"], "must_not": ["fourth_execution_retry"] },
+        { "action_id": "R-004", "accepted": true, "event_types": ["summary.retry_requested"], "commands": ["decision:run-retry-003"], "must_not": ["budget_reset"] },
+        { "action_id": "R-005", "accepted": true, "event_types": ["decision.round_recorded"], "commands": [], "must_not": ["budget_reset", "unbounded_loop"] }
+      ], "commands": ["retry:run-retry-002", "retry:run-retry-003", "summary:run-retry-003", "decision:run-retry-003"], "final_state": { "execution_retries_used": 2, "decision_rounds_used": 1, "decision_required": true } },
+      "negative_assertions": ["Changing the chain or returning from a decision does not create a fresh execution budget."]
+    },
+    {
+      "scenario_id": "SCN-DBL-006",
+      "schema_status": "proposed",
+      "title": "Outcome evaluation rejects missing evidence and stale criteria",
+      "acceptance_case_ids": ["LIFECYCLE-AC-006", "LIFECYCLE-AC-014"],
+      "classification": "negative",
+      "initial_state": { "task_id": "task-outcome-001", "current_run_id": "run-new", "acceptance_criteria_revision": 2, "summary_status": "ready" },
+      "actions": [
+        { "action_id": "O-001", "kind": "accept_outcome", "input": { "source_run_id": "run-new", "artifact_id": null, "criteria_revision": 2, "verdict": "close" } },
+        { "action_id": "O-002", "kind": "accept_outcome", "input": { "source_run_id": "run-old", "artifact_id": "artifact-old", "criteria_revision": 2, "verdict": "close" } },
+        { "action_id": "O-003", "kind": "accept_outcome", "input": { "source_run_id": "run-new", "artifact_id": "artifact-new", "criteria_revision": 1, "verdict": "close" } },
+        { "action_id": "O-004", "kind": "accept_outcome", "input": { "source_run_id": "run-new", "artifact_id": "artifact-new", "criteria_revision": 2, "verdict": "close" } }
+      ],
+      "expected": { "transitions": [
+        { "action_id": "O-001", "accepted": false, "rejection_code": "evidence_missing", "event_types": [], "commands": [], "must_not": ["task.closed", "workflow.completed"] },
+        { "action_id": "O-002", "accepted": false, "rejection_code": "stale_source_run", "event_types": [], "commands": [], "must_not": ["task.closed"] },
+        { "action_id": "O-003", "accepted": false, "rejection_code": "criteria_revision_mismatch", "event_types": [], "commands": [], "must_not": ["task.closed"] },
+        { "action_id": "O-004", "accepted": true, "event_types": ["outcome.accepted", "task.closed"], "commands": ["outcome:run-new:revision-2"], "must_not": ["second_close"] }
+      ], "commands": ["outcome:run-new:revision-2"], "final_state": { "task_status": "closed", "accepted_source_run_id": "run-new", "accepted_criteria_revision": 2 } },
+      "negative_assertions": ["A completed run, a file, or a stale summary cannot close the task by itself."]
+    },
+    {
+      "scenario_id": "SCN-DBL-007",
+      "schema_status": "proposed",
+      "title": "Human decision gate separates advice from authority",
+      "acceptance_case_ids": ["LIFECYCLE-AC-007"],
+      "classification": "negative",
+      "initial_state": { "decision_id": "decision-001", "actor_policy": "human", "options_revision": 4, "status": "waiting" },
+      "actions": [
+        { "action_id": "D-001", "kind": "ai_advice", "input": { "recommendation": "option-a", "confidence": 0.99 } },
+        { "action_id": "D-002", "kind": "ai_select", "input": { "option_id": "option-a", "authorized": false } },
+        { "action_id": "D-003", "kind": "human_select", "input": { "option_id": "option-b", "options_revision": 4 } },
+        { "action_id": "D-004", "kind": "ai_select", "input": { "option_id": "option-a", "authorized": true, "authority_epoch": 1 } },
+        { "action_id": "D-005", "kind": "ai_select", "input": { "option_id": "option-a", "authorized": true, "authority_epoch": 0 } }
+      ],
+      "expected": { "transitions": [
+        { "action_id": "D-001", "accepted": true, "event_types": ["decision.advice.recorded"], "commands": [], "must_not": ["selection.accepted", "plan.applied"] },
+        { "action_id": "D-002", "accepted": false, "rejection_code": "advisor_has_no_selection_authority", "event_types": [], "commands": [], "must_not": ["selection.accepted"] },
+        { "action_id": "D-003", "accepted": true, "event_types": ["selection.accepted"], "commands": ["apply-selection:decision-001"], "must_not": ["second_selection"] },
+        { "action_id": "D-004", "accepted": false, "rejection_code": "selection_already_accepted", "event_types": [], "commands": [], "must_not": ["second_selection", "plan.applied"] },
+        { "action_id": "D-005", "accepted": false, "rejection_code": "authority_revoked_or_stale", "event_types": [], "commands": [], "must_not": ["selection.accepted"] }
+      ], "commands": ["apply-selection:decision-001"], "final_state": { "selection": "option-b", "status": "accepted", "actor": "human", "advice_only": true } },
+      "negative_assertions": ["Confidence, skill use, and an internal trigger never grant selection authority."]
+    },
+    {
+      "scenario_id": "SCN-DBL-008",
+      "schema_status": "proposed",
+      "title": "Concurrent selection has one winner and stale options are rejected",
+      "acceptance_case_ids": ["LIFECYCLE-AC-008"],
+      "classification": "negative",
+      "initial_state": { "decision_id": "decision-002", "options_revision": 7, "input_revision": 2, "selection": null },
+      "actions": [
+        { "action_id": "C-001", "kind": "select_option", "input": { "actor": "human", "option_id": "option-a", "options_revision": 7, "selection_key": "select:decision-002:7:a" } },
+        { "action_id": "C-002", "kind": "select_option", "input": { "actor": "ai_decider", "option_id": "option-b", "options_revision": 7, "selection_key": "select:decision-002:7:b" } },
+        { "action_id": "C-003", "kind": "apply_selection", "input": { "selection_key": "select:decision-002:7:a", "replay": true } },
+        { "action_id": "C-004", "kind": "select_option", "input": { "actor": "human", "option_id": "option-c", "options_revision": 6, "selection_key": "select:decision-002:6:c" } }
+      ],
+      "expected": { "transitions": [
+        { "action_id": "C-001", "accepted": true, "event_types": ["selection.accepted"], "commands": ["apply:select:decision-002:7:a"], "must_not": ["second_selection"] },
+        { "action_id": "C-002", "accepted": false, "rejection_code": "selection_already_accepted", "event_types": [], "commands": [], "must_not": ["second_selection", "second_apply"] },
+        { "action_id": "C-003", "accepted": true, "event_types": ["selection.apply.replayed"], "commands": [], "must_not": ["second_task", "second_dependency", "second_external_action"] },
+        { "action_id": "C-004", "accepted": false, "rejection_code": "options_revision_stale", "event_types": [], "commands": [], "must_not": ["selection.accepted"] }
+      ], "commands": ["apply:select:decision-002:7:a"], "final_state": { "selection": "option-a", "accepted_selection_count": 1, "applied_count": 1 } },
+      "negative_assertions": ["A stale plan result cannot apply against a replaced options revision."]
+    },
+    {
+      "scenario_id": "SCN-DBL-009",
+      "schema_status": "proposed",
+      "title": "Transaction crash is atomic before commit and recoverable after commit",
+      "acceptance_case_ids": ["LIFECYCLE-AC-009"],
+      "classification": "contract-only",
+      "initial_state": { "task_id": "task-tx-001", "version": 1, "events": 0, "commands": 0 },
+      "actions": [
+        { "action_id": "X-001", "kind": "transition_crash", "input": { "point": "before_commit", "simulate_process_exit": true } },
+        { "action_id": "X-002", "kind": "transition_commit", "input": { "point": "after_commit_before_dispatch" } },
+        { "action_id": "X-003", "kind": "recover_committed_transition", "input": { "task_id": "task-tx-001" } }
+      ],
+      "expected": { "transitions": [
+        { "action_id": "X-001", "accepted": false, "waiting_reason": "transaction_rolled_back", "event_types": [], "commands": [], "must_not": ["partial_state", "event", "command"] },
+        { "action_id": "X-002", "accepted": true, "event_types": ["transition.committed"], "commands": ["command-tx-001"], "must_not": ["duplicate_commit"] },
+        { "action_id": "X-003", "accepted": true, "event_types": ["transition.recovered"], "commands": ["command-tx-001"], "must_not": ["second_command"] }
+      ], "commands": ["command-tx-001"], "final_state": { "version": 2, "event_count": 1, "command_count": 1, "dispatch_status": "queued" } },
+      "negative_assertions": ["A process kill before commit cannot leave a task mutation without its event or commands."]
+    },
+    {
+      "scenario_id": "SCN-DBL-010",
+      "schema_status": "proposed",
+      "title": "Dispatcher crash reuses the same launch identity and blocks ambiguous input",
+      "acceptance_case_ids": ["LIFECYCLE-AC-010", "LIFECYCLE-AC-011"],
+      "classification": "contract-only",
+      "initial_state": { "command_id": "cmd-launch-001", "attempt_id": "attempt-launch-001", "lease_generation": 1, "reservation": "active" },
+      "actions": [
+        { "action_id": "L-001", "kind": "dispatcher_crash", "input": { "point": "before_pty_creation" } },
+        { "action_id": "L-002", "kind": "dispatcher_recover", "input": { "command_id": "cmd-launch-001", "attempt_id": "attempt-launch-001", "pty_created": false } },
+        { "action_id": "L-003", "kind": "dispatcher_crash", "input": { "point": "after_pty_creation" } },
+        { "action_id": "L-004", "kind": "dispatcher_recover", "input": { "command_id": "cmd-launch-001", "attempt_id": "attempt-launch-001", "pty_session_id": "pty-launch-001" } },
+        { "action_id": "L-005", "kind": "instruction_ack_lost", "input": { "attempt_id": "attempt-launch-001" } }
+      ],
+      "expected": { "transitions": [
+        { "action_id": "L-001", "accepted": false, "waiting_reason": "dispatcher_crashed", "event_types": [], "commands": [], "must_not": ["second_attempt", "capacity_release"] },
+        { "action_id": "L-002", "accepted": true, "event_types": ["launch.recovered"], "commands": [], "must_not": ["second_attempt", "duplicate_launch"] },
+        { "action_id": "L-003", "accepted": false, "waiting_reason": "dispatcher_crashed_after_pty", "event_types": [], "commands": [], "must_not": ["second_pty", "capacity_release"] },
+        { "action_id": "L-004", "accepted": true, "event_types": ["attempt.reattached"], "commands": [], "must_not": ["second_attempt", "duplicate_instruction"] },
+        { "action_id": "L-005", "accepted": true, "event_types": ["attempt.waiting"], "commands": [], "must_not": ["instruction_resend", "success"] }
+      ], "commands": [], "final_state": { "attempt_id": "attempt-launch-001", "pty_session_id": "pty-launch-001", "waiting_reason": "instruction_delivery_ambiguous", "reservation": "active" } },
+      "negative_assertions": ["Lease expiry or worker death alone never proves that physical execution stopped."]
+    },
+    {
+      "scenario_id": "SCN-DBL-011",
+      "schema_status": "proposed",
+      "title": "Lost external acknowledgement enters unknown delivery",
+      "acceptance_case_ids": ["LIFECYCLE-AC-012"],
+      "classification": "negative",
+      "initial_state": { "command_id": "cmd-email-001", "provider_idempotency_key": "mentiko:email-001", "status": "leased" },
+      "actions": [
+        { "action_id": "U-001", "kind": "external_dispatch", "input": { "command_id": "cmd-email-001", "provider": "email", "ack": "lost" } },
+        { "action_id": "U-002", "kind": "reconcile_external", "input": { "provider_idempotency_key": "mentiko:email-001", "receipt": null } },
+        { "action_id": "U-003", "kind": "reconcile_external", "input": { "provider_idempotency_key": "mentiko:email-001", "receipt": "provider-receipt-001" } }
+      ],
+      "expected": { "transitions": [
+        { "action_id": "U-001", "accepted": true, "event_types": ["delivery.acknowledgement_lost"], "commands": [], "must_not": ["unsafe_repeat"] },
+        { "action_id": "U-002", "accepted": true, "event_types": ["command.waiting"], "commands": [], "must_not": ["automatic_repeat"] },
+        { "action_id": "U-003", "accepted": true, "event_types": ["delivery.reconciled"], "commands": [], "must_not": ["second_external_action"] }
+      ], "commands": [], "final_state": { "status": "completed", "receipt": "provider-receipt-001", "dispatch_count": 1 } },
+      "negative_assertions": ["Unknown delivery is a named wait, not permission to retry an unsafe external effect."]
+    },
+    {
+      "scenario_id": "SCN-DBL-012",
+      "schema_status": "proposed",
+      "title": "Infrastructure degradation is explicit and never success",
+      "acceptance_case_ids": ["LIFECYCLE-AC-013"],
+      "classification": "negative",
+      "initial_state": { "workflow_id": "wf-degraded-001", "status": "running" },
+      "actions": [
+        { "action_id": "I-001", "kind": "worker_downtime", "input": { "oldest_due_command": "cmd-degraded-001" } },
+        { "action_id": "I-002", "kind": "database_contention", "input": { "sqlite_error": "SQLITE_BUSY", "retry_count": 3 } },
+        { "action_id": "I-003", "kind": "artifact_write_failed", "input": { "error": "ENOSPC" } },
+        { "action_id": "I-004", "kind": "pty_unavailable", "input": { "error": "transport_unavailable" } }
+      ],
+      "expected": { "transitions": [
+        { "action_id": "I-001", "accepted": true, "event_types": ["worker.degraded"], "commands": [], "must_not": ["workflow.completed"] },
+        { "action_id": "I-002", "accepted": true, "event_types": ["database.write_waiting"], "commands": [], "must_not": ["state_success", "unbounded_retry"] },
+        { "action_id": "I-003", "accepted": false, "rejection_code": "artifact_storage_unavailable", "event_types": [], "commands": [], "must_not": ["artifact.accepted", "step.completed"] },
+        { "action_id": "I-004", "accepted": false, "rejection_code": "pty_transport_unavailable", "event_types": [], "commands": [], "must_not": ["instructions_submitted", "success"] }
+      ], "commands": [], "final_state": { "workflow_status": "waiting", "waiting_reasons": ["worker_degraded", "database_contention", "artifact_storage_unavailable", "pty_transport_unavailable"] } },
+      "negative_assertions": ["HTTP liveness, a live process, or a partially written file cannot display automation success."]
+    },
+    {
+      "scenario_id": "SCN-DBL-013",
+      "schema_status": "proposed",
+      "title": "Fan-out restart preserves target identity, FIFO admission, and cleanup",
+      "acceptance_case_ids": ["LIFECYCLE-AC-015"],
+      "classification": "contract-only",
+      "initial_state": { "workflow_id": "wf-fanout-001", "target_count": 30, "capacity": 4, "queue": ["target-01", "target-02", "target-03"] },
+      "actions": [
+        { "action_id": "F-001", "kind": "fanout_dispatch", "input": { "targets": 30, "restart_after_target": 12 } },
+        { "action_id": "F-002", "kind": "fanout_recover", "input": { "job_id": "fanout-job-001" } },
+        { "action_id": "F-003", "kind": "fanout_join", "input": { "completed_targets": 30 } }
+      ],
+      "expected": { "transitions": [
+        { "action_id": "F-001", "accepted": true, "event_types": ["fanout.claimed"], "commands": ["fanout-job-001"], "must_not": ["duplicate_target_attempt", "capacity_overcommit"] },
+        { "action_id": "F-002", "accepted": true, "event_types": ["fanout.recovered"], "commands": ["fanout-job-001"], "must_not": ["restart_as_new_job", "fifo_reorder"] },
+        { "action_id": "F-003", "accepted": true, "event_types": ["fanout.join.accepted"], "commands": [], "must_not": ["stale_join_advance", "cleanup_before_receipt"] }
+      ], "commands": ["fanout-job-001"], "final_state": { "target_count": 30, "completed_targets": 30, "capacity_peak": 4, "cleanup_receipts": 30 } },
+      "negative_assertions": ["Chain-level parallelism remains inside a run; it does not create competing top-level workflow schedulers."]
+    },
+    {
+      "scenario_id": "SCN-DBL-014",
+      "schema_status": "proposed",
+      "title": "Cancellation suppresses dependent work and preserves late evidence",
+      "acceptance_case_ids": ["LIFECYCLE-AC-016"],
+      "classification": "negative",
+      "initial_state": { "workflow_id": "wf-cancel-001", "active_run_id": "run-cancel-001", "dependent_step": "step-dependent-001", "reservation": "active" },
+      "actions": [
+        { "action_id": "K-001", "kind": "cancel_workflow", "input": { "workflow_id": "wf-cancel-001", "reason": "user_requested" } },
+        { "action_id": "K-002", "kind": "late_completion", "input": { "run_id": "run-cancel-001", "artifact_id": "artifact-late-001" } },
+        { "action_id": "K-003", "kind": "settle_cancellation", "input": { "run_id": "run-cancel-001", "cleanup": "verified" } }
+      ],
+      "expected": { "transitions": [
+        { "action_id": "K-001", "accepted": true, "event_types": ["cancellation.requested"], "commands": ["terminate:run-cancel-001"], "must_not": ["dependent_launch"] },
+        { "action_id": "K-002", "accepted": true, "event_types": ["late_evidence.recorded"], "commands": [], "must_not": ["task.closed", "dependent_launch"] },
+        { "action_id": "K-003", "accepted": true, "event_types": ["cancellation.settled"], "commands": [], "must_not": ["success_invention"] }
+      ], "commands": ["terminate:run-cancel-001"], "final_state": { "workflow_status": "cancelled", "dependent_step_status": "cancelled", "late_evidence": "retained", "reservation": "released" } },
+      "negative_assertions": ["Manual task close records a business action and does not fabricate a successful run."]
+    },
+    {
+      "scenario_id": "SCN-DBL-015",
+      "schema_status": "proposed",
+      "title": "Cross-organization, namespace, workspace, and authority scope violations reject",
+      "acceptance_case_ids": ["LIFECYCLE-AC-017"],
+      "classification": "negative",
+      "initial_state": { "namespace_id": "ns-a", "org_id": "org-a", "workspace_id": "workspace-a", "task_id": "task-collision-001" },
+      "actions": [
+        { "action_id": "Z-001", "kind": "read_task", "input": { "namespace_id": "ns-b", "org_id": "org-a", "task_id": "task-collision-001" } },
+        { "action_id": "Z-002", "kind": "write_task", "input": { "namespace_id": "ns-a", "org_id": "org-b", "task_id": "task-collision-001" } },
+        { "action_id": "Z-003", "kind": "launch_workspace", "input": { "namespace_id": "ns-a", "org_id": "org-a", "workspace_id": "workspace-b" } },
+        { "action_id": "Z-004", "kind": "apply_selection", "input": { "authority_scope": "read:task" } }
+      ],
+      "expected": { "transitions": [
+        { "action_id": "Z-001", "accepted": false, "rejection_code": "namespace_scope_mismatch", "event_types": [], "commands": [], "must_not": ["read_result"] },
+        { "action_id": "Z-002", "accepted": false, "rejection_code": "organization_scope_mismatch", "event_types": [], "commands": [], "must_not": ["state_change"] },
+        { "action_id": "Z-003", "accepted": false, "rejection_code": "workspace_not_authorized", "event_types": [], "commands": [], "must_not": ["run", "reservation"] },
+        { "action_id": "Z-004", "accepted": false, "rejection_code": "authority_scope_missing", "event_types": [], "commands": [], "must_not": ["selection.apply"] }
+      ], "commands": [], "final_state": { "state_changed": false, "command_count": 0, "event_count": 0 } },
+      "negative_assertions": ["Colliding IDs do not weaken namespace, organization, workspace, or delegated-authority checks."]
+    },
+    {
+      "scenario_id": "SCN-DBL-016",
+      "schema_status": "proposed",
+      "title": "Stale compatibility projector and legacy writer cannot overwrite cutover state",
+      "acceptance_case_ids": ["LIFECYCLE-AC-018"],
+      "classification": "negative",
+      "initial_state": { "authority_epoch": 4, "database_state": "newer", "projection_epoch": 3, "legacy_writer": "stopped" },
+      "actions": [
+        { "action_id": "P-001", "kind": "project_compatibility", "input": { "authority_epoch": 3, "export_version": 2 } },
+        { "action_id": "P-002", "kind": "legacy_write", "input": { "authority_epoch": 3, "path": "run.json" } },
+        { "action_id": "P-003", "kind": "project_compatibility", "input": { "authority_epoch": 4, "export_version": 5 } }
+      ],
+      "expected": { "transitions": [
+        { "action_id": "P-001", "accepted": false, "rejection_code": "stale_authority_epoch", "event_types": ["projection.rejected"], "commands": [], "must_not": ["database_overwrite"] },
+        { "action_id": "P-002", "accepted": false, "rejection_code": "legacy_writer_not_authorized", "event_types": ["legacy_write.rejected"], "commands": [], "must_not": ["database_write"] },
+        { "action_id": "P-003", "accepted": true, "event_types": ["projection.accepted"], "commands": [], "must_not": ["source_state_mutation"] }
+      ], "commands": [], "final_state": { "authority_epoch": 4, "database_state": "newer", "projection_epoch": 4, "legacy_writer": "stopped" } },
+      "negative_assertions": ["Compatibility JSON is a projection after cutover, never an independent authoritative writer."]
+    },
+    {
+      "scenario_id": "SCN-DBL-017",
+      "schema_status": "proposed",
+      "title": "Historical import preserves uncertainty and is idempotent",
+      "acceptance_case_ids": ["LIFECYCLE-AC-019"],
+      "classification": "contract-only",
+      "initial_state": { "legacy_records": 3, "known_attempts": 1, "missing_events": true },
+      "actions": [
+        { "action_id": "H-001", "kind": "historical_import", "input": { "snapshot_id": "snapshot-001", "preserve_ids": true } },
+        { "action_id": "H-002", "kind": "historical_import", "input": { "snapshot_id": "snapshot-001", "replay": true } }
+      ],
+      "expected": { "transitions": [
+        { "action_id": "H-001", "accepted": true, "event_types": ["imported.snapshot", "reconciliation_required"], "commands": [], "must_not": ["invented_completion", "dispatch"] },
+        { "action_id": "H-002", "accepted": true, "event_types": ["import.replayed"], "commands": [], "must_not": ["second_import", "dispatch"] }
+      ], "commands": [], "final_state": { "imported_ids": ["legacy-task-001", "legacy-run-001", "legacy-job-001"], "pending_effects": "preserved", "completion_evidence": "unknown", "import_count": 1 } },
+      "negative_assertions": ["A historical import cannot invent AgentAttempts, events, or completion evidence absent from the snapshot."]
+    },
+    {
+      "scenario_id": "SCN-DBL-018",
+      "schema_status": "proposed",
+      "title": "Backup restore and application rollback retain receipts",
+      "acceptance_case_ids": ["LIFECYCLE-AC-020"],
+      "classification": "contract-only",
+      "initial_state": { "authority_epoch": 5, "accepted_receipts": ["provider-receipt-001"], "pending_commands": ["cmd-restore-001"] },
+      "actions": [
+        { "action_id": "B-001", "kind": "backup_namespace", "input": { "wal_checkpoint": "quiescent", "include_artifacts": true } },
+        { "action_id": "B-002", "kind": "restore_namespace", "input": { "backup_id": "backup-001", "reconcile_external_effects": true } },
+        { "action_id": "B-003", "kind": "application_rollback", "input": { "retain_database_authority": true } }
+      ],
+      "expected": { "transitions": [
+        { "action_id": "B-001", "accepted": true, "event_types": ["backup.created"], "commands": [], "must_not": ["live_wal_omission"] },
+        { "action_id": "B-002", "accepted": true, "event_types": ["restore.validated"], "commands": ["reconcile:cmd-restore-001"], "must_not": ["blind_redispatch"] },
+        { "action_id": "B-003", "accepted": true, "event_types": ["application.rollback"], "commands": [], "must_not": ["authority_flip", "dual_writer"] }
+      ], "commands": ["reconcile:cmd-restore-001"], "final_state": { "authority_epoch": 5, "dispatch_status": "suspended_until_reconciled", "accepted_receipts": ["provider-receipt-001"] } },
+      "negative_assertions": ["A live .db copy without WAL-safe backup and artifact references is not a valid restore proof."]
+    },
+    {
+      "scenario_id": "SCN-DBL-019",
+      "schema_status": "proposed",
+      "title": "Views expose waits and the actual eligible frontier after restart",
+      "acceptance_case_ids": ["LIFECYCLE-AC-021"],
+      "classification": "contract-only",
+      "initial_state": { "workflow_id": "wf-view-001", "status": "waiting", "waiting_reason": "human_selection_required", "eligible_steps": ["step-select-001"] },
+      "actions": [
+        { "action_id": "V-001", "kind": "restart_reader", "input": { "workflow_id": "wf-view-001" } },
+        { "action_id": "V-002", "kind": "inspect_workflow", "input": { "workflow_id": "wf-view-001" } },
+        { "action_id": "V-003", "kind": "responsive_view_check", "input": { "widths": [390, 820, 1440] } }
+      ],
+      "expected": { "transitions": [
+        { "action_id": "V-001", "accepted": true, "event_types": ["reader.rehydrated"], "commands": [], "must_not": ["state_mutation"] },
+        { "action_id": "V-002", "accepted": true, "event_types": ["frontier.inspected"], "commands": [], "must_not": ["directory_scan"] },
+        { "action_id": "V-003", "accepted": true, "event_types": ["view.checked"], "commands": [], "must_not": ["overflow"] }
+      ], "commands": [], "final_state": { "status": "waiting", "waiting_reason": "human_selection_required", "eligible_steps": ["step-select-001"], "widths_checked": [390, 820, 1440] } },
+      "negative_assertions": ["A status badge without the named wait condition is not an acceptable workflow inspection result."]
+    },
+    {
+      "scenario_id": "SCN-DBL-020",
+      "schema_status": "proposed",
+      "title": "Representative workload establishes a query and contention baseline",
+      "acceptance_case_ids": ["LIFECYCLE-AC-022"],
+      "classification": "measurement",
+      "initial_state": { "workload_id": "baseline-001", "task_count": 1000, "workflow_count": 1000, "command_count": 2500 },
+      "actions": [
+        { "action_id": "Q-001", "kind": "measure_frontier_query", "input": { "iterations": 100, "directory_scan_forbidden": true } },
+        { "action_id": "Q-002", "kind": "measure_write_contention", "input": { "workers": 4, "transactions": 100 } },
+        { "action_id": "Q-003", "kind": "measure_command_latency", "input": { "commands": 2500 } },
+        { "action_id": "Q-004", "kind": "measure_event_volume", "input": { "window": "1h" } }
+      ],
+      "expected": { "transitions": [
+        { "action_id": "Q-001", "accepted": true, "event_types": ["measurement.frontier"], "commands": [], "must_not": ["directory_scan"] },
+        { "action_id": "Q-002", "accepted": true, "event_types": ["measurement.contention"], "commands": [], "must_not": ["unexpected_busy_escape"] },
+        { "action_id": "Q-003", "accepted": true, "event_types": ["measurement.command_latency"], "commands": [], "must_not": ["unbounded_wait"] },
+        { "action_id": "Q-004", "accepted": true, "event_types": ["measurement.event_volume"], "commands": [], "must_not": ["terminal_frame_event_storm"] }
+      ], "commands": [], "final_state": { "baseline_recorded": true, "directory_scan": false, "unexpected_busy": 0, "metrics": ["frontier_latency", "write_contention", "command_latency", "event_volume"] } },
+      "negative_assertions": ["A green unit suite without a recorded representative workload is not the acceptance proof for this case."]
+    }
+  ]
+}

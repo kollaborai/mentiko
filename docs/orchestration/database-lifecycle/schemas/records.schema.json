@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mentiko.com/schemas/database-lifecycle/records-v1.json",
+  "title": "Mentiko database lifecycle example records",
+  "type": "object",
+  "required": ["example_id", "schema_status", "provenance", "records"],
+  "properties": {
+    "example_id": { "type": "string", "minLength": 1 },
+    "schema_status": { "const": "proposed" },
+    "provenance": {
+      "type": "object",
+      "required": ["current_runtime", "proposed_model"],
+      "properties": {
+        "current_runtime": { "type": "array", "items": { "type": "string" } },
+        "proposed_model": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+    "records": {
+      "type": "object",
+      "required": [
+        "tasks",
+        "workflow_instances",
+        "workflow_steps",
+        "runs",
+        "agent_attempts",
+        "lifecycle_events",
+        "lifecycle_commands",
+        "artifact_refs"
+      ],
+      "properties": {
+        "tasks": { "type": "array" },
+        "workflow_instances": { "type": "array" },
+        "workflow_steps": { "type": "array" },
+        "runs": { "type": "array" },
+        "agent_attempts": { "type": "array" },
+        "lifecycle_events": { "type": "array" },
+        "lifecycle_commands": { "type": "array" },
+        "artifact_refs": { "type": "array" },
+        "execution_reservations": { "type": "array" }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}
