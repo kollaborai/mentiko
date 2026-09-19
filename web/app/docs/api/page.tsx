@@ -251,7 +251,7 @@ const endpoints: ApiEndpoint[] = [
     description: "create agent profile",
     body: [
       { name: "name", type: "string", required: true, description: "profile name" },
-      { name: "cli", type: "string", required: true, description: "claude|codex|kollab|aider" },
+      { name: "cli", type: "string", required: true, description: "claude|codex|kollab|grok" },
       { name: "model", type: "string", required: false, description: "model identifier" },
       { name: "env", type: "object", required: false, description: "environment variables" },
     ],
@@ -278,7 +278,7 @@ const endpoints: ApiEndpoint[] = [
     description: "update agent profile",
     body: [
       { name: "name", type: "string", required: false, description: "profile name" },
-      { name: "cli", type: "string", required: false, description: "claude|codex|kollab|aider" },
+      { name: "cli", type: "string", required: false, description: "claude|codex|kollab|grok" },
       { name: "model", type: "string", required: false, description: "model identifier" },
     ],
     response: { success: true, profile: {} },

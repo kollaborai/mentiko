@@ -170,7 +170,7 @@ export function FloatingWelcomePanel({ workspacesDir }: { workspacesDir?: string
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.9, y: 30 }}
             transition={{ type: "tween", duration: 0.32, ease: "easeOut", delay: 0.1 }}
-            className="fixed left-1/2 top-1/2 w-[calc(100vw-1rem)] max-w-3xl -translate-x-1/2 -translate-y-1/2 overflow-y-auto overscroll-contain rounded-lg bg-background max-h-[calc(100dvh-1rem)]"
+            className="fixed left-1/2 top-1/2 flex w-[calc(100vw-1rem)] max-w-3xl max-h-[calc(100dvh-1rem)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg bg-background"
             style={{
               zIndex: FLOATING_SURFACE_Z.kollaborPrompt,
               boxShadow: "0 0 0 1px rgba(255,255,255,0.06), 0 20px 60px rgba(0,0,0,0.6)",
@@ -201,8 +201,8 @@ export function FloatingWelcomePanel({ workspacesDir }: { workspacesDir?: string
               <CloseCircleFilled className="h-4 w-4" />
             </button>
 
-            {/* setup center content */}
-            <div className="relative z-[2] p-3 pt-6 sm:p-5 sm:pt-7">
+            {/* setup center content — only this region scrolls; shell stays overflow-hidden so nested card borders cannot float mid-modal */}
+            <div className="relative z-[2] min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 pt-6 sm:p-5 sm:pt-7">
               <SetupCenter
                 embedded
                 workspacesDir={resolvedWorkspacesDir}

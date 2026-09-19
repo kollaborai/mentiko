@@ -117,7 +117,7 @@ const ROUTE_META: Record<string, RouteMeta> = {
   },
   "/conversations": {
     title: "Conversations",
-    description: "AI session history. Browse past interactions with Claude, Codex, Kollabor, and Aider.",
+    description: "AI session history. Browse past interactions with Claude, Codex, Kollabor, and Grok.",
     icon: MessageCircleFilled,
     color: "#5b9ef5",
   },

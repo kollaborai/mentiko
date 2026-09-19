@@ -20,10 +20,10 @@ type StepId = "provider" | "workspace" | "readiness" | "sampleRun";
 // second onboarding truth model (localStorage/CLI-auth/chain-existence used
 // to be checked here independently and could disagree with the Setup Center).
 const STEPS: { id: StepId; title: string; description: string }[] = [
-  { id: "provider", title: "Choose an AI tool", description: "Pick and verify the tool that will run your chains." },
-  { id: "workspace", title: "Connect a project", description: "Choose where your agents will work." },
-  { id: "readiness", title: "Check that everything works", description: "Run a safe, real check through the runner." },
-  { id: "sampleRun", title: "Run your first chain", description: "Watch a small, read-only chain complete." },
+  { id: "provider", title: "Pick a tool", description: "CLI for your chains." },
+  { id: "workspace", title: "Connect a project", description: "Where agents work." },
+  { id: "readiness", title: "Quick check", description: "Verify the runner." },
+  { id: "sampleRun", title: "First chain", description: "Small read-only sample." },
 ];
 
 function isStepDone(id: StepId, state: OnboardingSummary): boolean {
@@ -79,7 +79,7 @@ export function GettingStarted() {
       <div className="bg-background border border-border/40 rounded-xl mb-4 px-4 py-2.5 flex items-center justify-between gap-3">
         <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
           <TickCircleFilled className="h-3.5 w-3.5 text-green-500/70" />
-          Setup complete
+          Setup done
         </p>
         <button
           onClick={() => openSetupCenterStep("sampleRun")}
@@ -98,7 +98,7 @@ export function GettingStarted() {
       <div className="px-4 py-3 flex items-center justify-between gap-4">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
-            <h3 className="text-sm font-medium">Getting started</h3>
+            <h3 className="text-sm font-medium">Setup</h3>
             <span className="text-[10px] text-muted-foreground/60">{doneCount}/{STEPS.length} done</span>
           </div>
           <div className="h-1 bg-muted rounded-full overflow-hidden">

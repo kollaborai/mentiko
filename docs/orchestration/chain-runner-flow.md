@@ -106,7 +106,7 @@ phase 2: chain.json validation
 2. extract chain config
    ----------------------
    CHAIN_NAME          chain name
-   CHAIN_CLI           executor to use (claude, codex, aider, kollabor)
+   CHAIN_CLI           executor to use (claude, codex, grok, kollabor)
    CHAIN_CLI_ARGS      additional cli arguments
    CHAIN_MONITOR       enable monitor sessions
    CHAIN_MONITOR_INTERVAL  seconds between monitor checks
@@ -125,7 +125,7 @@ phase 2: chain.json validation
    - claude   -> claude
    - claude-cli -> claude (legacy alias)
    - codex    -> codex
-   - aider    -> aider
+   - grok     -> grok
    - kollabor -> kl
 
 5. resolve config profiles

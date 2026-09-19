@@ -31,7 +31,7 @@ export default function GettingStartedPage() {
         <ul className="text-xs text-foreground/60 leading-relaxed space-y-1">
           <li>Node.js 20+ and npm</li>
           <li>pty-manager (bundled at bin/p, no external dependency needed)</li>
-          <li>A CLI agent: Claude Code, Codex, Aider, or Kollabor</li>
+          <li>A CLI agent: Claude Code, Codex, Grok, or Kollabor</li>
           <li>Git</li>
         </ul>
       </section>

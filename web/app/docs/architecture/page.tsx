@@ -39,7 +39,7 @@ const layers = [
       { label: "glm", desc: "OpenAI-compatible CLI tool" },
       { label: "antigravity", desc: "OpenAI-compatible CLI tool" },
       { label: "opencode", desc: "OpenAI-compatible CLI tool" },
-      { label: "aider", desc: "ai pair programming tool" },
+      { label: "grok", desc: "ai pair programming tool" },
     ],
   },
   {
