@@ -244,7 +244,7 @@ settings page (/settings)
 configure mentiko:
 
 general:
-  - ai cli selection (claude, codex, glm, aider)
+  - ai cli selection (claude, codex, glm, grok)
   - monitor interval
   - max rounds
   - default session prefix

@@ -59,7 +59,26 @@ describe("agent provider catalog", () => {
     expect(getTerminalAuthCommand("codex")).toBe("codex login --device-auth");
     expect(getTerminalAuthCommand("antigravity")).toBe("agy");
     expect(getTerminalAuthCommand("kollab")).toBe("kollab --login openai");
-    expect(getTerminalAuthCommand("aider")).toBe("aider --help");
+    expect(getTerminalAuthCommand("grok")).toBe("grok login --device-auth");
+  });
+
+  it("replaces Aider with Grok as a first-class CLI", () => {
+    expect(getCliTool("aider")).toBeUndefined();
+    expect(CLI_TOOLS.some((tool) => tool.id === "aider" || tool.cli === "aider")).toBe(false);
+    expect(getCliTool("grok")).toEqual(
+      expect.objectContaining({
+        id: "grok",
+        name: "Grok",
+        cli: "grok",
+        bundleProvider: "grok",
+      }),
+    );
+    expect(getCliBinary("grok")).toBe("grok");
+    expect(getDefaultAgentConfigIdForTool("grok")).toBe("grok-default");
+    expect(getAgentConfigOptionsForTool("grok")).toEqual([
+      { id: "grok-default", name: "Grok / Default" },
+    ]);
+    expect(COMMON_PRESETS.some((preset) => preset.envVar === "XAI_API_KEY")).toBe(true);
   });
 
   it("includes every provider credential in quick secret presets", () => {

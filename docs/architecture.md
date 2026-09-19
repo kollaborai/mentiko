@@ -285,7 +285,7 @@ immediate exec into the compiled typed direct-run CLI.
 Agents run in isolated PTY sessions through `pty-mgr`, reached by
 `lib/session-transport.sh` and web PTY clients.
 
-Common agent CLIs include Claude Code, Codex, Antigravity, Kollab, Aider,
+Common agent CLIs include Claude Code, Codex, Antigravity, Kollab, Grok,
 Opencode, and custom commands configured through agent profiles.
 
 Why PTY is the normal path:

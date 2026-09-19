@@ -56,9 +56,9 @@ describe("SetupCenter", () => {
     render(<SetupCenter />);
 
     expect(screen.queryByRole("navigation", { name: "Setup progress" })).not.toBeInTheDocument();
-    expect(await screen.findByRole("button", { name: /Get Started/ })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /^Start$/ })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /I.ll explore first/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Skip for now/ }));
     // Standalone (no onRequestClose prop): explore-first routes home, it never clears state itself.
     await waitFor(() => expect(push).toHaveBeenCalledWith("/"));
   });
@@ -70,32 +70,32 @@ describe("SetupCenter", () => {
     mockOnboardingState({ nextAction: "project", provider: { status: "ready", selectedCli: "codex", selectedProfileId: "codex-terra", defaultVerified: true } });
     render(<SetupCenter />);
 
-    fireEvent.click(await screen.findByRole("button", { name: /Continue Setup/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Continue$/ }));
 
     const rail = await screen.findByRole("navigation", { name: "Setup progress" });
     await waitFor(() =>
-      expect(within(rail).getByRole("button", { name: /Connect Your Project/ })).toHaveAttribute("aria-current", "step"),
+      expect(within(rail).getByRole("button", { name: /Connect a Project/ })).toHaveAttribute("aria-current", "step"),
     );
     // Title Case rail labels (defect #4) — not the old unexplained lowercase.
     expect(within(rail).getByText("Project")).toBeInTheDocument();
     expect(within(rail).queryByText("project")).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Set Up Your First Chain" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "You’re all set." })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "First Chain Setup" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "All set." })).not.toBeInTheDocument();
   });
 
   it("renders exactly one step at a time when navigating the rail (defect #1)", async () => {
     mockOnboardingState({ nextAction: "provider" });
     render(<SetupCenter />);
 
-    fireEvent.click(await screen.findByRole("button", { name: /Get Started/ }));
-    await screen.findByRole("heading", { name: "Choose Your AI Tool" });
+    fireEvent.click(await screen.findByRole("button", { name: /^Start$/ }));
+    await screen.findByRole("heading", { name: "Pick a Tool" });
 
     const rail = screen.getByRole("navigation", { name: "Setup progress" });
-    fireEvent.click(within(rail).getByRole("button", { name: /Check That Everything Works/ }));
+    fireEvent.click(within(rail).getByRole("button", { name: /Quick Check/ }));
 
-    await waitFor(() => expect(screen.getByRole("heading", { name: "Check That Everything Works" })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Quick Check" })).toBeInTheDocument());
     // The exiting step must be fully gone, not layered underneath (AnimatePresence mode="wait").
-    expect(screen.queryByRole("heading", { name: "Choose Your AI Tool" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Pick a Tool" })).not.toBeInTheDocument();
   });
 
   it("renders provider cards with a logo and a real (non-permanent) detection status (defects #2 and #3)", async () => {
@@ -108,8 +108,8 @@ describe("SetupCenter", () => {
     });
     render(<SetupCenter />);
 
-    fireEvent.click(await screen.findByRole("button", { name: /Get Started/ }));
-    await screen.findByRole("heading", { name: "Choose Your AI Tool" });
+    fireEvent.click(await screen.findByRole("button", { name: /^Start$/ }));
+    await screen.findByRole("heading", { name: "Pick a Tool" });
 
     // Detection resolves to real, distinct statuses instead of a permanent "Checking".
     // (detected · auth status render as one line, so match the combined text.)
@@ -133,7 +133,7 @@ describe("SetupCenter", () => {
     });
 
     render(<SetupCenter />);
-    fireEvent.click(await screen.findByRole("button", { name: /Continue Setup/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Continue$/ }));
     const checkButton = await screen.findByRole("button", { name: /Check that Codex works/ });
     fireEvent.click(checkButton);
 

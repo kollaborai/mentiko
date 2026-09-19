@@ -38,7 +38,7 @@ function getAgentAccent(role: string): string {
   if (r === "claude") return "bg-violet-400";
   if (r === "codex") return "bg-sky-400";
   if (r === "kollab") return "bg-amber-400";
-  if (r === "aider") return "bg-rose-400";
+  if (r === "grok") return "bg-rose-400";
   // chain-spawned agents get a muted accent
   if (r) return "bg-sky-300";
   return "bg-foreground/20";
@@ -344,7 +344,7 @@ export default function ConversationsPage() {
       {/* Header */}
       <PageBanner
         title="Conversations"
-        subtitle="Browse and replay AI chat sessions across workspaces. View conversations from Claude, Codex, Kollabor, and Aider agents with full message history."
+        subtitle="Browse and replay AI chat sessions across workspaces. View conversations from Claude, Codex, Kollabor, and Grok agents with full message history."
         icon={MessageCircleFilled}
         sectionColor="#5b9ef5"
         actions={[

@@ -1,7 +1,6 @@
 import {
   CpuFilled as Cpu,
   MagicStarFilled as Sparkles,
-  LinkFilled as GitBranch,
   UserFilled as Users,
   MagicStarFilled as Wand2,
 } from "@aliimam/icons";
@@ -18,7 +17,7 @@ import {
 const ICONS = {
   claude: Cpu,
   openai: Sparkles,
-  aider: GitBranch,
+  grok: Sparkles,
   antigravity: Wand2,
   kollab: Users,
   opencode: Sparkles,

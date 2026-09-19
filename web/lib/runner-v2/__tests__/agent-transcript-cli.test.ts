@@ -65,7 +65,7 @@ describe("runner agent transcript CLI boundary", () => {
   });
 
   it("resolves via --instruction-path with no uuid anywhere in the capture (CLI-agnostic route B)", () => {
-    // Mirrors monitor-live-io's resolveTranscriptJsonl: a codex/aider/kollab
+    // Mirrors monitor-live-io's resolveTranscriptJsonl: a codex/grok/kollab
     // session, or an unconfigured claude with no status line, never prints a
     // session uuid to the screen. The pasted instruction-pointer path is the
     // anchor instead.

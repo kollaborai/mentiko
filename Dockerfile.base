@@ -289,7 +289,7 @@ RUN echo "=== Antigravity CLI ===" && \
     || echo "WARNING: Antigravity CLI install failed, skipping"
 
 # ---------------------------------------------------------------------------
-# 9. python tools (uv for kollab, pipx for aider)
+# 9. python tools (uv for kollab) + Grok CLI
 # ---------------------------------------------------------------------------
 
 RUN echo "=== uv venv: kollab + kollabor-engine ===" && \
@@ -298,9 +298,10 @@ RUN echo "=== uv venv: kollab + kollabor-engine ===" && \
     ln -sf /opt/pipx/venvs/kollab/bin/kollab /usr/local/bin/kollab \
     || echo "WARNING: kollab install failed, skipping"
 
-RUN echo "=== pipx: aider-chat ===" && \
-    pipx install aider-chat \
-    || echo "WARNING: aider-chat install failed, skipping"
+RUN echo "=== Grok CLI (xAI) ===" && \
+    (curl -fsSL https://x.ai/cli/install.sh | bash) \
+    || npm install -g @xai-official/grok \
+    || echo "WARNING: grok CLI install failed, skipping"
 
 # ---------------------------------------------------------------------------
 # 10. zsh configuration (oh-my-zsh + plugins + starship)
