@@ -16,6 +16,8 @@ export interface GitHubImportInput {
   name: string;
   gitUrl: string;
   branch?: string;
+  /** When set, `branch` does not need to exist remotely — it is created locally from this base. */
+  createFromBranch?: string;
 }
 
 export interface GitHubImportResult {
@@ -48,6 +50,8 @@ export function importGitHubWorkspace(input: GitHubImportInput): GitHubImportRes
   if (!name || name.length > 100) throw new BadRequest("Workspace name is required");
   const gitUrl = validateGitHubImportUrl(input.gitUrl);
   const branch = validateGitHubBranch(input.branch);
+  const createFromBranch = input.createFromBranch ? validateGitHubBranch(input.createFromBranch) : undefined;
+  if (createFromBranch === branch) throw new BadRequest("New branch must differ from its base", { field: "createFromBranch" });
   const id = slugify(name);
   if (!id) throw new BadRequest("Workspace name must contain letters or numbers");
 
@@ -67,12 +71,17 @@ export function importGitHubWorkspace(input: GitHubImportInput): GitHubImportRes
   if (existsSync(target)) throw new Conflict("Workspace already exists", { workspaceId: id });
 
   try {
-    runGit(root, ["clone", "--depth", "1", "--branch", branch, "--", gitUrl, target], {
+    // when creating a branch, clone the base and branch off its HEAD — the new
+    // branch is local-only until the user pushes it from the workspace
+    runGit(root, ["clone", "--depth", "1", "--branch", createFromBranch || branch, "--", gitUrl, target], {
       timeout: 120000,
     });
     const entries = readdirSync(target);
     if (entries.length === 0 || !existsSync(path.join(target, ".git"))) {
       throw new Error("clone produced an invalid repository");
+    }
+    if (createFromBranch) {
+      runGit(target, ["checkout", "-b", branch], { timeout: 10000 });
     }
     const workspace: Workspace = {
       id,

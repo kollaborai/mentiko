@@ -31,6 +31,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     name: String(body.name),
     gitUrl: String(body.gitUrl),
     branch: body.branch,
+    createFromBranch: body.createFromBranch,
   });
   const next = readOnboardingState(namespaceId, orgId);
   next.setupVersion = setupVersion;

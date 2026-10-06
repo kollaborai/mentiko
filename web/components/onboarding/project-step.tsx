@@ -104,6 +104,11 @@ function GithubRepositoryBrowser({
   const [error, setError] = useState("");
   const [selected, setSelected] = useState<GithubRepo | null>(null);
   const [branch, setBranch] = useState("");
+  const [branches, setBranches] = useState<string[]>([]);
+  const [branchesLoading, setBranchesLoading] = useState(false);
+  const [newBranchMode, setNewBranchMode] = useState(false);
+  const [newBranchName, setNewBranchName] = useState("");
+  const [branchBase, setBranchBase] = useState("");
   const [creating, setCreating] = useState(false);
   const createGuardRef = useRef(false);
 
@@ -130,6 +135,25 @@ function GithubRepositoryBrowser({
     [fetchWithNamespace],
   );
 
+  const loadBranches = useCallback(
+    async (repo: GithubRepo) => {
+      setBranchesLoading(true);
+      try {
+        const res = await fetchWithNamespace(
+          `/api/integrations/github/repositories/branches?repo=${encodeURIComponent(repo.full_name)}`,
+        );
+        const data = (await res.json().catch(() => ({}))) as { branches?: string[] };
+        if (res.ok && data.branches) setBranches(data.branches);
+        else setBranches([repo.default_branch]);
+      } catch {
+        setBranches([repo.default_branch]);
+      } finally {
+        setBranchesLoading(false);
+      }
+    },
+    [fetchWithNamespace],
+  );
+
   useEffect(() => {
     void search("");
     // only on mount — further searches are driven by the input's onChange
@@ -138,6 +162,15 @@ function GithubRepositoryBrowser({
 
   const handleUseRepo = useCallback(async () => {
     if (!selected || createGuardRef.current) return;
+    const targetBranch = newBranchMode ? newBranchName.trim() : branch || selected.default_branch;
+    if (newBranchMode && !targetBranch) {
+      setError("enter a name for the new branch");
+      return;
+    }
+    if (newBranchMode && branches.includes(targetBranch)) {
+      setError(`branch "${targetBranch}" already exists — pick it from the list instead`);
+      return;
+    }
     createGuardRef.current = true;
     setCreating(true);
     setError("");
@@ -148,7 +181,8 @@ function GithubRepositoryBrowser({
         body: JSON.stringify({
           name: selected.name,
           gitUrl: `https://github.com/${selected.full_name}.git`,
-          branch: branch || selected.default_branch,
+          branch: targetBranch,
+          ...(newBranchMode ? { createFromBranch: branchBase || selected.default_branch } : {}),
           idempotencyKey: crypto.randomUUID(),
           setupVersion: CURRENT_SETUP_VERSION,
         }),
@@ -165,7 +199,7 @@ function GithubRepositoryBrowser({
       createGuardRef.current = false;
       setCreating(false);
     }
-  }, [selected, branch, fetchWithNamespace, onWorkspaceCreated]);
+  }, [selected, branch, branches, newBranchMode, newBranchName, branchBase, fetchWithNamespace, onWorkspaceCreated]);
 
   return (
     <div className="space-y-4">
@@ -206,6 +240,11 @@ function GithubRepositoryBrowser({
                 onClick={() => {
                   setSelected(repo);
                   setBranch(repo.default_branch);
+                  setNewBranchMode(false);
+                  setNewBranchName("");
+                  setBranchBase(repo.default_branch);
+                  setBranches([repo.default_branch]);
+                  void loadBranches(repo);
                 }}
                 className={cn(
                   "flex w-full items-center justify-between gap-2 rounded-md border px-3 py-2 text-left transition-colors",
@@ -229,15 +268,66 @@ function GithubRepositoryBrowser({
 
       {selected && (
         <div className="space-y-3 rounded-md bg-muted/20 p-3">
-          <div className="flex items-center justify-between gap-2 text-xs">
-            <span className="shrink-0 text-foreground/50">Default branch</span>
-            <input
-              type="text"
-              value={branch}
-              onChange={(e) => setBranch(e.target.value)}
-              className="w-32 rounded-md bg-muted px-2 py-1 text-right font-mono text-xs focus:bg-accent focus:outline-none"
-            />
-          </div>
+          {!newBranchMode ? (
+            <div className="flex items-center justify-between gap-2 text-xs">
+              <span className="shrink-0 text-foreground/50">Branch</span>
+              <select
+                value={branch}
+                onChange={(e) => {
+                  if (e.target.value === "__new__") {
+                    setNewBranchMode(true);
+                    setNewBranchName("");
+                    return;
+                  }
+                  setBranch(e.target.value);
+                }}
+                className="max-w-[60%] rounded-md bg-muted px-2 py-1 text-right font-mono text-xs focus:bg-accent focus:outline-none"
+              >
+                {branchesLoading && <option value={branch}>{branch}…</option>}
+                {branches.map((b) => (
+                  <option key={b} value={b}>
+                    {b}
+                  </option>
+                ))}
+                <option value="__new__">＋ create new branch…</option>
+              </select>
+            </div>
+          ) : (
+            <div className="space-y-2 text-xs">
+              <div className="flex items-center justify-between gap-2">
+                <span className="shrink-0 text-foreground/50">New branch</span>
+                <input
+                  type="text"
+                  value={newBranchName}
+                  onChange={(e) => setNewBranchName(e.target.value)}
+                  placeholder="branch name"
+                  autoFocus
+                  className="w-40 rounded-md bg-muted px-2 py-1 text-right font-mono text-xs placeholder:text-foreground/30 focus:bg-accent focus:outline-none"
+                />
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="shrink-0 text-foreground/50">From</span>
+                <select
+                  value={branchBase}
+                  onChange={(e) => setBranchBase(e.target.value)}
+                  className="max-w-[60%] rounded-md bg-muted px-2 py-1 text-right font-mono text-xs focus:bg-accent focus:outline-none"
+                >
+                  {branches.map((b) => (
+                    <option key={b} value={b}>
+                      {b}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <button
+                type="button"
+                onClick={() => setNewBranchMode(false)}
+                className="text-[10px] text-foreground/40 transition-colors hover:text-foreground"
+              >
+                use an existing branch instead
+              </button>
+            </div>
+          )}
           <button
             type="button"
             onClick={handleUseRepo}
@@ -264,12 +354,22 @@ function GithubRepositoryBrowser({
 
 function GithubConnectPrompt({
   connecting,
+  ghConnecting,
+  oauthConfigured,
+  ghCli,
+  error,
   onConnect,
+  onConnectGhCli,
   onQuickJump,
   onBack,
 }: {
   connecting: boolean;
+  ghConnecting: boolean;
+  oauthConfigured: boolean;
+  ghCli: { available: boolean; login?: string } | null;
+  error: string;
   onConnect: () => void;
+  onConnectGhCli: () => void;
   onQuickJump: (view: View) => void;
   onBack: () => void;
 }) {
@@ -279,15 +379,34 @@ function GithubConnectPrompt({
         <h2 className="mb-1 text-lg font-semibold">Browse GitHub Projects</h2>
         <p className="text-sm text-foreground/50">Connect GitHub to browse your projects</p>
       </div>
-      <button
-        type="button"
-        onClick={onConnect}
+      {error && <p className="text-xs text-red-400">{error}</p>}
+      {ghCli?.available && (
+        <button
+          type="button"
+          onClick={onConnectGhCli}
+          aria-busy={ghConnecting}
+          className="mx-auto flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+        >
+          {ghConnecting && <RotateFilled className="h-3.5 w-3.5 animate-spin" />}
+          Use gh CLI{ghCli.login ? ` · ${ghCli.login}` : ""}
+        </button>
+      )}
+      {oauthConfigured && (
+        <button
+          type="button"
+          onClick={onConnect}
         aria-busy={connecting}
         className="mx-auto flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
       >
         {connecting && <RotateFilled className="h-3.5 w-3.5 animate-spin" />}
         Connect GitHub
-      </button>
+        </button>
+      )}
+      {!oauthConfigured && !ghCli?.available && (
+        <p className="text-xs text-foreground/40">
+          GitHub OAuth is not configured on this instance — sign in with the gh CLI, use a Git URL, or set GITHUB_CLIENT_ID.
+        </p>
+      )}
       <div className="flex items-center justify-center gap-3 text-[11px] text-foreground/40">
         <button type="button" onClick={() => onQuickJump("local")} className="transition-colors hover:text-foreground">
           Local folder
@@ -318,7 +437,11 @@ export function ProjectStep({ workspacesDir, workspaces, selectedWorkspaceId, bu
   const [view, setView] = useState<View>(null);
   const [moreWaysOpen, setMoreWaysOpen] = useState(false);
   const [githubStatus, setGithubStatus] = useState<"loading" | "connected" | "not_connected">("loading");
+  const [ghCli, setGhCli] = useState<{ available: boolean; login?: string } | null>(null);
+  const [oauthConfigured, setOauthConfigured] = useState(true);
   const [connecting, setConnecting] = useState(false);
+  const [ghConnecting, setGhConnecting] = useState(false);
+  const [connectError, setConnectError] = useState("");
   const connectGuardRef = useRef(false);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const selectGuardRef = useRef(false);
@@ -328,8 +451,16 @@ export function ProjectStep({ workspacesDir, workspaces, selectedWorkspaceId, bu
     (async () => {
       try {
         const res = await fetchWithNamespace("/api/integrations/github/connection");
-        const data = (await res.json().catch(() => ({}))) as { status?: string };
-        if (!cancelled) setGithubStatus(data.status === "connected" ? "connected" : "not_connected");
+        const data = (await res.json().catch(() => ({}))) as {
+          status?: string;
+          ghCli?: { available: boolean; login?: string };
+          oauthConfigured?: boolean;
+        };
+        if (!cancelled) {
+          setGithubStatus(data.status === "connected" ? "connected" : "not_connected");
+          setGhCli(data.ghCli ?? null);
+          setOauthConfigured(data.oauthConfigured !== false);
+        }
       } catch {
         if (!cancelled) setGithubStatus("not_connected");
       }
@@ -366,6 +497,7 @@ export function ProjectStep({ workspacesDir, workspaces, selectedWorkspaceId, bu
     if (connectGuardRef.current) return;
     connectGuardRef.current = true;
     setConnecting(true);
+    setConnectError("");
     try {
       const res = await fetchWithNamespace("/api/integrations/github/connect", {
         method: "POST",
@@ -377,9 +509,37 @@ export function ProjectStep({ workspacesDir, workspaces, selectedWorkspaceId, bu
         window.location.href = data.authorizationUrl;
         return;
       }
+      setConnectError(getApiErrorMessage(data, "GitHub OAuth is unavailable"));
+    } catch {
+      setConnectError("GitHub OAuth is unavailable");
     } finally {
       connectGuardRef.current = false;
       setConnecting(false);
+    }
+  }, [fetchWithNamespace]);
+
+  const handleConnectGhCli = useCallback(async () => {
+    if (connectGuardRef.current) return;
+    connectGuardRef.current = true;
+    setGhConnecting(true);
+    setConnectError("");
+    try {
+      const res = await fetchWithNamespace("/api/integrations/github/connect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ method: "gh-cli", idempotencyKey: crypto.randomUUID(), setupVersion: CURRENT_SETUP_VERSION }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { connected?: boolean };
+      if (res.ok && data.connected) {
+        setGithubStatus("connected");
+        return;
+      }
+      setConnectError(getApiErrorMessage(data, "gh CLI sign-in is unavailable"));
+    } catch {
+      setConnectError("gh CLI sign-in is unavailable");
+    } finally {
+      connectGuardRef.current = false;
+      setGhConnecting(false);
     }
   }, [fetchWithNamespace]);
 
@@ -418,7 +578,12 @@ export function ProjectStep({ workspacesDir, workspaces, selectedWorkspaceId, bu
     return (
       <GithubConnectPrompt
         connecting={connecting}
+        ghConnecting={ghConnecting}
+        oauthConfigured={oauthConfigured}
+        ghCli={ghCli}
+        error={connectError}
         onConnect={handleConnectGithub}
+        onConnectGhCli={handleConnectGhCli}
         onQuickJump={setView}
         onBack={() => setView(null)}
       />
