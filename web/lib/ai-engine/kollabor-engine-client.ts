@@ -184,6 +184,8 @@ export function buildTurnContextPreamble(context?: KollaborTurnContext): string 
 
 // Accepted by POST /sessions. All fields optional; `{}` is valid.
 export interface CreateSessionRequest {
+  /** Optional client-supplied id used to reconcile an accepted/lost create response. */
+  session_id?: string;
   profile?: string;
   agent?: string;
   system_prompt?: string | null;
@@ -224,19 +226,25 @@ const LEGACY_SESSION_ID_KEY = "mentiko-kollabor-session-id";
 const LEGACY_SESSION_REQUIREMENTS_KEY = "mentiko-kollabor-session-requirements";
 const SESSION_ID_KEY = "mentiko-kollabor-session-id-v2";
 const SESSION_REQUIREMENTS_KEY = "mentiko-kollabor-session-requirements-v2";
+const SESSION_PENDING_CREATION_KEY = "mentiko-kollabor-session-pending-create-v1";
 const DEFAULT_STORAGE_SCOPE = "anonymous";
 
 let kollaborEngineStorageScope = DEFAULT_STORAGE_SCOPE;
+let engineStorageGeneration = 0;
 
 let cachedToken: { token: string; baseUrl: string } | null = null;
-let inflightTokenFetch: Promise<{ token: string; baseUrl: string }> | null =
-  null;
+let cachedTokenGeneration = -1;
+let inflightTokenFetch: {
+  generation: number;
+  promise: Promise<{ token: string; baseUrl: string }>;
+} | null = null;
 let inflightMentikoSetup: Promise<MentikoAgentInstallResult> | null = null;
 const inflightSessionBootstraps = new Map<string, Promise<SessionResult>>();
 
 /** Drop the cached token so the next fetchToken() re-fetches from the server. */
 export function clearTokenCache(): void {
   cachedToken = null;
+  cachedTokenGeneration = -1;
   inflightTokenFetch = null;
 }
 
@@ -256,6 +264,7 @@ export function setKollaborEngineStorageScope(scope?: string | null): void {
   const nextScope = normalizeStorageScope(scope);
   if (nextScope === kollaborEngineStorageScope) return;
   kollaborEngineStorageScope = nextScope;
+  engineStorageGeneration += 1;
   clearTokenCache();
 }
 
@@ -285,12 +294,41 @@ function combineSignals(
   };
 }
 
+function abortReason(signal: AbortSignal): unknown {
+  if (signal.reason !== undefined) return signal.reason;
+  return new Error("The operation was aborted");
+}
+
+/** Stop awaiting a request when its caller aborts, even if a fetch shim ignores the signal. */
+function awaitWithAbort<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(abortReason(signal));
+  return new Promise<T>((resolve, reject) => {
+    const cleanup = () => signal.removeEventListener("abort", onAbort);
+    const onAbort = () => {
+      cleanup();
+      reject(abortReason(signal));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    operation.then(
+      (value) => {
+        cleanup();
+        if (signal.aborted) reject(abortReason(signal));
+        else resolve(value);
+      },
+      (error: unknown) => {
+        cleanup();
+        reject(error);
+      },
+    );
+  });
+}
+
 async function authFetch(
   path: string,
   init: RequestInit & { signal?: AbortSignal } = {},
   timeoutMs = DEFAULT_TIMEOUT_MS,
 ): Promise<Response> {
-  const { baseUrl } = await fetchToken();
+  const requestGeneration = engineStorageGeneration;
   const { signal, cleanup } = combineSignals(init.signal, timeoutMs);
   const headers = new Headers(init.headers);
   // No Authorization header: all /api/kollabor/engine/* calls are same-origin
@@ -302,13 +340,25 @@ async function authFetch(
     headers.set("Content-Type", "application/json");
   }
   try {
-    const res = await fetch(`${baseUrl}${path}`, {
+    // Include token acquisition in the bounded/abortable operation. Otherwise
+    // cancellation can hang before the engine request is even constructed.
+    if (signal.aborted) throw abortReason(signal);
+    const { baseUrl } = await awaitWithAbort(fetchToken(), signal);
+    // Scope may change while token lookup is pending. Fence before dispatch so
+    // an old bootstrap cannot POST under credentials resolved for a newer scope.
+    if (requestGeneration !== engineStorageGeneration) {
+      throw new Error("Engine request superseded by storage-scope change");
+    }
+    const res = await awaitWithAbort(fetch(`${baseUrl}${path}`, {
       ...init,
       headers,
       signal,
-    });
+    }), signal);
     // auth failed — wipe cache so caller can retry with a fresh token
-    if (res.status === 401 || res.status === 403) {
+    if (
+      (res.status === 401 || res.status === 403) &&
+      requestGeneration === engineStorageGeneration
+    ) {
       clearTokenCache();
     }
     return res;
@@ -350,6 +400,51 @@ function requiredSessionSignature(opts: CreateSessionRequest): string | null {
     mcp_servers: [...(opts.mcp_servers ?? [])].sort(),
     mentiko_agent_fingerprint: fingerprint,
   });
+}
+
+function readPendingCreation(scope: string): { sessionId: string; signature: string | null } | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(scopedStorageKey(SESSION_PENDING_CREATION_KEY, scope));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { sessionId?: unknown; signature?: unknown };
+    if (typeof parsed.sessionId !== "string" || !parsed.sessionId) return null;
+    return {
+      sessionId: parsed.sessionId,
+      signature: typeof parsed.signature === "string" ? parsed.signature : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writePendingCreation(scope: string, sessionId: string, signature: string | null): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    window.localStorage.setItem(
+      scopedStorageKey(SESSION_PENDING_CREATION_KEY, scope),
+      JSON.stringify({ sessionId, signature }),
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function clearPendingCreation(scope: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(scopedStorageKey(SESSION_PENDING_CREATION_KEY, scope));
+  } catch {
+    // ignore storage failures; the next boot will reconcile the same id again
+  }
+}
+
+function newSessionId(): string {
+  const suffix = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID().replace(/-/g, "")
+    : `${Date.now()}${Math.random().toString(36).slice(2, 12)}`;
+  return `sess_${suffix.slice(0, 48)}`;
 }
 
 function sessionMatchesRequest(info: SessionInfo, opts: CreateSessionRequest): boolean {
@@ -396,31 +491,49 @@ export function clearKollaborEngineStoredSession(): void {
 
 /** Fetch the bearer token + baseUrl from /api/kollabor/token. Memoized. */
 export async function fetchToken(): Promise<{ token: string; baseUrl: string }> {
-  if (cachedToken) return cachedToken;
-  if (inflightTokenFetch) return inflightTokenFetch;
-  inflightTokenFetch = (async () => {
-    const res = await fetch("/api/kollabor/token", { cache: "no-store" });
-    if (!res.ok) {
-      let msg = `token fetch failed: ${res.status}`;
-      try {
-        const j = await res.json();
-        if (j?.error) msg = `token fetch failed: ${j.error}`;
-      } catch {
-        // ignore
+  const requestGeneration = engineStorageGeneration;
+  if (cachedToken && cachedTokenGeneration === requestGeneration) return cachedToken;
+  if (inflightTokenFetch?.generation === requestGeneration) return inflightTokenFetch.promise;
+  const promise = (async () => {
+    const { signal, cleanup } = combineSignals(undefined, DEFAULT_TIMEOUT_MS);
+    try {
+      const res = await awaitWithAbort(
+        fetch("/api/kollabor/token", { cache: "no-store", signal }),
+        signal,
+      );
+      if (!res.ok) {
+        let msg = `token fetch failed: ${res.status}`;
+        try {
+          const j = await awaitWithAbort(res.json(), signal);
+          if (j?.error) msg = `token fetch failed: ${j.error}`;
+        } catch {
+          // ignore
+        }
+        throw new Error(msg);
       }
-      inflightTokenFetch = null;
-      throw new Error(msg);
+      const json = (await awaitWithAbort(res.json(), signal)) as { token: string; baseUrl: string };
+      if (!json?.token || !json?.baseUrl) {
+        throw new Error("token response missing token/baseUrl");
+      }
+      if (requestGeneration === engineStorageGeneration) {
+        cachedToken = json;
+        cachedTokenGeneration = requestGeneration;
+      }
+      return json;
+    } finally {
+      cleanup();
     }
-    const json = (await res.json()) as { token: string; baseUrl: string };
-    if (!json?.token || !json?.baseUrl) {
-      inflightTokenFetch = null;
-      throw new Error("token response missing token/baseUrl");
-    }
-    cachedToken = json;
-    inflightTokenFetch = null;
-    return json;
   })();
-  return inflightTokenFetch;
+  inflightTokenFetch = { generation: requestGeneration, promise };
+  promise.then(
+    () => {
+      if (inflightTokenFetch?.promise === promise) inflightTokenFetch = null;
+    },
+    () => {
+      if (inflightTokenFetch?.promise === promise) inflightTokenFetch = null;
+    },
+  );
+  return promise;
 }
 
 /** List all sessions known to the engine. */
@@ -436,13 +549,17 @@ export async function createSession(
   opts: CreateSessionRequest = {},
   signal?: AbortSignal,
   ensureRuntime = true,
+  stableSessionId?: string,
 ): Promise<SessionInfo> {
   if (ensureRuntime) {
     await ensureMentikoRuntimeSetup();
   }
   const res = await authFetch("/sessions", {
     method: "POST",
-    body: JSON.stringify(opts ?? {}),
+    body: JSON.stringify({
+      ...(opts ?? {}),
+      ...(stableSessionId ? { session_id: stableSessionId } : {}),
+    }),
     signal,
   });
   await throwIfNotOk(res, "createSession");
@@ -554,8 +671,16 @@ async function getOrCreateSessionOnce(
   opts: CreateSessionRequest = {},
   signal?: AbortSignal,
   storageScope = kollaborEngineStorageScope,
+  storageGeneration = engineStorageGeneration,
 ): Promise<SessionResult> {
+  const isCurrentStorageOwner = () =>
+    storageScope === kollaborEngineStorageScope &&
+    storageGeneration === engineStorageGeneration;
+
   await ensureMentikoRuntimeSetup();
+  if (!isCurrentStorageOwner()) {
+    throw new Error("Engine session bootstrap superseded by storage-scope change");
+  }
   let existing: string | null = null;
   const requiredSignature = requiredSessionSignature(opts);
   if (typeof window !== "undefined") {
@@ -574,6 +699,9 @@ async function getOrCreateSessionOnce(
   }
   if (existing) {
     const info = await getSession(existing, signal);
+    if (!isCurrentStorageOwner()) {
+      throw new Error("Engine session bootstrap superseded by storage-scope change");
+    }
     if (info && sessionMatchesRequest(info, opts)) {
       // Refresh the session token so sessionStorage and subprocess env stay current.
       // Fire-and-forget: failure is non-fatal — bar reconnects via MCPBarClient on 401.
@@ -584,6 +712,9 @@ async function getOrCreateSessionOnce(
       const sessionToken = tokenRes?.ok
         ? (await tokenRes.json().catch(() => null))?.session_token as string | undefined
         : undefined;
+      if (!isCurrentStorageOwner()) {
+        throw new Error("Engine session bootstrap superseded by storage-scope change");
+      }
       // A failed refresh is a health problem, not a reason to throw away a
       // session that already matched. Reuse it — the bar re-auths on 401.
       // Abandoning here spawned a second daemon for a perfectly good session.
@@ -591,7 +722,53 @@ async function getOrCreateSessionOnce(
     }
     clearStoredSession(storageScope);
   }
-  const created = await createSession(opts, signal, false);
+  const pending = readPendingCreation(storageScope);
+  const pendingMatches = pending && pending.signature === requiredSignature ? pending : null;
+  const stableSessionId = pendingMatches?.sessionId ?? newSessionId();
+  // A previously read matching marker is already a durable reconciliation id.
+  // A new id must be persisted before the engine can accept a session create.
+  if (!pendingMatches && !writePendingCreation(storageScope, stableSessionId, requiredSignature)) {
+    throw new Error("Cannot create an engine session: pending creation marker could not be persisted");
+  }
+
+  let created: SessionInfo;
+  try {
+    created = await createSession(opts, signal, false, stableSessionId);
+  } catch (error) {
+    // The engine reserves the id during initialization: a retry can receive
+    // 409 while GET still returns 404. Reconcile this exact id; if it is not
+    // visible yet, keep the durable marker so a later bootstrap retries it
+    // instead of generating a second daemon id.
+    if (!isCurrentStorageOwner()) {
+      throw new Error("Engine session bootstrap superseded by storage-scope change");
+    }
+    const reconciled = await getSession(stableSessionId).catch(() => null);
+    if (!isCurrentStorageOwner()) {
+      throw new Error("Engine session bootstrap superseded by storage-scope change");
+    }
+    if (reconciled && sessionMatchesRequest(reconciled, opts)) {
+      try {
+        window.localStorage.setItem(
+          scopedStorageKey(SESSION_ID_KEY, storageScope),
+          reconciled.session_id,
+        );
+        if (requiredSignature) {
+          window.localStorage.setItem(
+            scopedStorageKey(SESSION_REQUIREMENTS_KEY, storageScope),
+            requiredSignature,
+          );
+        }
+        clearPendingCreation(storageScope);
+      } catch {
+        // Preserve the returned inert session even when storage is read-only.
+      }
+      return { sessionId: reconciled.session_id };
+    }
+    throw error;
+  }
+  if (!isCurrentStorageOwner()) {
+    throw new Error("Engine session bootstrap superseded by storage-scope change");
+  }
   if (typeof window !== "undefined") {
     try {
       window.localStorage.setItem(
@@ -608,8 +785,11 @@ async function getOrCreateSessionOnce(
           scopedStorageKey(SESSION_REQUIREMENTS_KEY, storageScope),
         );
       }
+      clearPendingCreation(storageScope);
     } catch {
-      // ignore
+      // Creation was already accepted. Keep this result usable in the current
+      // caller; the durable pending marker remains available for reconciliation
+      // if these later session-record writes did not complete.
     }
   }
   return {
@@ -622,26 +802,42 @@ async function getOrCreateSessionOnce(
  * Return the persisted session id if still alive, otherwise create a new one.
  * Concurrent floating-bar boots for the same storage scope and requirements
  * join one bootstrap so a React effect restart cannot spawn duplicate daemons.
- * A caller-owned abort signal stays independent and therefore bypasses sharing.
+ * A caller-owned abort signal only stops that caller waiting; the shared
+ * bootstrap remains alive for other current callers. Storage generations fence
+ * stale scope owners from persisting or receiving the result.
  */
 export function getOrCreateSession(
   opts: CreateSessionRequest = {},
   signal?: AbortSignal,
 ): Promise<SessionResult> {
-  if (signal) return getOrCreateSessionOnce(opts, signal);
-
   const storageScope = kollaborEngineStorageScope;
-  const bootstrapKey = `${storageScope}:${requiredSessionSignature(opts) ?? "default"}`;
+  const storageGeneration = engineStorageGeneration;
+  const bootstrapKey = `${storageScope}:${storageGeneration}:${requiredSessionSignature(opts) ?? "default"}`;
   const inflight = inflightSessionBootstraps.get(bootstrapKey);
   if (inflight) return inflight;
 
-  const bootstrap = getOrCreateSessionOnce(opts, undefined, storageScope).finally(() => {
+  const bootstrap = getOrCreateSessionOnce(
+    opts,
+    undefined,
+    storageScope,
+    storageGeneration,
+  ).finally(() => {
     if (inflightSessionBootstraps.get(bootstrapKey) === bootstrap) {
       inflightSessionBootstraps.delete(bootstrapKey);
     }
   });
   inflightSessionBootstraps.set(bootstrapKey, bootstrap);
-  return bootstrap;
+  if (!signal) return bootstrap;
+  return raceWithAbort(bootstrap, signal);
+}
+
+function raceWithAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(signal.reason ?? new Error("aborted"));
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason ?? new Error("aborted"));
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+  });
 }
 
 /**
@@ -822,16 +1018,70 @@ export async function* sendMessage(
   }
 }
 
-/** Cancel the current turn on a session. The operation is idempotent. */
+export interface CancellationAcknowledgement {
+  accepted: boolean;
+  authoritativeTerminal: boolean;
+  turnScoped: boolean;
+  idempotentFence: boolean;
+}
+
+/** Stable identities required to verify that a cancellation targets one turn. */
+export interface CancellationRequestIdentity {
+  turnId: string;
+  cancelRequestId: string;
+}
+
+/**
+ * Cancel the current turn on a session. The current engine accepts a bodyless
+ * request, schedules cancellation fire-and-forget, and immediately returns a
+ * receipt only. Callers must not treat that response as terminal evidence.
+ */
 export async function cancelTurn(
   sessionId: string,
   signal?: AbortSignal,
-): Promise<void> {
-  const res = await authFetch(
-    `/sessions/${encodeURIComponent(sessionId)}/cancel`,
-    { method: "POST", signal },
-  );
-  await throwIfNotOk(res, "cancelTurn");
+  identity?: CancellationRequestIdentity,
+): Promise<CancellationAcknowledgement> {
+  const turnId = identity?.turnId.trim();
+  const cancelRequestId = identity?.cancelRequestId.trim();
+  if (identity && (!turnId || !cancelRequestId)) {
+    throw new Error("cancelTurn requires non-empty turn and cancellation request ids");
+  }
+  const { signal: cancelSignal, cleanup } = combineSignals(signal, 10_000);
+  try {
+    const expectedIdentity = turnId && cancelRequestId
+      ? { turn_id: turnId, cancel_request_id: cancelRequestId }
+      : null;
+    const res = await authFetch(
+      `/sessions/${encodeURIComponent(sessionId)}/cancel`,
+      {
+        method: "POST",
+        ...(expectedIdentity ? { body: JSON.stringify(expectedIdentity) } : {}),
+        signal: cancelSignal,
+      },
+      10_000,
+    );
+    await awaitWithAbort(throwIfNotOk(res, "cancelTurn"), cancelSignal);
+    const body = await awaitWithAbort(
+      res.json().catch(() => ({})),
+      cancelSignal,
+    ) as Record<string, unknown>;
+    const turnScoped = Boolean(turnId) && body.turn_id === turnId;
+    const idempotentFence = Boolean(cancelRequestId) &&
+      body.cancel_request_id === cancelRequestId;
+    // HTTP/JSON receipt is not accepted cancellation evidence unless the
+    // response is bound to the exact stable identities supplied in the request.
+    const accepted = body.ok === true && turnScoped && idempotentFence;
+    return {
+      accepted,
+      authoritativeTerminal: accepted &&
+        body.turn_terminal === true &&
+        body.tools_terminal === true,
+      turnScoped,
+      idempotentFence,
+    };
+  } finally {
+    cleanup();
+  }
 }
 
 /**

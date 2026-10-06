@@ -190,6 +190,8 @@ Build-time variables baked into the client bundle.
 | `NEXT_PUBLIC_BASE_URL` | `https://mentiko.com` | No | App base URL for metadata and SEO |
 | `NEXT_PUBLIC_API_URL` | `http://localhost:3200` | No | API base URL |
 | `NEXT_PUBLIC_APP_URL` | `http://localhost:3200` | No | App URL for notification links |
+| `NEXT_PUBLIC_KOLLABOR_BAR` | unset/enabled | No | Deployment master switch for the Mentiko floating bar. Exact `0` disables the bar, UI-control grant surface, and dashboard opener; a user's saved setting is retained and applies again if the deployment enables it. |
+| `NEXT_PUBLIC_KOLLABOR_BAR_WIDTH` | `373` | No | Default floating-bar width in CSS pixels on wider viewports. Accepts integers from `240` to `720`; an authenticated settings override takes precedence within its preference scope; smaller viewports clamp to `100vw - 2rem`. |
 | `NEXT_PUBLIC_WS_TERMINAL_PORT` | `3099` | No | WebSocket terminal port (client) |
 | `NEXT_PUBLIC_MANAGED` | - | No | `true` to enable SaaS billing UI |
 | `NEXT_PUBLIC_MOCK_OAUTH` | - | No | `true` for mock OAuth (test) |

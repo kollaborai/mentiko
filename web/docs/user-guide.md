@@ -13,6 +13,64 @@ On a fresh self-hosted install, start at `/signup` to create the first local acc
 
 ![Login Screen](./images/login.png)
 
+### Floating bar setting
+
+The Mentiko assistant bar can be enabled or hidden from **Settings -> Mentiko Agent**.
+This control is authenticated-only. The saved preference is kept in the browser
+under the active install-and-user scope, so anonymous runtime state and two
+authenticated users do not inherit each other's enabled, YOLO, or first-run
+choice values. A missing enabled key defaults to on; unreadable or malformed
+storage fails closed and shows a Retry action.
+
+YOLO mode is on by default in a scope with no saved YOLO preference. It lets
+the assistant run tools without asking for approval each time. A new scope skips
+the first-message mode-choice prompt; turn YOLO off here if you want approval
+before each tool run. That explicit opt-out is saved in the active scope and
+stays off after reload. A different authenticated scope does not inherit it.
+
+The deployment setting `NEXT_PUBLIC_KOLLABOR_BAR=0` remains authoritative. When
+it is off, the settings card stays visible but the switch is disabled and says
+that the deployment has disabled the bar; the saved preference is retained for
+when the deployment enables it again. The dashboard opener and UI-control grant
+surface are unavailable while either the deployment or user setting is off.
+
+You can adjust the wide-screen bar width in the same settings page. The value
+is saved under the active preference scope, accepts `240` through `720` CSS
+pixels, and remains responsive on narrow viewports by clamping to
+`100vw - 2rem`. Deployment operators can seed the default with
+`NEXT_PUBLIC_KOLLABOR_BAR_WIDTH`; a saved user value takes precedence.
+
+The **Chat backdrop and shape** card groups its controls into **Backdrop** and
+**Chat surface** accordions, both collapsed by default. Expand **Backdrop** to
+control visibility, blur, dimness, horizontal and vertical reach, and edge
+softness. Expand **Chat surface** to tune transcript height, corner radius, and
+shadow strength. These values are scoped like the enablement preference and
+apply live. Turning the backdrop off is useful when the page behind the chat
+must remain fully readable.
+
+The same card includes three appearance presets: **Minimal** keeps the page
+clear with a light chat surface, **Balanced** restores the default look, and
+**Focused** increases the backdrop and gives the transcript more room. Presets
+change appearance only; floating-bar width remains an independent setting.
+
+Hiding the bar stops local streaming, prompts, MCP effects, reconnect timers,
+and new engine work. It does not delete the transcript or stored session id.
+Existing external UI-control grants are suspended locally, not revoked; an
+unexpired grant may resume when the same session is re-enabled. A pending or
+unconfirmed stop keeps session reuse blocked and can prevent the bar from
+restarting. The setting offers **Retry stopping** only when it has a safe retry
+path; an unidentified in-flight session cannot be resolved safely from the
+browser, so it remains blocked until its state can be confirmed. Closing the
+browser or logging out while offline cannot guarantee delivery of a stop
+request.
+
+Settings opened inside an embedded panel synchronizes through the top-level
+document and waits for an acknowledgement. A standalone `?surface=panel`
+document mounts no bar runtime. Separate browser tabs are intentionally
+refresh-consistent rather than live-synchronized; refresh loads the current
+stored preference. Cancellation may still affect another tab sharing the same
+engine session.
+
 ---
 
 ## Dashboard

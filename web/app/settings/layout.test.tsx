@@ -2,9 +2,10 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import SettingsLayout from "./layout";
 
 const push = jest.fn();
+let pathname = "/settings";
 
 jest.mock("next/navigation", () => ({
-  usePathname: () => "/settings",
+  usePathname: () => pathname,
   useRouter: () => ({ push }),
 }));
 
@@ -56,6 +57,7 @@ jest.mock("@aliimam/icons", () => {
 describe("SettingsLayout", () => {
   beforeEach(() => {
     push.mockReset();
+    pathname = "/settings";
     window.history.pushState({}, "", "/settings");
   });
 
@@ -81,6 +83,25 @@ describe("SettingsLayout", () => {
     const sidebar = screen.getByTestId("settings-sidebar-nav");
 
     expect(within(sidebar).getByRole("button", { name: /decisions/i })).toBeInTheDocument();
+  });
+
+  it("highlights the most specific item for a nested settings route", () => {
+    pathname = "/settings/mentiko-agent";
+
+    render(
+      <SettingsLayout>
+        <div>settings content</div>
+      </SettingsLayout>,
+    );
+
+    const sidebar = screen.getByTestId("settings-sidebar-nav");
+    const overview = within(sidebar).getByRole("button", { name: "Overview" });
+    const mentikoAgent = within(sidebar).getByRole("button", { name: "Mentiko Agent" });
+
+    expect(mentikoAgent).toHaveAttribute("aria-current", "page");
+    expect(mentikoAgent).toHaveClass("bg-foreground/10");
+    expect(overview).not.toHaveAttribute("aria-current", "page");
+    expect(overview).not.toHaveClass("bg-foreground/10");
   });
 
   it("preserves panel surface when settings sidebar uses client routing", () => {

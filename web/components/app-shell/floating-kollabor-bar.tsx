@@ -1,19 +1,22 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
 import {
   useKollaborBarStore,
-  setKollaborBarStorageScope,
   KollaborMessage,
   KollaborAskRequest,
   DraftTool,
+  BAR_SHUTDOWN_ERROR,
   SCALE_MIN,
   SCALE_MAX,
   KOLLABOR_BAR_DEFAULT_DOCK,
   getKollaborBarDockForPoint,
   type KollaborBarDock,
+  clearPendingShutdownMarker,
+  readPendingShutdownMarker,
+  writePendingShutdownMarker,
 } from "@/lib/ui/kollabor-bar-store";
 import { useWorkspace } from "@/lib/ui-context/workspace-context";
 import { usePillNavPreferences, getPillNavShineGradient } from "@/lib/ui/pill-nav-preferences";
@@ -24,9 +27,7 @@ import {
   sendMessage as engineSendMessage,
   respondToPermission as engineRespondToPermission,
   ping as enginePing,
-  cancelTurn as engineCancelTurn,
   clearSessionHistory as engineClearSessionHistory,
-  setKollaborEngineStorageScope,
   clearKollaborEngineStoredSession,
   type KollaborTurnContext,
   type CreateSessionRequest,
@@ -43,7 +44,6 @@ import { WaveSpinner } from "@/components/ui/wave-spinner";
 import {
   MCPBarClient,
   getStoredSessionToken,
-  setMcpBarStorageScope,
   syncSessionToken,
   replyToTool,
 } from "@/lib/ai-engine/mentiko-mcp-bar-client";
@@ -63,33 +63,15 @@ import {
 } from "@/lib/ui/floating-app-panel-routing";
 import { useUser } from "@/lib/ui-context/user-context";
 import { CODEX_INLINE_AUTH_MODEL } from "@/lib/agents/agent-provider-catalog";
+import { getFloatingBarAvailability, useFloatingBarAvailability } from "@/lib/ui/floating-bar-availability";
+import {
+  registerFloatingBarRuntime,
+  stopFloatingBarRuntime,
+} from "@/lib/ui/floating-bar-lifecycle";
+import { useFloatingBarStorageScope } from "@/components/app-shell/floating-bar-storage-scope";
 
 function randomId(): string {
   return Math.random().toString(36).slice(2, 10);
-}
-
-const ANONYMOUS_STORAGE_SCOPE_KEY = "mentiko-anonymous-storage-scope-v1";
-
-function getAnonymousStorageScope(): string {
-  if (typeof window === "undefined") return "anonymous";
-  try {
-    let scope = window.sessionStorage.getItem(ANONYMOUS_STORAGE_SCOPE_KEY);
-    if (!scope) {
-      scope = typeof window.crypto?.randomUUID === "function"
-        ? window.crypto.randomUUID()
-        : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-      window.sessionStorage.setItem(ANONYMOUS_STORAGE_SCOPE_KEY, scope);
-    }
-    return `anonymous:${scope}`;
-  } catch {
-    return "anonymous";
-  }
-}
-
-function applyFloatingBarStorageScope(scope: string): void {
-  setKollaborBarStorageScope(scope);
-  setKollaborEngineStorageScope(scope);
-  setMcpBarStorageScope(scope);
 }
 
 /**
@@ -283,9 +265,13 @@ function clampFreeBarCenter(
   };
 }
 
-function clampFreeBarOffsetX(offsetX: number, scale: number): number {
+function clampFreeBarOffsetX(
+  offsetX: number,
+  scale: number,
+  configuredWidth: number,
+): number {
   if (typeof window === "undefined") return offsetX;
-  const barWidth = Math.min(373, window.innerWidth - 32) * scale;
+  const barWidth = Math.min(configuredWidth, window.innerWidth - 32) * scale;
   const maxOffset = Math.max(
     0,
     window.innerWidth / 2 - FREE_BAR_VIEWPORT_MARGIN - barWidth / 2,
@@ -326,6 +312,25 @@ function sideDockBottomCss(offset: number, scale: number): string {
   return `max(${FREE_BAR_VIEWPORT_MARGIN}px, calc(${100 - offset}vh - ${px(24 * scale)}))`;
 }
 
+function kollaborSurfaceShadow(strength: number): string {
+  if (strength <= 0) return "none";
+  const blur = Math.max(2, Math.round(strength));
+  const spread = Math.round(strength / 5);
+  return `0 ${Math.round(strength * 0.55)}px ${blur}px -${spread}px rgba(0, 0, 0, 0.34), 0 3px ${Math.max(3, Math.round(strength * 0.55))}px -${Math.round(spread / 2)}px rgba(0, 0, 0, 0.2)`;
+}
+
+function kollaborBackdropMask(
+  appearance: {
+    backdropWidth: number;
+    backdropHeight: number;
+    backdropSoftness: number;
+  },
+  anchor: { x: string; y: string },
+): string {
+  const midStop = Math.max(35, Math.round(appearance.backdropSoftness * 0.72));
+  return `radial-gradient(ellipse ${appearance.backdropWidth}px ${appearance.backdropHeight}px at ${anchor.x} ${anchor.y}, rgba(0,0,0,1) 0%, rgba(0,0,0,0.95) 35%, rgba(0,0,0,0.6) ${midStop}%, transparent ${appearance.backdropSoftness}%)`;
+}
+
 export function FloatingKollaborBar() {
   const router = useRouter();
   const pathname = usePathname();
@@ -335,6 +340,9 @@ export function FloatingKollaborBar() {
   // missing list as empty so new-user signal derivation never throws.
   const workspacesCount = workspaces?.length ?? 0;
   const { user, loading: userLoading } = useUser();
+  const { storageScopeReady } = useFloatingBarStorageScope();
+  const availability = useFloatingBarAvailability();
+  const runtimeMayStart = availability.runtimeMayStart;
   const {
     expanded,
     inputValue,
@@ -345,6 +353,11 @@ export function FloatingKollaborBar() {
     messages,
     drafting,
     sessionId,
+    sessionScope,
+    storageScope,
+    generation,
+    barWidth,
+    appearance,
     setExpanded,
     setInputValue,
     setConnected,
@@ -383,6 +396,45 @@ export function FloatingKollaborBar() {
   // message stashed while the first-run mode choice is pending
   const pendingFirstMessageRef = useRef<string | null>(null);
   const bootRef = useRef<(() => Promise<void>) | null>(null);
+  const pendingBootOwnersRef = useRef<Set<object>>(new Set());
+  const runtimeGenerationRef = useRef(0);
+  const pingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const currentPageAbortRef = useRef<AbortController | null>(null);
+  const runtimeAllowedRef = useRef(runtimeMayStart);
+  runtimeAllowedRef.current = runtimeMayStart;
+  const wasRuntimeAllowedRef = useRef(runtimeMayStart);
+  const renderedRuntimeGeneration = runtimeGenerationRef.current;
+  const renderedRuntimeIdentity = useMemo(() => ({
+    scope: storageScope,
+    storeGeneration: generation,
+    runtimeGeneration: renderedRuntimeGeneration,
+    sessionId,
+    sessionScope,
+  }), [generation, renderedRuntimeGeneration, sessionId, sessionScope, storageScope]);
+  const isRuntimeIdentityCurrent = useCallback((
+    identity: typeof renderedRuntimeIdentity,
+    includeSession = false,
+  ) => {
+    const current = useKollaborBarStore.getState();
+    return Boolean(
+      runtimeAllowedRef.current &&
+      getFloatingBarAvailability(current).runtimeMayStart &&
+      runtimeGenerationRef.current === identity.runtimeGeneration &&
+      current.storageScope === identity.scope &&
+      current.generation === identity.storeGeneration &&
+      (!includeSession || (
+        current.sessionId === identity.sessionId &&
+        current.sessionScope === identity.sessionScope
+      )),
+    );
+  }, []);
+
+  useLayoutEffect(() => {
+    if (wasRuntimeAllowedRef.current && !runtimeMayStart) {
+      runtimeGenerationRef.current += 1;
+    }
+    wasRuntimeAllowedRef.current = runtimeMayStart;
+  }, [runtimeMayStart]);
   const sessionRequestRef = useRef<CreateSessionRequest | null>(null);
   const routerRef = useRef(router);
   const mcpClientRef = useRef<MCPBarClient | null>(null);
@@ -416,6 +468,7 @@ export function FloatingKollaborBar() {
   const [codexAuthDecision, setCodexAuthDecision] = useState<null | "accept" | "decline">(null);
   const [codexToken, setCodexToken] = useState<string | null>(null);
   const [codexTokenLoading, setCodexTokenLoading] = useState(true);
+  const [runtimeBootstrapEpoch, setRuntimeBootstrapEpoch] = useState(0);
   // lane B3: when the tenant has MENTIKO_AI_GATEWAY_ENABLED=true, the engine
   // already has a working "mentiko" profile (wired by lane B2). skip the
   // codex token prompt + credentials entirely in that mode.
@@ -428,58 +481,58 @@ export function FloatingKollaborBar() {
   const codexFlowActive = gatewayLoaded && !gatewayMode && SHOULD_OFFER_CODEX_INLINE_AUTH;
   // delay reading persisted offset/scale until after mount so SSR output matches first client render
   const [mounted, setMounted] = useState(false);
-  const [storageScopeReady, setStorageScopeReady] = useState(false);
   useEffect(() => {
     setMounted(true);
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    if (userLoading) {
-      setStorageScopeReady(false);
-      return () => {
-        cancelled = true;
-      };
-    }
-
-    setStorageScopeReady(false);
-
-    if (!user?.id) {
-      applyFloatingBarStorageScope(getAnonymousStorageScope());
-      setStorageScopeReady(true);
-      return () => {
-        cancelled = true;
-      };
-    }
-
-    void (async () => {
-      let installScope: string | null = null;
-      try {
-        const res = await fetch("/api/system/storage-scope", { cache: "no-store" });
-        if (res.ok) {
-          const data = unwrapApiData<{ storageScope?: unknown }>(await res.json());
-          if (typeof data.storageScope === "string" && data.storageScope.trim()) {
-            installScope = data.storageScope.trim();
-          }
-        }
-      } catch {
-        // Keep the bar usable even if the scope endpoint is temporarily down.
-      }
-      if (cancelled) return;
-      const safeInstallScope =
-        installScope ?? getAnonymousStorageScope().replace(/^anonymous:/, "install:unavailable:");
-      applyFloatingBarStorageScope(`${safeInstallScope}:user:${user.id}`);
-      setStorageScopeReady(true);
-    })();
-
+    const unregister = registerFloatingBarRuntime({
+      mayHaveActiveTurn: () => Boolean(
+        sendingRef.current || pendingBootOwnersRef.current.size > 0 || abortControllerRef.current,
+      ),
+      invalidateLocal: () => {
+        runtimeGenerationRef.current += 1;
+        // The shutdown helper samples mayHaveActiveTurn before calling this.
+        // Once sampled, pending creates are locally invalidated; their remote
+        // outcome remains represented by the helper's fail-closed marker.
+        pendingBootOwnersRef.current.clear();
+        abortControllerRef.current?.abort();
+        abortControllerRef.current = null;
+        currentPageAbortRef.current?.abort();
+        currentPageAbortRef.current = null;
+        if (pingTimerRef.current) clearInterval(pingTimerRef.current);
+        pingTimerRef.current = null;
+        mcpClientRef.current?.disconnect();
+        mcpClientRef.current = null;
+        sendingRef.current = false;
+        pendingFirstMessageRef.current = null;
+        pendingToolInstancesRef.current.clear();
+        useKollaborBarStore.getState().cancelPendingPrompts();
+        useKollaborBarStore.getState().invalidateGeneration();
+        setConnected(false);
+        setConnecting(false);
+        setEngineReady(false);
+        setEngineError(null);
+      },
+    });
     return () => {
-      cancelled = true;
+      const state = useKollaborBarStore.getState();
+      void stopFloatingBarRuntime({
+        scope: state.storageScope,
+        sessionId: state.sessionId,
+        generation: state.generation,
+      });
+      unregister();
     };
-  }, [user?.id, userLoading]);
+  }, [setConnected, setConnecting, setEngineError, setEngineReady]);
 
   // lane B3: ask the server if MENTIKO_AI_GATEWAY_ENABLED is set. boot() waits
   // on this so we don't flash the codex prompt before knowing the mode.
   useEffect(() => {
+    if (!runtimeMayStart) {
+      setGatewayState(null);
+      return;
+    }
     let cancelled = false;
     void (async () => {
       try {
@@ -504,14 +557,18 @@ export function FloatingKollaborBar() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [runtimeMayStart]);
 
   // Keep routerRef current so handleEffect stays stable across navigations
   useEffect(() => { routerRef.current = router; }, [router]);
 
   // MCP Effect Handling — stable callback (no router in deps, uses ref instead)
   const handleEffect = useCallback(
-    (effect: UIEffect) => {
+    (
+      effect: UIEffect,
+      runtimeGuard?: { scope: string; isCurrent: () => boolean },
+    ) => {
+      if (!runtimeAllowedRef.current || (runtimeGuard && !runtimeGuard.isCurrent())) return;
       const { kind, payload } = effect;
 
       switch (kind) {
@@ -608,7 +665,7 @@ export function FloatingKollaborBar() {
             /^allow .+\?/.test(askPrompt) &&
             useKollaborBarStore.getState().yoloMode
           ) {
-            void replyToTool(askToolId, "approve").catch(() => {});
+            void replyToTool(askToolId, "approve", runtimeGuard).catch(() => {});
             break;
           }
           pushAskRequest({
@@ -708,7 +765,10 @@ export function FloatingKollaborBar() {
   );
 
   const effScale = mounted ? scale : 1;
-  const effOffsetX = mounted ? clampFreeBarOffsetX(offsetX, effScale) : 0;
+  const configuredBarWidth = barWidth;
+  const effOffsetX = mounted
+    ? clampFreeBarOffsetX(offsetX, effScale, configuredBarWidth)
+    : 0;
   const effOffsetY = mounted ? offsetY : 0;
   const effDock = mounted ? dock : KOLLABOR_BAR_DEFAULT_DOCK;
   const gripRef = useRef<HTMLButtonElement | null>(null);
@@ -717,6 +777,7 @@ export function FloatingKollaborBar() {
 
   const onDragStart = useCallback(
     (e: React.PointerEvent) => {
+      if (!runtimeAllowedRef.current) return;
       e.preventDefault();
       try {
         e.currentTarget.setPointerCapture(e.pointerId);
@@ -733,7 +794,7 @@ export function FloatingKollaborBar() {
         y: e.clientY,
         left,
         top,
-        width: barRect?.width ?? 373,
+        width: barRect?.width ?? configuredBarWidth,
         height: barRect?.height ?? 48,
         pillHeight: pillRect?.height ?? 48,
       };
@@ -746,11 +807,12 @@ export function FloatingKollaborBar() {
       setDragPosition(dragPositionRef.current);
       setDragging(true);
     },
-    [],
+    [configuredBarWidth],
   );
 
   const updateDragPosition = useCallback(
     (clientX: number, clientY: number) => {
+      if (!runtimeAllowedRef.current) return;
       if (!dragStartRef.current) return;
       const dx = clientX - dragStartRef.current.x;
       const dy = clientY - dragStartRef.current.y;
@@ -767,6 +829,13 @@ export function FloatingKollaborBar() {
   );
 
   const onDragEnd = useCallback(() => {
+    if (!runtimeAllowedRef.current) {
+      dragStartRef.current = null;
+      dragPositionRef.current = null;
+      setDragPosition(null);
+      setDragging(false);
+      return;
+    }
     const endPosition = dragPositionRef.current;
     const start = dragStartRef.current;
     if (endPosition && start) {
@@ -804,6 +873,7 @@ export function FloatingKollaborBar() {
   }, [setDock, setOffset]);
 
   useEffect(() => {
+    if (!runtimeMayStart) return;
     if (!dragging) return;
     const handlePointerMove = (e: PointerEvent) => {
       updateDragPosition(e.clientX, e.clientY);
@@ -819,10 +889,11 @@ export function FloatingKollaborBar() {
       window.removeEventListener("pointerup", handlePointerEnd);
       window.removeEventListener("pointercancel", handlePointerEnd);
     };
-  }, [dragging, onDragEnd, updateDragPosition]);
+  }, [dragging, onDragEnd, runtimeMayStart, updateDragPosition]);
 
   // scroll-wheel over the pill or drag grip to resize (hover + scroll = zoom)
   useEffect(() => {
+    if (!runtimeMayStart) return;
     const pill = pillRef.current;
     const grip = gripRef.current;
     const targets = Array.from(new Set([pill, grip].filter(Boolean))) as HTMLElement[];
@@ -857,10 +928,11 @@ export function FloatingKollaborBar() {
       }
       if (rafId !== null) cancelAnimationFrame(rafId);
     };
-  }, [setScale]);
+  }, [runtimeMayStart, setScale]);
 
   const handleGripWheel = useCallback(
     (e: React.WheelEvent<HTMLButtonElement>) => {
+      if (!runtimeAllowedRef.current) return;
       e.preventDefault();
       e.stopPropagation();
       const current = useKollaborBarStore.getState().scale;
@@ -889,6 +961,13 @@ export function FloatingKollaborBar() {
   }
 
   useEffect(() => {
+    if (!runtimeMayStart) {
+      setCodexToken(null);
+      setCodexTokenLoading(false);
+      setCodexAuthChecked(false);
+      setCodexAuthPromptOpen(false);
+      return;
+    }
     // wait until the ai-gateway probe resolves so we don't flash the prompt
     if (!gatewayLoaded) return;
 
@@ -938,9 +1017,10 @@ export function FloatingKollaborBar() {
     return () => {
       cancelled = true;
     };
-  }, [gatewayLoaded, codexFlowActive]);
+  }, [codexFlowActive, gatewayLoaded, runtimeMayStart]);
 
   const handleCodexAuthDecision = useCallback((decision: "accept" | "decline") => {
+    if (!runtimeAllowedRef.current) return;
     setCodexAuthDecision(decision);
     persistCodexChoice(decision);
     setCodexAuthPromptOpen(false);
@@ -952,10 +1032,36 @@ export function FloatingKollaborBar() {
   // engine session bootstrap + health pings
   useEffect(() => {
     let cancelled = false;
-    let pingTimer: ReturnType<typeof setInterval> | null = null;
     let booting = false;
+    const effectState = useKollaborBarStore.getState();
+    const effectIdentity = {
+      scope: effectState.storageScope,
+      storeGeneration: effectState.generation,
+      runtimeGeneration: runtimeGenerationRef.current,
+      sessionId: effectState.sessionId,
+      sessionScope: effectState.sessionScope,
+    };
+    const isCurrent = () => !cancelled && isRuntimeIdentityCurrent(effectIdentity);
+
+    if (!runtimeMayStart) {
+      setConnecting(false);
+      setConnected(false);
+      return () => { cancelled = true; };
+    }
 
     function connectMcpClient() {
+      if (!isCurrent()) return;
+      const clientState = useKollaborBarStore.getState();
+      const clientIdentity = {
+        scope: clientState.storageScope,
+        storeGeneration: clientState.generation,
+        runtimeGeneration: runtimeGenerationRef.current,
+        sessionId: clientState.sessionId,
+        sessionScope: clientState.sessionScope,
+      };
+      const isClientCurrent = () =>
+        !cancelled && isRuntimeIdentityCurrent(clientIdentity, true);
+      if (!isClientCurrent()) return;
       // Disconnect any existing client before opening a new one.
       // The async boot() race previously created a second SSE stream that
       // was never cleaned up, leaking connections until Chrome's 6-per-origin
@@ -964,20 +1070,26 @@ export function FloatingKollaborBar() {
         mcpClientRef.current.disconnect();
         mcpClientRef.current = null;
       }
-      const client = new MCPBarClient(handleEffect);
+      const client = new MCPBarClient((effect) => {
+        if (isClientCurrent()) {
+          handleEffect(effect, { scope: clientIdentity.scope, isCurrent: isClientCurrent });
+        }
+      });
       mcpClientRef.current = client;
       client.connect();
     }
 
     async function boot() {
-      if (booting) return;
+      if (booting || !isCurrent()) return;
       booting = true;
+      const bootOwner = {};
+      pendingBootOwnersRef.current.add(bootOwner);
       bootRef.current = boot;
       setConnecting(true);
       setError(null);
       setEngineError(null);
       try {
-        if (userLoading || !storageScopeReady) {
+        if (userLoading || !storageScopeReady || !isCurrent()) {
           setConnecting(false);
           setConnected(false);
           return;
@@ -990,7 +1102,9 @@ export function FloatingKollaborBar() {
           return;
         }
         const setup = await ensureMentikoAgentInstalled();
+        if (!isCurrent()) return;
         const reachable = await enginePing();
+        if (!isCurrent()) return;
         if (!codexAuthChecked || codexTokenLoading) {
           setConnecting(false);
           setConnected(false);
@@ -1005,7 +1119,7 @@ export function FloatingKollaborBar() {
           setConnected(false);
           return;
         }
-        if (cancelled) return;
+        if (!isCurrent()) return;
         setEngineReady(reachable);
         if (!reachable) {
           // capture connected BEFORE flipping it — otherwise the gate is a no-op
@@ -1026,6 +1140,7 @@ export function FloatingKollaborBar() {
               .then((r) => (r.ok ? r.json() : null))
               .then((j) => (typeof j?.active === "string" && j.active ? j.active : "mentiko"))
               .catch(() => "mentiko");
+        if (!isCurrent()) return;
 
         const sessionRequest: Parameters<typeof getOrCreateSession>[0] = {
           profile: activeProfile,
@@ -1049,8 +1164,12 @@ export function FloatingKollaborBar() {
         }
 
         sessionRequestRef.current = sessionRequest;
+        // A session create can be accepted remotely before its promise settles.
+        // Bind the null-session runtime to this scope before entering the
+        // token/create path so shutdown can capture it and write `unknown`.
+        useKollaborBarStore.setState({ sessionScope: effectIdentity.scope });
         const { sessionId: sid, sessionToken } = await getOrCreateSession(sessionRequest);
-        if (cancelled) return;
+        if (!isCurrent()) return;
         // Keep SSE auth aligned with this engine session. If no fresh token
         // comes back, clear stale JWTs so the client uses this session id.
         syncSessionToken(sessionToken);
@@ -1061,7 +1180,7 @@ export function FloatingKollaborBar() {
         // Reconnect with the fresh session-scoped token
         connectMcpClient();
       } catch (e) {
-        if (cancelled) return;
+        if (!isCurrent()) return;
         const msg = e instanceof Error ? e.message : String(e);
         setConnecting(false);
         setConnected(false);
@@ -1069,15 +1188,17 @@ export function FloatingKollaborBar() {
         setEngineError(msg);
       } finally {
         booting = false;
+        pendingBootOwnersRef.current.delete(bootOwner);
       }
     }
 
     void boot();
 
-    pingTimer = setInterval(async () => {
+    pingTimerRef.current = setInterval(async () => {
+      if (!isCurrent()) return;
       try {
         const ok = await enginePing();
-        if (cancelled) return;
+        if (!isCurrent()) return;
         setEngineReady(ok);
         if (ok) {
           const state = useKollaborBarStore.getState();
@@ -1096,13 +1217,15 @@ export function FloatingKollaborBar() {
           }
         }
       } catch {
-        if (!cancelled) setEngineReady(false);
+        if (isCurrent()) setEngineReady(false);
       }
     }, 30000);
 
     return () => {
       cancelled = true;
-      if (pingTimer) clearInterval(pingTimer);
+      if (pingTimerRef.current) clearInterval(pingTimerRef.current);
+      pingTimerRef.current = null;
+      if (bootRef.current) bootRef.current = null;
       if (mcpClientRef.current) {
         mcpClientRef.current.disconnect();
         mcpClientRef.current = null;
@@ -1118,6 +1241,7 @@ export function FloatingKollaborBar() {
     gatewayLoaded,
     gatewayMode,
     handleEffect,
+    runtimeMayStart,
     setConnected,
     setConnecting,
     setEngineError,
@@ -1126,10 +1250,13 @@ export function FloatingKollaborBar() {
     setExpanded,
     setSessionId,
     storageScopeReady,
+    isRuntimeIdentityCurrent,
     userLoading,
+    runtimeBootstrapEpoch,
   ]);
 
   useEffect(() => {
+    if (!runtimeMayStart) return;
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape" && expanded) {
         setExpanded(false);
@@ -1137,31 +1264,45 @@ export function FloatingKollaborBar() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [expanded, setExpanded]);
+  }, [expanded, runtimeMayStart, setExpanded]);
 
   // Report the current URL to the MCP backend whenever it changes. Lets
   // koordinator call `get_current_page` and know where granny is looking
   // without reading the DOM.
   useEffect(() => {
+    if (!runtimeMayStart || !connected || !sessionId || !availability.activeSessionMatchesScope) return;
+    const generation = runtimeGenerationRef.current;
     const search = searchParams?.toString() || "";
     const title = typeof document !== "undefined" ? document.title : "";
     const token = getStoredSessionToken();
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (token) headers.Authorization = `Bearer ${token}`;
+    const controller = new AbortController();
+    currentPageAbortRef.current?.abort();
+    currentPageAbortRef.current = controller;
     void fetch("/api/mentiko-mcp/current-page", {
       method: "POST",
       credentials: "same-origin",
       headers,
+      signal: controller.signal,
       body: JSON.stringify({ pathname, search, label: title, sessionId }),
-    }).catch(() => {});
-  }, [pathname, searchParams, sessionId]);
+    }).catch(() => {}).finally(() => {
+      if (runtimeGenerationRef.current === generation && currentPageAbortRef.current === controller) {
+        currentPageAbortRef.current = null;
+      }
+    });
+    return () => controller.abort();
+  }, [availability.activeSessionMatchesScope, connected, pathname, runtimeMayStart, searchParams, sessionId]);
 
   // Recompute the proactive per-screen hint when the route or new-user signals
   // change. Show at most one hint, only for new users, only on screens that
   // have one, and never one the user already dismissed. Cleared (no chip) the
   // moment any guard fails — including once the user is no longer "new".
   useEffect(() => {
-    if (userLoading) return;
+    if (!runtimeMayStart || userLoading) {
+      setActiveHint(null);
+      return;
+    }
     const { isNewUser } = deriveNewUserSignals(user?.id, workspacesCount);
     if (!isNewUser) {
       setActiveHint(null);
@@ -1173,7 +1314,7 @@ export function FloatingKollaborBar() {
       return;
     }
     setActiveHint(hint);
-  }, [pathname, user?.id, userLoading, workspacesCount]);
+  }, [pathname, runtimeMayStart, user?.id, userLoading, workspacesCount]);
 
   const dismissHint = useCallback(() => {
     setActiveHint((current) => {
@@ -1186,6 +1327,7 @@ export function FloatingKollaborBar() {
   // turn. The user stays in control of whether to actually ask. Dismiss after
   // accepting so it doesn't linger.
   const acceptHint = useCallback(() => {
+    if (!runtimeAllowedRef.current) return;
     const prompt = activeHint?.prompt;
     if (!prompt) return;
     dismissHint();
@@ -1207,75 +1349,119 @@ export function FloatingKollaborBar() {
     !!error;
 
   const resetEngineSession = useCallback(async () => {
-    const sid = useKollaborBarStore.getState().sessionId;
-    // Abort any in-flight stream before replacing its session. Keep the
-    // tenant/user-scoped identity intact; only the ephemeral session id is
-    // discarded.
-    abortControllerRef.current?.abort();
-    abortControllerRef.current = null;
-    if (sid) {
-      try {
-        await engineCancelTurn(sid);
-      } catch {
-        // A dead daemon is already reset; do not block reconnect on cleanup.
-      }
-    }
+    const identity = renderedRuntimeIdentity;
+    if (!isRuntimeIdentityCurrent(identity, true)) return;
+    const sid = identity.sessionId;
+    // The lifecycle helper persists a scoped marker before cancellation and
+    // blocks on receipt-only, rejected, timed-out, or otherwise unverifiable
+    // results. Never create a replacement session from this reset path.
+    const stopped = await stopFloatingBarRuntime({
+      scope: identity.scope,
+      sessionId: sid,
+      generation: identity.storeGeneration,
+    });
+    if (!stopped.ok) return;
+
+    const stoppedState = useKollaborBarStore.getState();
+    if (
+      stoppedState.storageScope !== identity.scope ||
+      stoppedState.sessionScope !== identity.scope ||
+      stoppedState.sessionId !== sid
+    ) return;
     setError(null);
     setEngineError(null);
     clearMessages();
-    // Prefer the engine's history reset so configured agent/session state and
-    // the stable session id survive Clear. If the daemon is already gone (or
-    // an older engine lacks this endpoint), fall back to scoped recreation.
+
     if (sid) {
+      const cleanupGeneration = stoppedState.generation;
+      const cleanupMarker = {
+        scope: identity.scope,
+        sessionId: sid,
+        generation: cleanupGeneration,
+        startedAt: Date.now(),
+      };
+      if (!writePendingShutdownMarker(cleanupMarker)) {
+        stoppedState.setShutdownState({
+          pending: true,
+          blocked: true,
+          error: BAR_SHUTDOWN_ERROR,
+        });
+        return;
+      }
+      stoppedState.setShutdownState({ pending: true, blocked: true, error: null });
       try {
         await engineClearSessionHistory(sid);
-        return;
       } catch {
-        // Continue with a scoped session reset below.
+        const latest = useKollaborBarStore.getState();
+        if (
+          latest.storageScope === identity.scope &&
+          latest.sessionScope === identity.scope &&
+          latest.sessionId === sid &&
+          latest.generation === cleanupGeneration
+        ) {
+          // The marker and recovery error remain visible; no replacement
+          // session is safe while the original reset is unresolved.
+          latest.setShutdownState({
+            pending: true,
+            blocked: true,
+            error: BAR_SHUTDOWN_ERROR,
+          });
+        }
+        return;
       }
-    }
-    clearKollaborEngineStoredSession();
-    setSessionId(null);
-    setConnected(false);
-    setConnecting(true);
-    try {
-      const { sessionId: nextSessionId, sessionToken } = await getOrCreateSession(
-        sessionRequestRef.current ?? {},
-      );
-      syncSessionToken(sessionToken);
-      setSessionId(nextSessionId);
-      setConnected(true);
-      setConnecting(false);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setConnecting(false);
-      setError(`session reset failed: ${msg}`);
-      setEngineError(msg);
+
+      const latest = useKollaborBarStore.getState();
+      const marker = readPendingShutdownMarker(identity.scope);
+      if (
+        latest.storageScope !== identity.scope ||
+        latest.sessionScope !== identity.scope ||
+        latest.sessionId !== sid ||
+        latest.generation !== cleanupGeneration ||
+        marker?.generation !== cleanupMarker.generation ||
+        marker.startedAt !== cleanupMarker.startedAt
+      ) return;
+      if (!clearPendingShutdownMarker(identity.scope)) {
+        latest.setShutdownState({
+          pending: true,
+          blocked: true,
+          error: BAR_SHUTDOWN_ERROR,
+        });
+        return;
+      }
+      latest.setShutdownState({ pending: false, blocked: false, error: null });
+      clearKollaborEngineStoredSession();
+      setSessionId(null);
+      setRuntimeBootstrapEpoch((epoch) => epoch + 1);
     }
   }, [
     clearMessages,
-    setConnected,
-    setConnecting,
+    setSessionId,
     setEngineError,
     setError,
-    setSessionId,
+    renderedRuntimeIdentity,
+    isRuntimeIdentityCurrent,
   ]);
 
   const handleStop = useCallback(async () => {
-    const sid = useKollaborBarStore.getState().sessionId;
-    abortControllerRef.current?.abort();
-    abortControllerRef.current = null;
-    try {
-      if (sid) await engineCancelTurn(sid);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setError(`stop failed: ${msg}`);
-    } finally {
-      sendingRef.current = false;
-      finishDraft();
-      pendingToolInstancesRef.current.clear();
-    }
-  }, [finishDraft, setError]);
+    const identity = renderedRuntimeIdentity;
+    if (!isRuntimeIdentityCurrent(identity, true)) return;
+    const stopped = await stopFloatingBarRuntime({
+      scope: identity.scope,
+      sessionId: identity.sessionId,
+      generation: identity.storeGeneration,
+    });
+    if (!stopped.ok) return;
+    const current = useKollaborBarStore.getState();
+    if (
+      current.storageScope !== identity.scope ||
+      current.sessionScope !== identity.scope ||
+      current.sessionId !== identity.sessionId
+    ) return;
+    setRuntimeBootstrapEpoch((epoch) => epoch + 1);
+  }, [
+    isRuntimeIdentityCurrent,
+    renderedRuntimeIdentity,
+  ]);
 
   const activeAskMessage = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i -= 1) {
@@ -1286,7 +1472,17 @@ export function FloatingKollaborBar() {
   }, [messages]);
 
   const runSend = useCallback(async (content: string) => {
-    const sid = useKollaborBarStore.getState().sessionId;
+    const initialState = useKollaborBarStore.getState();
+    const runtimeIdentity = {
+      scope: initialState.storageScope,
+      storeGeneration: initialState.generation,
+      runtimeGeneration: runtimeGenerationRef.current,
+      sessionId: initialState.sessionId,
+      sessionScope: initialState.sessionScope,
+    };
+    const isRunCurrent = () => isRuntimeIdentityCurrent(runtimeIdentity);
+    if (!isRunCurrent() || !availability.activeSessionMatchesScope) return;
+    const sid = initialState.sessionId;
     if (!sid || sendingRef.current) return;
     const uid = randomId();
     pendingToolInstancesRef.current.clear();
@@ -1308,6 +1504,7 @@ export function FloatingKollaborBar() {
       do {
         shouldRetry = false;
         for await (const ev of engineSendMessage(activeSessionId, content, turnContext, abortController.signal)) {
+          if (!isRunCurrent()) break;
           switch (ev.type) {
           case "token":
             if (ev.text) appendDraftText(ev.text);
@@ -1372,9 +1569,11 @@ export function FloatingKollaborBar() {
             // YOLO mode: auto-approve without prompting. Read live state so a
             // mid-turn /yolo toggle takes effect on the very next tool call.
             if (useKollaborBarStore.getState().yoloMode) {
-              void engineRespondToPermission(activeSessionId, ev.tool_id, "approve").catch(
-                () => {},
-              );
+              if (isRunCurrent()) {
+                void engineRespondToPermission(activeSessionId, ev.tool_id, "approve").catch(
+                  () => {},
+                );
+              }
             } else {
               pushPermissionRequest({
                 toolId: ev.tool_id,
@@ -1429,12 +1628,19 @@ export function FloatingKollaborBar() {
           }
           if (shouldRetry) break;
         }
-        if (shouldRetry) {
+        if (shouldRetry && isRunCurrent()) {
           setConnecting(true);
           pendingToolInstancesRef.current.clear();
+          const createIdentity = {
+            ...runtimeIdentity,
+            sessionId: null,
+            sessionScope: runtimeIdentity.scope,
+          };
+          useKollaborBarStore.setState({ sessionScope: runtimeIdentity.scope });
           const { sessionId: nextSessionId, sessionToken } = await getOrCreateSession(
             sessionRequestRef.current ?? {},
           );
+          if (!isRuntimeIdentityCurrent(createIdentity, true)) break;
           syncSessionToken(sessionToken);
           activeSessionId = nextSessionId;
           setSessionId(nextSessionId);
@@ -1445,14 +1651,18 @@ export function FloatingKollaborBar() {
       } while (shouldRetry);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      if (!abortController.signal.aborted) setError(`send failed: ${msg}`);
-      setConnecting(false);
-      finishDraft();
-      pendingToolInstancesRef.current.clear();
+      if (isRunCurrent()) {
+        if (!abortController.signal.aborted) setError(`send failed: ${msg}`);
+        setConnecting(false);
+        finishDraft();
+        pendingToolInstancesRef.current.clear();
+      }
     } finally {
-      sendingRef.current = false;
-      abortControllerRef.current = null;
-      pendingToolInstancesRef.current.clear();
+      if (abortControllerRef.current === abortController) {
+        abortControllerRef.current = null;
+        sendingRef.current = false;
+        pendingToolInstancesRef.current.clear();
+      }
     }
   }, [
     pathname,
@@ -1470,16 +1680,21 @@ export function FloatingKollaborBar() {
     updateToolByCallId,
     finishDraft,
     pushPermissionRequest,
+    availability.activeSessionMatchesScope,
+    isRuntimeIdentityCurrent,
   ]);
 
   // When YOLO turns on, clear any prompts already waiting on screen so the
   // user isn't stuck approving the one that's blocking the turn.
   const flushPendingApprovals = useCallback(() => {
+    const identity = renderedRuntimeIdentity;
+    const isCurrent = () => isRuntimeIdentityCurrent(identity, true);
+    if (!isCurrent() || !availability.activeSessionMatchesScope) return;
     const { sessionId: sid, messages: msgs } = useKollaborBarStore.getState();
     for (const m of msgs) {
       if (m.permission && m.permission.decision === undefined) {
         resolvePermission(m.id, "approve");
-        if (sid) {
+        if (sid && runtimeAllowedRef.current) {
           void engineRespondToPermission(sid, m.permission.toolId, "approve").catch(
             () => {},
           );
@@ -1489,14 +1704,26 @@ export function FloatingKollaborBar() {
         m.ask.result === undefined &&
         /^allow .+\?/.test(m.ask.prompt)
       ) {
-        void replyToTool(m.ask.toolId, "approve").catch(() => {});
+        void replyToTool(m.ask.toolId, "approve", {
+          scope: identity.scope,
+          isCurrent,
+        }).catch(() => {});
         resolveAsk(m.id, "approve");
       }
     }
-  }, [resolvePermission, resolveAsk]);
+  }, [
+    availability.activeSessionMatchesScope,
+    isRuntimeIdentityCurrent,
+    renderedRuntimeIdentity,
+    resolvePermission,
+    resolveAsk,
+  ]);
 
   const handleSend = useCallback(async () => {
+    const identity = renderedRuntimeIdentity;
+    if (!isRuntimeIdentityCurrent(identity, true)) return;
     const state = useKollaborBarStore.getState();
+    if (state.sessionId && !availability.activeSessionMatchesScope) return;
     const content = state.inputValue.trim();
     if (content.length === 0) return;
 
@@ -1525,12 +1752,28 @@ export function FloatingKollaborBar() {
     // silently drop user input: the bar is also the recovery surface.
     if (sendingRef.current) return;
     if (!state.connected || !state.sessionId) {
-      setError(state.connecting ? "still connecting…" : "Kollabor is offline — retrying connection…");
+      if (state.connecting) {
+        setError("still connecting…");
+        return;
+      }
+      setError("Kollabor is offline — retrying connection…");
       setConnecting(true);
+      const createIdentity = {
+        ...identity,
+        sessionId: null,
+        sessionScope: identity.scope,
+      };
+      clearKollaborEngineStoredSession();
+      setSessionId(null);
+      useKollaborBarStore.setState({ sessionScope: identity.scope });
+      const createOwner = {};
+      pendingBootOwnersRef.current.add(createOwner);
       try {
+        if (!isRuntimeIdentityCurrent(createIdentity, true)) return;
         const { sessionId: nextSessionId, sessionToken } = await getOrCreateSession(
           sessionRequestRef.current ?? {},
         );
+        if (!isRuntimeIdentityCurrent(createIdentity, true)) return;
         syncSessionToken(sessionToken);
         setSessionId(nextSessionId);
         setConnected(true);
@@ -1538,8 +1781,12 @@ export function FloatingKollaborBar() {
         setError(null);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        setConnecting(false);
-        setError(`connection failed: ${msg}`);
+        if (isRuntimeIdentityCurrent(createIdentity, true)) {
+          setConnecting(false);
+          setError(`connection failed: ${msg}`);
+        }
+      } finally {
+        pendingBootOwnersRef.current.delete(createOwner);
       }
       return;
     }
@@ -1562,6 +1809,9 @@ export function FloatingKollaborBar() {
     setInputValue("");
     await runSend(content);
   }, [
+    availability.activeSessionMatchesScope,
+    isRuntimeIdentityCurrent,
+    renderedRuntimeIdentity,
     runSend,
     pushMessage,
     setInputValue,
@@ -1577,12 +1827,18 @@ export function FloatingKollaborBar() {
 
   const handleModeChoice = useCallback(
     (messageId: string, choice: "permission" | "yolo") => {
+      if (!isRuntimeIdentityCurrent(renderedRuntimeIdentity, true)) return;
       resolveModeChoice(messageId, choice);
       const pending = pendingFirstMessageRef.current;
       pendingFirstMessageRef.current = null;
       if (pending) void runSend(pending);
     },
-    [resolveModeChoice, runSend],
+    [
+      isRuntimeIdentityCurrent,
+      renderedRuntimeIdentity,
+      resolveModeChoice,
+      runSend,
+    ],
   );
 
   const handlePermissionRespond = useCallback(
@@ -1591,19 +1847,37 @@ export function FloatingKollaborBar() {
       toolId: string,
       decision: "approve" | "approve_always" | "deny",
     ) => {
-      const sid = useKollaborBarStore.getState().sessionId;
+      const identity = renderedRuntimeIdentity;
+      if (!isRuntimeIdentityCurrent(identity, true) || !availability.activeSessionMatchesScope) return;
+      const sid = identity.sessionId;
       if (!sid) return;
       // optimistic local update
       resolvePermission(messageId, decision);
       try {
         await engineRespondToPermission(sid, toolId, decision);
+        if (!isRuntimeIdentityCurrent(identity, true)) return;
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        setError(`permission failed: ${msg}`);
+        if (isRuntimeIdentityCurrent(identity, true)) setError(`permission failed: ${msg}`);
       }
     },
-    [resolvePermission, setError],
+    [
+      availability.activeSessionMatchesScope,
+      isRuntimeIdentityCurrent,
+      renderedRuntimeIdentity,
+      resolvePermission,
+      setError,
+    ],
   );
+
+  const handleAskRespond = useCallback((messageId: string, result: unknown) => {
+    if (!isRuntimeIdentityCurrent(renderedRuntimeIdentity, true)) return;
+    resolveAsk(messageId, result);
+  }, [
+    isRuntimeIdentityCurrent,
+    renderedRuntimeIdentity,
+    resolveAsk,
+  ]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -1692,7 +1966,14 @@ export function FloatingKollaborBar() {
         left: "50%",
         transform: "translateX(-50%)",
       };
-  if (!storageScopeReady) return null;
+  const backdropMask = kollaborBackdropMask(appearance, maskAnchor);
+  const surfaceShadow = kollaborSurfaceShadow(appearance.surfaceShadow);
+  const pillBorderRadius = activeDockEdge === "left"
+    ? `0 ${appearance.surfaceRadius}px ${appearance.surfaceRadius}px 0`
+    : activeDockEdge === "right"
+      ? `${appearance.surfaceRadius}px 0 0 ${appearance.surfaceRadius}px`
+      : `${appearance.surfaceRadius}px`;
+  if (!runtimeMayStart) return null;
   return (
     <>
       {dragging && dragPosition && dragDock && isSideDock(dragDock) && (
@@ -1733,7 +2014,7 @@ export function FloatingKollaborBar() {
       )}
 
       <AnimatePresence initial={false}>
-        {expanded && (
+        {expanded && appearance.backdropEnabled && (
           <motion.div
             key="kollabor-backdrop"
             initial={{ opacity: 0 }}
@@ -1744,11 +2025,11 @@ export function FloatingKollaborBar() {
             className="fixed inset-0 pointer-events-none"
             style={{
               zIndex: FLOATING_SURFACE_Z.kollaborBackdrop,
-              backdropFilter: "blur(20px) saturate(115%) brightness(0.75)",
-              WebkitBackdropFilter: "blur(20px) saturate(115%) brightness(0.75)",
-              backgroundColor: "rgba(0,0,0,0.22)",
-              maskImage: `radial-gradient(ellipse 540px 900px at ${maskAnchor.x} ${maskAnchor.y}, rgba(0,0,0,1) 0%, rgba(0,0,0,0.95) 40%, rgba(0,0,0,0.6) 65%, transparent 90%)`,
-              WebkitMaskImage: `radial-gradient(ellipse 540px 900px at ${maskAnchor.x} ${maskAnchor.y}, rgba(0,0,0,1) 0%, rgba(0,0,0,0.95) 40%, rgba(0,0,0,0.6) 65%, transparent 90%)`,
+              backdropFilter: `blur(${appearance.backdropBlur}px) saturate(115%) brightness(${Math.max(0.55, 1 - appearance.backdropDim / 100)})`,
+              WebkitBackdropFilter: `blur(${appearance.backdropBlur}px) saturate(115%) brightness(${Math.max(0.55, 1 - appearance.backdropDim / 100)})`,
+              backgroundColor: `rgba(0,0,0,${(appearance.backdropDim / 100).toFixed(2)})`,
+              maskImage: backdropMask,
+              WebkitMaskImage: backdropMask,
             }}
           />
         )}
@@ -1756,11 +2037,12 @@ export function FloatingKollaborBar() {
       <div
         ref={barRef}
         data-floating-kollabor-bar=""
-        className="fixed w-[min(338px,calc(100vw-2rem))] pointer-events-none flex flex-col items-stretch gap-2"
+        className="fixed pointer-events-none flex flex-col items-stretch gap-2"
         style={{
           ...fontVars,
           zIndex: FLOATING_SURFACE_Z.kollaborBar,
           ...containerPositionStyle,
+          width: `min(${configuredBarWidth}px, calc(100vw - 2rem))`,
           transition: dragging
             ? "none"
             : "left 220ms cubic-bezier(0.22, 1, 0.36, 1), right 220ms cubic-bezier(0.22, 1, 0.36, 1), top 220ms cubic-bezier(0.22, 1, 0.36, 1), bottom 220ms cubic-bezier(0.22, 1, 0.36, 1), transform 220ms cubic-bezier(0.22, 1, 0.36, 1)",
@@ -1811,10 +2093,12 @@ export function FloatingKollaborBar() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 8 }}
             transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
-            className="no-scrollbar pointer-events-auto flex min-h-0 w-full flex-col-reverse gap-2 overflow-y-auto overflow-x-hidden rounded-2xl border border-border/70 bg-background/90 p-2 shadow-xl backdrop-blur-md"
+            className="no-scrollbar pointer-events-auto flex min-h-0 w-full flex-col-reverse gap-2 overflow-y-auto overflow-x-hidden border border-border/70 bg-background/90 p-2 backdrop-blur-md"
             ref={transcriptRef}
             style={{
-              maxHeight: `calc((100vh - 14rem) / ${effScale.toFixed(3)})`,
+              maxHeight: `calc(${appearance.transcriptMaxHeight}vh / ${effScale.toFixed(3)})`,
+              borderRadius: `${appearance.surfaceRadius}px`,
+              boxShadow: surfaceShadow,
               maskImage:
                 "linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.2) 6%, rgba(0,0,0,0.7) 14%, #000 24%)",
               WebkitMaskImage:
@@ -1859,7 +2143,8 @@ export function FloatingKollaborBar() {
                       message={m}
                       trayAskMessageId={activeAskMessage?.id ?? null}
                       onPermissionRespond={handlePermissionRespond}
-                      onAskRespond={resolveAsk}
+                      onAskRespond={handleAskRespond}
+                      canRespond={() => runtimeAllowedRef.current}
                       onModeChoose={handleModeChoice}
                     />
                   ))}
@@ -1889,7 +2174,8 @@ export function FloatingKollaborBar() {
             options={activeAskMessage.ask.options}
             placeholder={activeAskMessage.ask.placeholder}
             result={activeAskMessage.ask.result}
-            onRespond={(r) => resolveAsk(activeAskMessage.id, r)}
+            canRespond={() => runtimeAllowedRef.current}
+            onRespond={(r) => handleAskRespond(activeAskMessage.id, r)}
           />
         </motion.div>
       )}
@@ -1986,11 +2272,12 @@ export function FloatingKollaborBar() {
         layout={!dragging}
         transition={{ type: "spring", stiffness: 320, damping: 34, mass: 0.9 }}
         className={cn(
-          "group/pill pointer-events-auto relative flex items-center gap-1 rounded-2xl border border-border/80 bg-background/95 backdrop-blur px-3 py-2 shadow-lg",
+          "group/pill pointer-events-auto relative flex items-center gap-1 border border-border/80 bg-background/95 backdrop-blur px-3 py-2",
           activeDockEdge === "left" && "rounded-l-none rounded-r-2xl",
           activeDockEdge === "right" && "rounded-r-none rounded-l-2xl",
           dragging && "select-none",
         )}
+        style={{ borderRadius: pillBorderRadius, boxShadow: surfaceShadow }}
       >
         {/* shine border — matches pill-nav color scheme */}
         <div
@@ -2077,6 +2364,7 @@ function MessageBubble({
   trayAskMessageId,
   onPermissionRespond,
   onAskRespond,
+  canRespond,
   onModeChoose,
 }: {
   message: KollaborMessage;
@@ -2087,6 +2375,7 @@ function MessageBubble({
     decision: "approve" | "approve_always" | "deny",
   ) => void;
   onAskRespond: (messageId: string, result: unknown) => void;
+  canRespond: () => boolean;
   onModeChoose: (messageId: string, choice: "permission" | "yolo") => void;
 }) {
   // first-run mode choice bubble (permission vs YOLO)
@@ -2161,6 +2450,7 @@ function MessageBubble({
           options={a.options}
           placeholder={a.placeholder}
           result={a.result}
+          canRespond={canRespond}
           onRespond={(r) => onAskRespond(message.id, r)}
         />
       </motion.div>

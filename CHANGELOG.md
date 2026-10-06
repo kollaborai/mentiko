@@ -23,6 +23,8 @@ auditability, and making interrupted orchestration runs recover cleanly.
 ### Changed
 - Improved auto-run ordering, continuation, resume behavior, and handoff completion so interrupted or stale runs are reconciled instead of duplicated.
 - Replaced the Kollabor WebSocket bridge path with the engine client and MCP HTTP bridge, improving Docker/runtime integration.
+- Added an authenticated `/settings/mentiko-agent` floating-bar preference. The setting is scoped to the active browser identity, synchronizes with embedded settings panels, keeps the deployment flag authoritative, and shows explicit save/shutdown recovery state. Existing external UI-control grants are suspended locally while the bar is off and are not revoked.
+- Added scoped Mentiko Agent layout controls for floating-bar width plus the expanded chat backdrop's visibility, shape, blur, dimness, transcript height, radius, and shadow, with Minimal, Balanced, and Focused appearance presets. `NEXT_PUBLIC_KOLLABOR_BAR_WIDTH` now seeds the user width default rather than replacing the settings control.
 
 ### Fixed
 - Fixed MCP subprocess token refresh and session reuse so long-running sessions keep valid auth instead of silently losing current-page access.

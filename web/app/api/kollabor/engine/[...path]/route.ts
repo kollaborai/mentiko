@@ -104,10 +104,20 @@ async function proxyEngine(
     try {
       const rawBody = await request.arrayBuffer();
       let requestBody: Record<string, unknown> = {};
-      try { requestBody = JSON.parse(new TextDecoder().decode(rawBody)); } catch { /* empty body */ }
+      try {
+        const rawText = typeof TextDecoder === "function"
+          ? new TextDecoder().decode(rawBody)
+          : Buffer.from(rawBody).toString("utf8");
+        requestBody = JSON.parse(rawText);
+      } catch { /* empty body */ }
 
       let session_token: string | null = null;
-      const engineSessionId: string = `sess_${randomBytes(6).toString("hex")}`;
+      const requestedSessionId = typeof requestBody.session_id === "string"
+        ? requestBody.session_id.trim()
+        : "";
+      const engineSessionId: string = /^sess_[A-Za-z0-9_-]{6,80}$/.test(requestedSessionId)
+        ? requestedSessionId
+        : `sess_${randomBytes(6).toString("hex")}`;
 
       try {
         const user = await getSessionUser(request);

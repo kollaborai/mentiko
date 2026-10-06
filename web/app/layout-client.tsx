@@ -21,6 +21,7 @@ import { FloatingCodePill } from "@/components/editor/floating-code-pill";
 import { FloatingWelcomePanel } from "@/components/onboarding/floating-welcome-panel";
 import { FloatingKollaborBar } from "@/components/app-shell/floating-kollabor-bar";
 import { UIControlGrant } from "@/components/app-shell/ui-control-grant";
+import { FloatingBarStorageScope } from "@/components/app-shell/floating-bar-storage-scope";
 import { PANEL_MODE_BACKGROUND_LAYERS } from "@/components/app-shell/panel-mode-background";
 import { isKollaborBarEnabled } from "@/lib/ai-engine/kollabor-bar-flag";
 import { MustChangePasswordGate } from "@/components/app-shell/must-change-password-gate";
@@ -62,7 +63,11 @@ export function RootLayoutClient({ children }: { children: React.ReactNode }) {
     >
       <NamespaceProvider>
         {isStandalone ? (
-          children
+          pathname.startsWith("/mcp-auth") ? (
+            <UserProvider>
+              <FloatingBarStorageScope>{children}</FloatingBarStorageScope>
+            </UserProvider>
+          ) : children
         ) : (
           <MustChangePasswordGate>
             <AppShell>{children}</AppShell>
@@ -341,61 +346,63 @@ function AppShell({ children }: { children: React.ReactNode }) {
       <TerminalPreferencesInit />
       <WorkspaceProvider>
         <UserProvider>
-          <Suspense fallback={null}>
-            <PanelSurfaceNavigationGuard />
-            <WhenNotPanelSurface>
-              <a
-                href="#main-content"
-                className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 focus:px-3 focus:py-1.5 focus:text-xs focus:bg-accent focus:text-foreground focus:rounded-md"
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    document.getElementById("main-content")?.focus();
-                  }
-                }}
+          <FloatingBarStorageScope>
+            <Suspense fallback={null}>
+              <PanelSurfaceNavigationGuard />
+              <WhenNotPanelSurface>
+                <a
+                  href="#main-content"
+                  className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 focus:px-3 focus:py-1.5 focus:text-xs focus:bg-accent focus:text-foreground focus:rounded-md"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      document.getElementById("main-content")?.focus();
+                    }
+                  }}
+                >
+                  Skip to main content
+                </a>
+              </WhenNotPanelSurface>
+            </Suspense>
+            <div className="relative flex h-screen flex-col" data-source="app/layout-client.tsx">
+              <Suspense fallback={<DefaultAppBackground />}>
+                <AppBackground />
+              </Suspense>
+              <Suspense fallback={null}>
+                <WhenNotPanelSurface>
+                  <ToastContainer />
+                  <GlobalSearchModal />
+                  <KeyboardShortcutsModal />
+                  <OfflineIndicator />
+                  {wasOffline && isOnline && (
+                    <OnlineStatusBanner />
+                  )}
+                </WhenNotPanelSurface>
+              </Suspense>
+              <main
+                id="main-content"
+                tabIndex={-1}
+                className="pill-nav-viewport relative z-[1] flex-1 overflow-x-hidden overflow-y-auto min-h-0 min-w-0"
               >
-                Skip to main content
-              </a>
-            </WhenNotPanelSurface>
-          </Suspense>
-          <div className="relative flex h-screen flex-col" data-source="app/layout-client.tsx">
-            <Suspense fallback={<DefaultAppBackground />}>
-              <AppBackground />
-            </Suspense>
-            <Suspense fallback={null}>
-              <WhenNotPanelSurface>
-                <ToastContainer />
-                <GlobalSearchModal />
-                <KeyboardShortcutsModal />
-                <OfflineIndicator />
-                {wasOffline && isOnline && (
-                  <OnlineStatusBanner />
-                )}
-              </WhenNotPanelSurface>
-            </Suspense>
-            <main
-              id="main-content"
-              tabIndex={-1}
-              className="pill-nav-viewport relative z-[1] flex-1 overflow-x-hidden overflow-y-auto min-h-0 min-w-0"
-            >
-              {children}
-            </main>
-            <Suspense fallback={null}>
-              <WhenNotPanelSurface>
-                <FloatingPillNav />
-                <FloatingAppPanels />
-                <FloatingCodePill />
-                <FloatingTerminalPanel />
-                <FloatingWelcomePanel />
-                {isKollaborBarEnabled() && (
-                  <Suspense fallback={null}>
-                    <FloatingKollaborBar />
-                  </Suspense>
-                )}
-                <UIControlGrant />
-              </WhenNotPanelSurface>
-            </Suspense>
-          </div>
+                {children}
+              </main>
+              <Suspense fallback={null}>
+                <WhenNotPanelSurface>
+                  <FloatingPillNav />
+                  <FloatingAppPanels />
+                  <FloatingCodePill />
+                  <FloatingTerminalPanel />
+                  <FloatingWelcomePanel />
+                  {isKollaborBarEnabled() && (
+                    <Suspense fallback={null}>
+                      <FloatingKollaborBar />
+                      <UIControlGrant />
+                    </Suspense>
+                  )}
+                </WhenNotPanelSurface>
+              </Suspense>
+            </div>
+          </FloatingBarStorageScope>
         </UserProvider>
       </WorkspaceProvider>
     </>
