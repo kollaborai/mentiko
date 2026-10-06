@@ -12,10 +12,12 @@
         "scratchpad-get",
         "scratchpad-clear",
         "wait-for-user",
-        "context-query"
+        "context-query",
+        "mcp-tool"
     ],
     "skills": [],
     "vault_enabled": false,
+    "hub": false,
     "mcp_servers": [
         "mentiko"
     ]
