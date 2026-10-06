@@ -1,9 +1,11 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useState, type ReactNode } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useSession } from "@/lib/auth/auth-client";
+import { useKollaborBarStore } from "@/lib/ui/kollabor-bar-store";
+import { getFloatingBarAvailability } from "@/lib/ui/floating-bar-availability";
 import {
   ShieldTickFilled,
   TickCircleFilled,
@@ -16,11 +18,23 @@ type DeviceInfo = {
   user_code: string;
   client_label: string;
   scopes: string[];
+  grant_kind: "data" | "ui";
   status: "pending" | "approved" | "denied" | "consumed";
   expired: boolean;
 };
 
 type InfoState = "idle" | "loading" | "loaded" | "notfound" | "needauth" | "error";
+
+type ApprovalAttempt = {
+  code: string;
+  userId: string | null;
+  storageScope: string;
+  decision: "approve" | "deny";
+  grantKind: DeviceInfo["grant_kind"];
+  sessionId: string | null;
+  sessionScope: string | null;
+  generation: number;
+};
 
 export default function McpAuthPage() {
   return (
@@ -40,7 +54,8 @@ function McpAuthFlow() {
   const { data: session, isPending: sessionPending } = useSession();
   const searchParams = useSearchParams();
   const code = (searchParams.get("code") || "").trim();
-  const isUi = searchParams.get("ui") === "1";
+  const userId = session?.user?.id ?? null;
+  const runtime = useKollaborBarStore();
 
   const [info, setInfo] = useState<DeviceInfo | null>(null);
   const [infoState, setInfoState] = useState<InfoState>("idle");
@@ -49,14 +64,52 @@ function McpAuthFlow() {
   const [submitting, setSubmitting] = useState(false);
   const [actionError, setActionError] = useState("");
   const [result, setResult] = useState<"approve" | "deny" | null>(null);
+  const identityRef = useRef({ code, userId, sessionPending });
+  identityRef.current = { code, userId, sessionPending };
+  const infoIdentityRef = useRef<{ code: string; userId: string; storageScope: string } | null>(null);
+  const approvalAttemptRef = useRef<ApprovalAttempt | null>(null);
+  const approvalControllerRef = useRef<AbortController | null>(null);
+
+  const isApprovalAttemptCurrent = useCallback((attempt: ApprovalAttempt) => {
+    const identity = identityRef.current;
+    const state = useKollaborBarStore.getState();
+    if (
+      approvalAttemptRef.current !== attempt ||
+      identity.sessionPending ||
+      identity.code !== attempt.code ||
+      identity.userId !== attempt.userId ||
+      state.storageScope !== attempt.storageScope
+    ) return false;
+
+    if (attempt.decision !== "approve" || attempt.grantKind !== "ui") return true;
+    return Boolean(
+      state.sessionId === attempt.sessionId &&
+      state.sessionScope === attempt.sessionScope &&
+      state.generation === attempt.generation &&
+      getFloatingBarAvailability(state).canApproveUiControl,
+    );
+  }, []);
 
   // load what this device code is requesting (cookie-authed)
   useEffect(() => {
-    if (!code || sessionPending || !session?.user) return;
+    if (!code || sessionPending || !userId) {
+      infoIdentityRef.current = null;
+      setInfo(null);
+      setInfoState("idle");
+      return;
+    }
     let cancelled = false;
+    const controller = new AbortController();
+    const requestScope = runtime.storageScope;
+    infoIdentityRef.current = null;
+    setInfo(null);
+    setInfoError("");
+    setActionError("");
+    setResult(null);
     setInfoState("loading");
     fetch(`/api/mentiko-mcp/auth/device/info?code=${encodeURIComponent(code)}`, {
       credentials: "same-origin",
+      signal: controller.signal,
     })
       .then(async (res) => {
         if (cancelled) return;
@@ -81,7 +134,14 @@ function McpAuthFlow() {
           return;
         }
         const data = (await res.json()) as DeviceInfo;
-        if (cancelled) return;
+        if (
+          cancelled ||
+          identityRef.current.code !== code ||
+          identityRef.current.userId !== userId ||
+          identityRef.current.sessionPending ||
+          useKollaborBarStore.getState().storageScope !== requestScope
+        ) return;
+        infoIdentityRef.current = { code, userId, storageScope: requestScope };
         setInfo(data);
         setInfoState("loaded");
       })
@@ -92,53 +152,116 @@ function McpAuthFlow() {
       });
     return () => {
       cancelled = true;
+      controller.abort();
     };
-  }, [code, sessionPending, session?.user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [code, runtime.storageScope, sessionPending, userId]);
+
+  useEffect(() => {
+    const attempt = approvalAttemptRef.current;
+    if (!attempt || isApprovalAttemptCurrent(attempt)) return;
+
+    approvalControllerRef.current?.abort();
+    approvalControllerRef.current = null;
+    approvalAttemptRef.current = null;
+    setSubmitting(false);
+    setResult(null);
+    setActionError(
+      attempt.grantKind === "ui" && attempt.decision === "approve"
+        ? "The Mentiko bar or session changed. Review the request and approve again."
+        : "Your sign-in or request changed. Try again.",
+    );
+  }, [
+    code,
+    isApprovalAttemptCurrent,
+    runtime.cleanupBlocked,
+    runtime.connected,
+    runtime.enabled,
+    runtime.generation,
+    runtime.preferenceReadResolved,
+    runtime.sessionId,
+    runtime.sessionScope,
+    runtime.storageScope,
+    runtime.storageScopeReady,
+    sessionPending,
+    userId,
+  ]);
+
+  useEffect(() => () => {
+    approvalControllerRef.current?.abort();
+    approvalControllerRef.current = null;
+    approvalAttemptRef.current = null;
+  }, []);
 
   const submit = useCallback(
     async (decision: "approve" | "deny") => {
-      if (!code || submitting) return;
+      if (!code || !info || submitting || approvalControllerRef.current) return;
+      const loadedInfoIdentity = infoIdentityRef.current;
+      if (
+        !loadedInfoIdentity ||
+        loadedInfoIdentity.code !== code ||
+        loadedInfoIdentity.userId !== userId ||
+        loadedInfoIdentity.storageScope !== runtime.storageScope
+      ) return;
+
+      const state = useKollaborBarStore.getState();
+      if (decision === "approve" && info?.grant_kind === "ui") {
+        if (!getFloatingBarAvailability(state).canApproveUiControl || !state.sessionId) {
+          setActionError("The Mentiko bar is off - enable it in Settings -> Mentiko Agent.");
+          return;
+        }
+      }
+
+      const attempt: ApprovalAttempt = {
+        code,
+        userId,
+        storageScope: state.storageScope,
+        decision,
+        grantKind: info.grant_kind,
+        sessionId: state.sessionId,
+        sessionScope: state.sessionScope,
+        generation: state.generation,
+      };
+      const controller = new AbortController();
+      approvalAttemptRef.current = attempt;
+      approvalControllerRef.current = controller;
       setSubmitting(true);
       setActionError("");
       try {
-        // UI-control grants bind the window the user is approving from. The bar
-        // persists its engine sessionId to localStorage (shared same-origin), so
-        // read the most recent one and send it as the routing target.
-        const body: Record<string, unknown> = { user_code: code, decision };
-        if (decision === "approve" && isUi) {
-          let target = "";
-          try {
-            for (let i = 0; i < localStorage.length; i++) {
-              const key = localStorage.key(i);
-              if (key && key.startsWith("mentiko-kollabor-session-id:")) {
-                const val = localStorage.getItem(key);
-                if (val) target = val;
-              }
-            }
-          } catch {
-            /* ignore */
-          }
-          body.target_session_id = target;
+        const body: Record<string, unknown> = {
+          user_code: code,
+          decision,
+          expected_grant_kind: info.grant_kind,
+        };
+        if (decision === "approve" && info?.grant_kind === "ui") {
+          body.target_session_id = state.sessionId;
         }
         const res = await fetch("/api/mentiko-mcp/auth/device/approve", {
           method: "POST",
           headers: { "content-type": "application/json" },
           credentials: "same-origin",
+          signal: controller.signal,
           body: JSON.stringify(body),
         });
         const data = await res.json().catch(() => ({}));
-        if (res.ok && data?.ok) {
+        if (!isApprovalAttemptCurrent(attempt)) return;
+        if (res.ok && data?.ok && (decision === "deny" || data?.kind === info.grant_kind)) {
           setResult(decision);
         } else {
-          setActionError((data && data.error) || "That didn't work. Please try again.");
+          setActionError((data && data.error) || "The grant type changed. Reload the request and review it.");
         }
       } catch {
-        setActionError("Couldn't reach the server. Please try again.");
+        if (!controller.signal.aborted && isApprovalAttemptCurrent(attempt)) {
+          setActionError("Couldn't reach the server. Please try again.");
+        }
       } finally {
-        setSubmitting(false);
+        if (approvalControllerRef.current === controller && approvalAttemptRef.current === attempt) {
+          approvalControllerRef.current = null;
+          approvalAttemptRef.current = null;
+          setSubmitting(false);
+        }
       }
     },
-    [code, submitting, isUi],
+    [code, info, isApprovalAttemptCurrent, runtime.storageScope, submitting, userId],
   );
 
   return <Shell>{renderContent()}</Shell>;

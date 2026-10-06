@@ -209,6 +209,7 @@ export interface DeviceCodeInfo {
   user_code: string;
   client_label: string;
   scopes: string[];
+  grant_kind: "data" | "ui";
   status: string;
   expired: boolean;
 }
@@ -220,17 +221,18 @@ export async function getDeviceByUserCode(userCode: string): Promise<DeviceCodeI
   ensureTables(db);
   const row = db
     .prepare(
-      `SELECT user_code, client_label, scopes, status, expires_at
+      `SELECT user_code, client_label, scopes, grant_kind, status, expires_at
          FROM mcp_device_code WHERE user_code = ?`,
     )
     .get(userCode.trim().toUpperCase()) as
-    | { user_code: string; client_label: string; scopes: string; status: string; expires_at: number }
+    | { user_code: string; client_label: string; scopes: string; grant_kind: string | null; status: string; expires_at: number }
     | undefined;
   if (!row) return null;
   return {
     user_code: row.user_code,
     client_label: row.client_label ?? "MCP client",
     scopes: safeParseScopes(row.scopes),
+    grant_kind: row.grant_kind === "ui" ? "ui" : "data",
     status: row.status,
     expired: Date.now() > row.expires_at,
   };
@@ -296,34 +298,50 @@ export async function approveDeviceCode(
   );
 
   // bootstrap access token so the client works immediately
-  const sessionToken = await mintSessionToken({
-    sub: user.id,
-    jti: sessionId,
-    ns,
-    org,
-    role: user.role,
-    scopes,
-  });
+  let sessionToken: string;
+  try {
+    sessionToken = await mintSessionToken({
+      sub: user.id,
+      jti: sessionId,
+      ns,
+      org,
+      role: user.role,
+      scopes,
+    });
+  } catch (error) {
+    // The refresh row is provisional until the pending device code is won.
+    db.prepare(`DELETE FROM mcp_refresh_token WHERE id = ?`).run(refreshId);
+    throw error;
+  }
 
-  db.prepare(
+  const approval = db.prepare(
     `UPDATE mcp_device_code
        SET status = 'approved', user_id = ?, refresh_token_id = ?,
            pickup_refresh = ?, pickup_session = ?
-     WHERE user_code = ?`,
+     WHERE user_code = ? AND status = 'pending'`,
   ).run(user.id, refreshId, refreshRaw, sessionToken, code);
+
+  if (approval.changes !== 1) {
+    // Another approval or denial won while the token was being minted. Do not
+    // leave this losing attempt's refresh credential orphaned in the database.
+    db.prepare(`DELETE FROM mcp_refresh_token WHERE id = ?`).run(refreshId);
+    return { ok: false, error: "code is no longer pending" };
+  }
 
   return { ok: true };
 }
 
 /** Deny a pending device code. */
-export async function denyDeviceCode(userCode: string): Promise<{ ok: boolean }> {
+export async function denyDeviceCode(userCode: string): Promise<{ ok: boolean; error?: string }> {
   const db = await getDb();
   if (!db) return { ok: false };
   ensureTables(db);
-  db.prepare(`UPDATE mcp_device_code SET status = 'denied' WHERE user_code = ? AND status = 'pending'`).run(
+  const result = db.prepare(`UPDATE mcp_device_code SET status = 'denied' WHERE user_code = ? AND status = 'pending'`).run(
     userCode.trim().toUpperCase(),
   );
-  return { ok: true };
+  return result.changes === 1
+    ? { ok: true }
+    : { ok: false, error: "code is no longer pending" };
 }
 
 // ---------------------------------------------------------------------------
@@ -410,11 +428,15 @@ export async function approveUiGrant(
 
   const signalToken = await mintSignalToken({ sub: user.id, sid });
 
-  db.prepare(
+  const approval = db.prepare(
     `UPDATE mcp_device_code
        SET status = 'approved', user_id = ?, target_session_id = ?, pickup_signaling = ?
-     WHERE user_code = ?`,
+     WHERE user_code = ? AND status = 'pending' AND grant_kind = 'ui'`,
   ).run(user.id, sid, signalToken, code);
+
+  if (approval.changes !== 1) {
+    return { ok: false, error: "code is no longer pending" };
+  }
 
   return { ok: true };
 }

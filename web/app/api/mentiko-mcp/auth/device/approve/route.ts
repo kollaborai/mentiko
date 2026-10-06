@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
  * the security anchor: only a logged-in user can issue an MCP refresh token, and
  * it is bound to that user's identity. No bearer tokens accepted.
  *
- * Body: { user_code: string, decision: "approve" | "deny" }
+ * Body: { user_code: string, decision: "approve" | "deny", expected_grant_kind?: "data" | "ui" }
  */
 export async function POST(request: NextRequest) {
   // same-origin guard (CSRF): the approve page posts from the app itself
@@ -38,7 +38,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "could not resolve user" }, { status: 401 });
   }
 
-  let body: { user_code?: string; decision?: string; target_session_id?: string };
+  let body: {
+    user_code?: string;
+    decision?: string;
+    target_session_id?: string;
+    expected_grant_kind?: string;
+  };
   try {
     body = await request.json();
   } catch {
@@ -48,9 +53,27 @@ export async function POST(request: NextRequest) {
   if (!userCode) {
     return NextResponse.json({ error: "user_code required" }, { status: 400 });
   }
+  if (body.decision !== "approve" && body.decision !== "deny") {
+    return NextResponse.json({ error: "decision must be approve or deny" }, { status: 400 });
+  }
+  if (
+    body.expected_grant_kind !== undefined &&
+    body.expected_grant_kind !== "data" &&
+    body.expected_grant_kind !== "ui"
+  ) {
+    return NextResponse.json({ error: "expected_grant_kind must be data or ui" }, { status: 400 });
+  }
+
+  const kind = await getGrantKind(userCode);
+  if (body.expected_grant_kind !== undefined && kind !== body.expected_grant_kind) {
+    return NextResponse.json({ error: "grant kind does not match expected type" }, { status: 409 });
+  }
 
   if (body.decision === "deny") {
-    await denyDeviceCode(userCode);
+    const result = await denyDeviceCode(userCode);
+    if (!result.ok) {
+      return NextResponse.json({ error: result.error || "denial failed" }, { status: 409 });
+    }
     return NextResponse.json({ ok: true, decision: "deny" });
   }
 
@@ -62,7 +85,6 @@ export async function POST(request: NextRequest) {
   };
   // UI-control grants bind the approving window's sessionId and mint a scoped
   // signaling token; data device codes mint a refresh/access token as before.
-  const kind = await getGrantKind(userCode);
   const result =
     kind === "ui"
       ? await approveUiGrant(userCode, approvingUser, (body.target_session_id || "").trim())
