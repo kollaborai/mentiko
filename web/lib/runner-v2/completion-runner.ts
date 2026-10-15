@@ -53,6 +53,8 @@ export interface CompleteAgentInput {
   agent: CompletionAgentRef;
   chain: RoutingChain;
   events: Array<RunnerEventRecord | string>;
+  /** Active + archived same-run events used to evaluate multi-trigger prerequisites. */
+  firedEvents?: Array<RunnerEventRecord | string>;
   terminal?: TerminalCompletionInput;
   retry?: {
     policy?: RetryPolicy;
@@ -537,7 +539,7 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
     input.chain,
     match.event.event,
     match.event.timestamp,
-    routingContextForEvents(input.events, input.runId, match.event.event),
+    routingContextForEvents(input.firedEvents || input.events, input.runId, match.event.event),
   );
   const loopGuard = input.loopGuard ? applyLoopGuardToRoute({
     currentAgentId: input.agent.id,

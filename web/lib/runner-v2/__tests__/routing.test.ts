@@ -1,4 +1,5 @@
-import { decideNextRoute, normalizeRouteEvent, hasCompletedTrigger } from "@/lib/runner-v2/routing";
+import { decideNextRoute, normalizeRouteEvent, hasCompletedTrigger, routingContextForEvents } from "@/lib/runner-v2/routing";
+import { runnerEventFixture } from "@/lib/runner-v2/test-support/runner-event-fixture";
 
 describe("runner-v2 routing decision", () => {
   it("uses branches before trigger lookup", () => {
@@ -269,6 +270,53 @@ describe("runner-v2 routing decision", () => {
       action: "launch",
       agentIds: ["publisher"],
       reason: "trigger match",
+    });
+  });
+
+  it("counts same-run archived events toward AND-join prerequisites", () => {
+    const runId = "run-123";
+    const chain = {
+      agents: [
+        { id: "agent-a", emits: "a-done" },
+        { id: "agent-b", emits: "b-done" },
+        {
+          id: "merge",
+          wait_for_events: { events: ["a-done", "b-done"], wait_for: "all" as const },
+        },
+      ],
+    };
+    // "a-done" is the live completing event; "b-done" fired earlier in this run
+    // and only survives as an already-processed archived record.
+    const activeEvent = runnerEventFixture({ event: "a-done", source: "agent-a", runId });
+    const sameRunArchived = runnerEventFixture({
+      event: "b-done",
+      source: "agent-b",
+      runId,
+      processed: true,
+    });
+
+    const context = routingContextForEvents([activeEvent, sameRunArchived], runId, "a-done");
+    expect(context.firedEvents).toEqual(["a-done", "b-done"]);
+    expect(decideNextRoute(chain, "a-done", undefined, context)).toEqual({
+      action: "launch",
+      agentIds: ["merge"],
+      reason: "trigger match",
+    });
+
+    // Negative control: archived evidence from a DIFFERENT run must not count
+    // toward the join — routingContextForEvents filters on event.runId.
+    const crossRunArchived = runnerEventFixture({
+      event: "b-done",
+      source: "agent-b",
+      runId: "run-999",
+      processed: true,
+    });
+    const crossRunContext = routingContextForEvents([activeEvent, crossRunArchived], runId, "a-done");
+    expect(crossRunContext.firedEvents).toEqual(["a-done"]);
+    expect(decideNextRoute(chain, "a-done", undefined, crossRunContext)).toEqual({
+      action: "wait",
+      reason: "targets already active or complete",
+      pending: true,
     });
   });
 });
