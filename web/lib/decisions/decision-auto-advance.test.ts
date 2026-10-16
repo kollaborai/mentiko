@@ -114,16 +114,16 @@ describe("decision auto-advance", () => {
     expect(fetchMock.mock.calls[0][0]).toContain("/api/decisions/dec-options/guided/options");
   });
 
-  it("leaves a generated plan for explicit human approval", async () => {
+  it("resolves a generated plan from an explicit round-2 selection without any workspace policy", async () => {
     const fetchMock = jest.fn().mockResolvedValue(new Response(null, { status: 200 }));
     global.fetch = fetchMock;
     const decision = {
       id: "dec-plan-ready",
       status: "briefed",
-      options: [],
+      options: [{ id: "option-a" }],
       guidedFlow: {
         currentRound: 3,
-        round1: { status: "complete", questions: [], answers: [] },
+        round1: { status: "in_progress", questions: [{ id: "q-1" }], answers: [] },
         round2: { status: "ready", tailoredOptions: [], selectedOptionId: "option-a" },
         round3: {
           status: "ready",
@@ -135,7 +135,99 @@ describe("decision auto-advance", () => {
     advanceDecisionAfterPhase({ namespaceId: "ns", orgId: "org", decision });
     await Promise.resolve();
 
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toContain("/api/decisions/dec-plan-ready/resolve");
+    const body = JSON.parse(fetchMock.mock.calls[0][1]?.body as string);
+    expect(body.selectedOptionId).toBe("option-a");
+    expect(body.autoApprovedByWorkspacePolicy).toBeUndefined();
+  });
+
+  it("resolves atomically via a single resolve write when the explicit selection's plan is ready", async () => {
+    const fetchMock = jest.fn().mockResolvedValue(new Response(null, { status: 200 }));
+    global.fetch = fetchMock;
+    // The 6c1773c5 shape: round3 ready with a plan, round2 explicitly selected
+    // (MCP ops select), round1 still in_progress. The driver fires exactly ONE
+    // nudge -- the resolve route owns the single updateDecision that lands
+    // status, resolution, the round1/completed-rounds closure, and
+    // guidedFlow.completedAt together. No half-states, no side nudges.
+    const decision = {
+      id: "dec-explicit-atomic",
+      status: "briefed",
+      options: [{ id: "opt-b" }],
+      guidedFlow: {
+        currentRound: 3,
+        round1: { status: "in_progress", questions: [{ id: "q-1" }, { id: "q-2" }], answers: [] },
+        round2: { status: "ready", tailoredOptions: [{ id: "opt-b" }], selectedOptionId: "opt-b" },
+        round3: {
+          status: "ready",
+          plan: { summary: "plan", tasks: [], dependencies: [] },
+        },
+      },
+    } as never;
+
+    advanceDecisionAfterPhase({ namespaceId: "ns", orgId: "org", decision });
+    await Promise.resolve();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toContain("/api/decisions/dec-explicit-atomic/resolve");
+    expect(JSON.parse(fetchMock.mock.calls[0][1]?.body as string)).toEqual(expect.objectContaining({
+      selectedOptionId: "opt-b",
+    }));
+  });
+
+  it("completion-audit circuit breaker still blocks auto-selecting an option", async () => {
+    const fetchMock = jest.fn().mockResolvedValue(new Response(null, { status: 200 }));
+    global.fetch = fetchMock;
+    jest.mocked(listWorkspaces).mockReturnValue([{ id: "ws", path: "/repo", name: "repo" }] as never);
+    jest.mocked(resolveDecisionAutoApprove).mockReturnValue(true);
+    const decision = {
+      id: "dec-audit-no-select",
+      status: "briefed",
+      source: "completion-audit",
+      workspacePath: "/repo",
+      options: [{ id: "option-a" }],
+      recommendation: { choiceId: "option-a" },
+      guidedFlow: {
+        currentRound: 2,
+        round1: { status: "complete", questions: [], answers: [] },
+        round2: { status: "ready", tailoredOptions: [] },
+        round3: { status: "pending" },
+      },
+    } as never;
+
+    advanceDecisionAfterPhase({ namespaceId: "ns", orgId: "org", decision });
+    await Promise.resolve();
+
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("completion-audit circuit breaker does not block resolving an explicit selection with a ready plan", async () => {
+    const fetchMock = jest.fn().mockResolvedValue(new Response(null, { status: 200 }));
+    global.fetch = fetchMock;
+    jest.mocked(listWorkspaces).mockReturnValue([{ id: "ws", path: "/repo", name: "repo" }] as never);
+    jest.mocked(resolveDecisionAutoApprove).mockReturnValue(true);
+    const decision = {
+      id: "dec-audit-explicit",
+      status: "briefed",
+      source: "completion-audit",
+      workspacePath: "/repo",
+      options: [{ id: "opt-b" }],
+      guidedFlow: {
+        currentRound: 3,
+        round1: { status: "in_progress", questions: [{ id: "q-1" }], answers: [] },
+        round2: { status: "ready", tailoredOptions: [{ id: "opt-b" }], selectedOptionId: "opt-b" },
+        round3: { status: "ready", plan: { summary: "plan", tasks: [], dependencies: [] } },
+      },
+    } as never;
+
+    advanceDecisionAfterPhase({ namespaceId: "ns", orgId: "org", decision });
+    await Promise.resolve();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toContain("/api/decisions/dec-audit-explicit/resolve");
+    const body = JSON.parse(fetchMock.mock.calls[0][1]?.body as string);
+    expect(body.selectedOptionId).toBe("opt-b");
+    expect(body.autoApprovedByWorkspacePolicy).toBeUndefined();
   });
 
   it("selects the recommended option and starts its plan when the workspace policy is enabled", async () => {

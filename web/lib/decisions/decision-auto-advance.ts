@@ -7,7 +7,8 @@
 //   research done (briefed) -> auto-generate the deck (round-1 questions)  [headless]
 //   deck ready              -> auto-generate the options                   [headless]
 //   options ready (round 2) -> stop: the human selects an option
-//   plan ready (round 3)    -> stop: the human approves task creation
+//   explicit selection + plan ready -> resolve: the selection WAS the human gate
+//   plan ready, no selection -> stop: the human approves task creation
 //
 // Browser effects can race these server nudges. Phase starts therefore share a
 // single-flight ledger and retain a launched run when persisting its decision pointer
@@ -703,7 +704,35 @@ export function advanceDecisionAfterPhase(input: {
   const recommendationIsValid = Boolean(
     recommendedOptionId && decision.options.some((option) => option.id === recommendedOptionId),
   );
-  if (!decisionAutoApprovalEnabled(namespaceId, orgId, decision) || !recommendationIsValid || !recommendedOptionId) {
+  const policyAutoApprove = decisionAutoApprovalEnabled(namespaceId, orgId, decision);
+
+  // An explicit round-2 selection IS the human gate: a person already chose the
+  // option (MCP ops select, plan import), so once its plan is ready the only
+  // missing step is the mechanical resolve. Fire it regardless of the workspace
+  // policy -- including for completion-audit decisions, whose circuit breaker
+  // exists to stop the AUTO-selection below, never to strand a human's choice.
+  // The resolve route lands status/resolution and the guided-flow closure
+  // (round1/completed rounds + completedAt) in one single updateDecision write.
+  if (gf?.round3.status === "ready" && gf.round3.plan && gf.round2.selectedOptionId) {
+    const selectedOptionId = gf.round2.selectedOptionId;
+    const policyApproved = policyAutoApprove && recommendationIsValid && recommendedOptionId === selectedOptionId;
+    internalDecisionPost(
+      namespaceId,
+      orgId,
+      `/api/decisions/${decision.id}/resolve`,
+      ws,
+      {
+        selectedOptionId,
+        notes: policyApproved
+          ? "Automatically approved by this workspace's decision policy."
+          : "Resolved from the explicitly selected option once its plan completed.",
+        ...(policyApproved ? { autoApprovedByWorkspacePolicy: true } : {}),
+      },
+    );
+    return;
+  }
+
+  if (!policyAutoApprove || !recommendationIsValid || !recommendedOptionId) {
     return;
   }
 
@@ -718,21 +747,4 @@ export function advanceDecisionAfterPhase(input: {
     return;
   }
 
-  if (
-    gf?.round3.status === "ready" &&
-    gf.round2.selectedOptionId === recommendedOptionId &&
-    gf.round3.plan
-  ) {
-    internalDecisionPost(
-      namespaceId,
-      orgId,
-      `/api/decisions/${decision.id}/resolve`,
-      ws,
-      {
-        selectedOptionId: recommendedOptionId,
-        notes: "Automatically approved by this workspace's decision policy.",
-        autoApprovedByWorkspacePolicy: true,
-      },
-    );
-  }
 }

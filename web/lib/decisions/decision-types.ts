@@ -101,6 +101,8 @@ export interface Round1State {
   generationJobId?: string;
   generationRunId?: string;
   synthesisJobId?: string;
+  /** Set when the round is closed out during resolution. */
+  completedAt?: string;
 }
 
 export interface OptionPreview {

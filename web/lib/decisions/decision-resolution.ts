@@ -487,6 +487,34 @@ async function resolveDecisionToTasksUnlocked({
     );
   }
 
+  // Close the guided flow in the SAME updateDecision write that approves the
+  // decision: round1 is stamped complete (+ completedAt), any round whose work
+  // is done is closed, and guidedFlow.completedAt lands together with
+  // status+resolution. The resolution lock above guarantees the decision read
+  // and this write are one lane, so an approved decision can never still
+  // advertise an open guided round (no half-states).
+  const resolvedAt = new Date().toISOString();
+  const gf = decision.guidedFlow;
+  const guidedFlow = gf
+    ? {
+        ...gf,
+        round1: {
+          ...gf.round1,
+          status: gf.round1.status === "complete" || gf.round1.status === "skipped"
+            ? gf.round1.status
+            : "complete",
+          completedAt: gf.round1.completedAt ?? resolvedAt,
+        },
+        round2: gf.round2.status === "pending" || gf.round2.status === "generating"
+          ? gf.round2
+          : { ...gf.round2, status: "complete" as const },
+        round3: gf.round3.status === "pending" || gf.round3.status === "generating"
+          ? gf.round3
+          : { ...gf.round3, status: "complete" as const },
+        completedAt: gf.completedAt ?? resolvedAt,
+      }
+    : undefined;
+
   const updated = await updateDecision(
     namespaceId,
     orgId,
@@ -496,11 +524,12 @@ async function resolveDecisionToTasksUnlocked({
       resolution: {
         selectedOptionId,
         selectedBy,
-        selectedAt: new Date().toISOString(),
+        selectedAt: resolvedAt,
         notes,
         taskId: epicId,
         ...(allTaskIds.length > 1 ? { taskIds: allTaskIds } : {}),
       },
+      ...(guidedFlow ? { guidedFlow } : {}),
     },
     resolvedWorkspacePath,
   );

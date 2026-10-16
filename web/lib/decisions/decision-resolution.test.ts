@@ -356,6 +356,94 @@ describe("resolveDecisionToTasks parenting", () => {
     );
   });
 
+  it("closes the guided flow in the same single updateDecision write that approves (6c1773c5 shape)", async () => {
+    // The victim shape: round1 still in_progress, round2 ready with an explicit
+    // selection, round3 ready. Approval must land status + resolution AND the
+    // round1/round2 closure + guidedFlow.completedAt in ONE write.
+    getDecision.mockReturnValue(makeDecision({
+      guidedFlow: {
+        currentRound: 3,
+        round1: { status: "in_progress", questions: [{ id: "q-1" }, { id: "q-2" }], answers: [] },
+        round2: { status: "ready", tailoredOptions: [{ id: "opt-a" }], selectedOptionId: "opt-a" },
+        round3: { status: "ready" },
+      },
+    }));
+
+    const res = await resolveDecisionToTasks({
+      namespaceId: "default",
+      orgId: "default",
+      decisionId: "DEC-1",
+      selectedOptionId: "opt-a",
+    });
+
+    expect(updateDecision).toHaveBeenCalledTimes(1);
+    const patch = updateDecision.mock.calls[0][3] as Record<string, any>;
+    expect(patch.status).toBe("approved");
+    expect(patch.resolution).toEqual(expect.objectContaining({ selectedOptionId: "opt-a" }));
+    // same-write closure, same timestamp across every field
+    expect(patch.guidedFlow.round1.status).toBe("complete");
+    expect(patch.guidedFlow.round1.completedAt).toBe(patch.resolution.selectedAt);
+    expect(patch.guidedFlow.round2.status).toBe("complete");
+    expect(patch.guidedFlow.completedAt).toBe(patch.resolution.selectedAt);
+    // the returned decision OBJECT carries the closed flow (OUTPUT, not just the patch)
+    expect(res.decision.status).toBe("approved");
+    const outFlow = (res.decision as any).guidedFlow;
+    expect(outFlow.round1.status).toBe("complete");
+    expect(outFlow.round1.completedAt).toBe(patch.resolution.selectedAt);
+    expect(outFlow.round2.status).toBe("complete");
+    expect(outFlow.completedAt).toBe(patch.resolution.selectedAt);
+  });
+
+  it("plan resolution closes round3 in the same write and leaves an already-complete round1 stamped", async () => {
+    getDecision.mockReturnValue(makeDecision({
+      ...planFlow,
+      guidedFlow: {
+        ...planFlow.guidedFlow,
+        round1: { status: "complete", questions: [], answers: [], completedAt: "2026-01-01T00:00:00.000Z" },
+      },
+    }));
+
+    await resolveDecisionToTasks({
+      namespaceId: "default",
+      orgId: "default",
+      decisionId: "DEC-1",
+      selectedOptionId: "opt-a",
+    });
+
+    expect(updateDecision).toHaveBeenCalledTimes(1);
+    const patch = updateDecision.mock.calls[0][3] as Record<string, any>;
+    expect(patch.guidedFlow.round3.status).toBe("complete");
+    expect(patch.guidedFlow.round2.status).toBe("complete");
+    expect(patch.guidedFlow.completedAt).toBe(patch.resolution.selectedAt);
+    // pre-existing closure is not overwritten
+    expect(patch.guidedFlow.round1.completedAt).toBe("2026-01-01T00:00:00.000Z");
+  });
+
+  it("closes round1 when the flow was resolved mid-flight (pending round3 never reopens)", async () => {
+    getDecision.mockReturnValue(makeDecision({
+      guidedFlow: {
+        currentRound: 2,
+        round1: { status: "in_progress", questions: [{ id: "q-1" }], answers: [{ questionId: "q-1", choice: "a", answeredAt: "2026-01-01T00:00:00.000Z" }] },
+        round2: { status: "ready", tailoredOptions: [{ id: "opt-a" }], selectedOptionId: "opt-a" },
+        round3: { status: "pending" },
+      },
+    }));
+
+    await resolveDecisionToTasks({
+      namespaceId: "default",
+      orgId: "default",
+      decisionId: "DEC-1",
+      selectedOptionId: "opt-a",
+    });
+
+    const patch = updateDecision.mock.calls[0][3] as Record<string, any>;
+    expect(patch.guidedFlow.round1.status).toBe("complete");
+    expect(patch.guidedFlow.round1.completedAt).toBe(patch.resolution.selectedAt);
+    // a round that never ran is not falsely marked complete; completedAt still lands
+    expect(patch.guidedFlow.round3.status).toBe("pending");
+    expect(patch.guidedFlow.completedAt).toBe(patch.resolution.selectedAt);
+  });
+
   it("completion-audit resolution with no follow-ups clears the gate and resumes the original task", async () => {
     taskGet.mockReturnValue({
       id: "FEAT-019",
