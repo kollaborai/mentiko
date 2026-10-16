@@ -46,6 +46,7 @@ import {
 import { hasLivePendingHandoff } from "@/lib/runner-v2/handoff-liveness";
 import { isConcurrencyCapBlockedReason } from "@/lib/runner-v2/concurrency-admission";
 import { isDecisionGateReleased } from "@/lib/tasks/decision-gate-release";
+import { unblockTaskViaResolvedDecision } from "@/lib/tasks/decision-unblock";
 
 export const dynamic = "force-dynamic";
 
@@ -198,6 +199,20 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
       && meta.task_outcome_summary_status === "running"
       && typeof meta.task_outcome_summary_job_id === "string";
   });
+  // FEAT-001 stall class: a task parked at decision_blocked whose LINKED
+  // decision has since resolved out-of-band (the approval's lifecycle pass
+  // failed to persist, or the completion-audit gate release was lost). The
+  // terminal-run sweep above replays only the anchored run and no-ops; it
+  // never inspects the decision. Sweep these separately and drive the
+  // lifecycle off the DECISION state via the reducer's decision.resolved
+  // path. The unblock is idempotent: after release the phase moves off
+  // decision_blocked, so subsequent passes select nothing.
+  const decisionBlockedTasks = issues.filter((issue) => {
+    if (DONE_TASK_STATUSES.has(issue.status)) return false;
+    const meta = parseMetadata(issue.metadata);
+    if (!meta || meta.lifecycle_phase !== "decision_blocked") return false;
+    return typeof meta.decision_subtask_id === "string" || typeof meta.decision_id === "string";
+  });
   // Reopened after an audited close, or held at a durable decision gate with
   // stale last_run_* provenance. The terminal filter above needs current run
   // metadata; a reopen or a superseded duplicate can leave an already-applied
@@ -281,7 +296,8 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     terminalAutoRunTasks.length === 0 &&
     followupBlockedTasks.length === 0 &&
     auditedExecutionMetadataRepairTasks.length === 0 &&
-    stalledOutcomeSummaryTasks.length === 0
+    stalledOutcomeSummaryTasks.length === 0 &&
+    decisionBlockedTasks.length === 0
   ) {
     return apiSuccess({ reconciled: results.length, results, failed: failed.length, errors: failed });
   }
@@ -730,10 +746,47 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     }
   }
 
+  for (const issue of decisionBlockedTasks) {
+    const meta = parseMetadata(issue.metadata)!;
+    try {
+      const safeId = validateTaskId(issue.id);
+      const unblock = await unblockTaskViaResolvedDecision({
+        request,
+        namespaceId,
+        orgId,
+        workspacePath: typeof issue.workspace_id === "string" ? issue.workspace_id : undefined,
+        taskId: safeId,
+        metadata: meta,
+      });
+      if (unblock.outcome === "noop") {
+        writeLog(namespaceId, orgId, "info", "task-reconciler",
+          `task ${issue.id}: linked decision not applied`,
+          unblock.reason);
+        continue;
+      }
+      writeLog(namespaceId, orgId, "warn", "task-reconciler",
+        `task ${issue.id}: linked decision resolved`,
+        `decision was already resolved; lifecycle advanced to ${unblock.phase} via decision.resolved`);
+      results.push({
+        taskId: issue.id,
+        runId: typeof meta.last_run_id === "string" ? meta.last_run_id : "",
+        previousStatus: "decision_blocked",
+        newStatus: unblock.phase === "followup_blocked" ? "decision_followups_created" : "decision_released",
+        reason: "linked decision already resolved; lifecycle advanced via decision.resolved",
+      });
+    } catch (error) {
+      failed.push({
+        taskId: issue.id,
+        error: (error as Error).message,
+      });
+    }
+  }
+
   return apiSuccess({
     reconciled: results.length,
     checked: runningTasks.length + terminalAutoRunTasks.length + followupBlockedTasks.length
-      + auditedExecutionMetadataRepairTasks.length + stalledOutcomeSummaryTasks.length,
+      + auditedExecutionMetadataRepairTasks.length + stalledOutcomeSummaryTasks.length
+      + decisionBlockedTasks.length,
     failed: failed.length,
     results,
     errors: failed,

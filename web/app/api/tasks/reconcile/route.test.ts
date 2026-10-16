@@ -29,6 +29,9 @@ jest.mock("@/lib/tasks/task-store", () => ({
   taskGet: (...args: unknown[]) => mockTaskGet(...args),
   taskUpdate: (...args: unknown[]) => mockTaskUpdate(...args),
   taskClose: (...args: unknown[]) => mockTaskClose(...args),
+  // decision-unblock's create_followup_dependencies effect uses this when a
+  // resolved decision carries follow-up plan tasks.
+  taskAddDep: jest.fn(),
   validateTaskId: (id: string) => id,
 }));
 
@@ -72,6 +75,17 @@ jest.mock("@/lib/tasks/task-auto-run-default", () => ({
 const mockTriggerAutoRunScan = jest.fn().mockResolvedValue(undefined);
 jest.mock("@/lib/runs/auto-run-service", () => ({
   triggerAutoRunScan: (...args: unknown[]) => mockTriggerAutoRunScan(...args),
+}));
+
+// decision-unblock reads the linked decision's live state; the route test
+// must not touch real decision storage.
+const mockGetDecision = jest.fn().mockReturnValue(null);
+const mockWithDecisionResolutionLock = jest.fn(
+  (...args: unknown[]) => (args[4] as () => unknown)(),
+);
+jest.mock("@/lib/decisions/decision-storage", () => ({
+  getDecision: (...args: unknown[]) => mockGetDecision(...args),
+  withDecisionResolutionLock: (...args: unknown[]) => mockWithDecisionResolutionLock(...args),
 }));
 
 jest.mock("@/lib/workspaces/workspace-params", () => ({
@@ -2099,5 +2113,297 @@ describe("GET /api/tasks/reconcile", () => {
     const infoCalls = mockWriteLog.mock.calls.filter((c) => c[2] === "info");
     expect(warnCalls.some((c) => String(c[4] || "").includes("TASK-003"))).toBe(false);
     expect(infoCalls.some((c) => String(c[4] || "").includes("TASK-003"))).toBe(true);
+  });
+
+  describe("decision_blocked tasks with a resolved linked decision", () => {
+    const taskListReturn = (metadata: Record<string, unknown>) => [
+      {
+        id: "FEAT-001",
+        title: "Decision and delivery flow",
+        status: "in_progress",
+        workspace_id: null,
+        issue_type: "feature",
+        metadata,
+      },
+    ];
+
+    const makeTaskListReturn = (metadata: Record<string, unknown>) =>
+      taskListReturn(metadata);
+
+    beforeEach(() => {
+      // The reducer's decision.resolved path with no follow-ups emits only
+      // resume effects: resume_original_task + scan_unblocked_auto_run_tasks.
+      // The route's deps turn those into one taskUpdate + a fire-and-forget
+      // scan; neither startTaskOutcomeAudit nor applyCompletionAudit runs.
+      mockTriggerAutoRunScan.mockResolvedValue(undefined);
+    });
+
+    it("unblocks via decision.resolved when the linked decision store record is approved", async () => {
+      mockGetDecision.mockReturnValue({ id: "6c1773c5", status: "approved", resolution: { taskId: undefined, taskIds: [] } });
+      mockTaskList.mockReturnValue(makeTaskListReturn({
+        lifecycle_phase: "decision_blocked",
+        decision_subtask_id: "DEC-001",
+        last_run_id: "run-anchored",
+        last_run_status: "stopped",
+        last_run_decision_required: true,
+      }));
+      mockTaskGet.mockImplementation((_orgId: string, taskId: string) => (
+        taskId === "DEC-001"
+          ? { id: "DEC-001", metadata: { decision_id: "6c1773c5" } }
+          : mockTaskList().find((task: { id: string }) => task.id === taskId)
+      ));
+
+      const res = await GET(makeRequest() as never);
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(mockWithDecisionResolutionLock).toHaveBeenCalled();
+      expect(mockTaskUpdate).toHaveBeenCalledWith(
+        "default",
+        "FEAT-001",
+        {
+          status: "open",
+          metadata: expect.objectContaining({
+            lifecycle_phase: "resuming",
+            last_run_id: undefined,
+            last_run_decision_required: false,
+            decision_gate_released_run_id: "run-anchored",
+          }),
+        },
+        "default",
+      );
+      expect(mockStartTaskOutcomeAudit).not.toHaveBeenCalled();
+      expect(mockApplyCompletionAudit).not.toHaveBeenCalled();
+      expect(mockTriggerAutoRunScan).toHaveBeenCalledWith("default", "default", "FEAT-001");
+      expect(body.data.results).toContainEqual(expect.objectContaining({
+        taskId: "FEAT-001",
+        previousStatus: "decision_blocked",
+        newStatus: "decision_released",
+      }));
+    });
+
+    it("unblocks via the decision subtask's approved mirror when the store record is missing", async () => {
+      mockGetDecision.mockReturnValue(null);
+      mockTaskList.mockReturnValue(makeTaskListReturn({
+        lifecycle_phase: "decision_blocked",
+        decision_subtask_id: "DEC-001",
+      }));
+      mockTaskGet.mockImplementation((_orgId: string, taskId: string) => (
+        taskId === "DEC-001"
+          ? { id: "DEC-001", metadata: { decision_status: "approved" } }
+          : mockTaskList().find((task: { id: string }) => task.id === taskId)
+      ));
+
+      const res = await GET(makeRequest() as never);
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(mockTaskUpdate).toHaveBeenCalledWith(
+        "default",
+        "FEAT-001",
+        {
+          status: "open",
+          metadata: expect.objectContaining({ lifecycle_phase: "resuming" }),
+        },
+        "default",
+      );
+      expect(body.data.results).toContainEqual(expect.objectContaining({
+        taskId: "FEAT-001",
+        newStatus: "decision_released",
+      }));
+    });
+
+    it("parks behind follow-ups instead of resuming when the resolution spawned plan tasks", async () => {
+      mockGetDecision.mockReturnValue({
+        id: "6c1773c5",
+        status: "approved",
+        resolution: { taskId: "EPIC-9", taskIds: ["TASK-201", "TASK-202"] },
+      });
+      mockTaskList.mockReturnValue(makeTaskListReturn({
+        lifecycle_phase: "decision_blocked",
+        decision_subtask_id: "DEC-001",
+      }));
+      mockTaskGet.mockImplementation((_orgId: string, taskId: string) => (
+        taskId === "DEC-001"
+          ? { id: "DEC-001", metadata: { decision_id: "6c1773c5" } }
+          : mockTaskList().find((task: { id: string }) => task.id === taskId)
+      ));
+
+      const res = await GET(makeRequest() as never);
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(mockTaskUpdate).toHaveBeenCalledWith(
+        "default",
+        "FEAT-001",
+        {
+          status: "blocked",
+          metadata: expect.objectContaining({
+            lifecycle_phase: "followup_blocked",
+            followup_task_ids: ["TASK-201", "TASK-202"],
+          }),
+        },
+        "default",
+      );
+      expect(body.data.results).toContainEqual(expect.objectContaining({
+        taskId: "FEAT-001",
+        newStatus: "decision_followups_created",
+      }));
+    });
+
+    it("is idempotent: a second reconcile pass after unblocking is a clean no-op", async () => {
+      mockGetDecision.mockReturnValue({ id: "6c1773c5", status: "approved", resolution: { taskId: undefined, taskIds: [] } });
+      mockTaskList.mockReturnValue(makeTaskListReturn({
+        lifecycle_phase: "decision_blocked",
+        decision_subtask_id: "DEC-001",
+        last_run_id: "run-anchored",
+        last_run_status: "stopped",
+        last_run_decision_required: true,
+      }));
+      mockTaskGet.mockImplementation((_orgId: string, taskId: string) => (
+        taskId === "DEC-001"
+          ? { id: "DEC-001", metadata: { decision_id: "6c1773c5" } }
+          : mockTaskList().find((task: { id: string }) => task.id === taskId)
+      ));
+
+      const first = await GET(makeRequest() as never);
+      const firstBody = await first.json();
+      expect(firstBody.data.results).toContainEqual(expect.objectContaining({
+        taskId: "FEAT-001",
+        newStatus: "decision_released",
+      }));
+
+      // Second pass: the task now reads back in the released state the first
+      // pass wrote — lifecycle_phase moved off decision_blocked, so the
+      // filter selects nothing and no further lifecycle work happens.
+      mockTaskList.mockReturnValue(makeTaskListReturn({
+        lifecycle_phase: "resuming",
+        decision_gate_released_run_id: "run-anchored",
+        last_run_status: "retry_requested",
+      }));
+      mockTaskUpdate.mockClear();
+
+      const second = await GET(makeRequest() as never);
+      const secondBody = await second.json();
+
+      expect(secondBody.data.results).toEqual([]);
+      expect(secondBody.data.reconciled).toBe(0);
+      expect(mockWithDecisionResolutionLock).toHaveBeenCalledTimes(1);
+      const lifecycleUpdates = mockTaskUpdate.mock.calls.filter(
+        (call) => call[0] === "default" && call[1] === "FEAT-001",
+      );
+      expect(lifecycleUpdates).toHaveLength(0);
+    });
+
+    it("is idempotent inside the lock: a concurrent task re-read that already left decision_blocked stops the second release", async () => {
+      mockGetDecision.mockReturnValue({ id: "6c1773c5", status: "approved", resolution: { taskId: undefined, taskIds: [] } });
+      mockTaskList.mockReturnValue(makeTaskListReturn({
+        lifecycle_phase: "decision_blocked",
+        decision_subtask_id: "DEC-001",
+      }));
+      mockTaskGet.mockImplementation((_orgId: string, taskId: string) => {
+        if (taskId === "DEC-001") return { id: "DEC-001", metadata: { decision_id: "6c1773c5" } };
+        // The re-read INSIDE the lock sees the task already released: the
+        // reducer must not run a second time even though the filter selected
+        // the stale decision_blocked row.
+        return { id: "FEAT-001", metadata: { lifecycle_phase: "resuming", decision_gate_released_run_id: "run-x" } };
+      });
+
+      const res = await GET(makeRequest() as never);
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(mockTaskUpdate).not.toHaveBeenCalledWith(
+        "default",
+        "FEAT-001",
+        expect.anything(),
+        "default",
+      );
+      expect(body.data.results).toEqual([]);
+      expect(mockWriteLog).toHaveBeenCalledWith(
+        "default",
+        "default",
+        "info",
+        "task-reconciler",
+        "task FEAT-001: linked decision not applied",
+        "task lifecycle is no longer decision_blocked",
+      );
+    });
+
+    it("does not re-block on the stale anchored terminal run while the gate is being released", async () => {
+      // Anchored run is terminal AND still owned by the task, with auto-run
+      // auditing enabled: the terminal-run sweep WOULD re-enter applyExecutionLifecycle
+      // if the unblock pass had not already consumed the gate. The pre-filter
+      // must guarantee the decision sweep wins.
+      mockGetDecision.mockReturnValue({ id: "6c1773c5", status: "approved", resolution: { taskId: undefined, taskIds: [] } });
+      mockTaskList.mockReturnValue(makeTaskListReturn({
+        auto_run: true,
+        lifecycle_phase: "decision_blocked",
+        decision_subtask_id: "DEC-001",
+        last_run_id: "run-anchored",
+        last_run_status: "stopped",
+        last_run_decision_required: true,
+      }));
+      mockReadFileSync.mockReturnValue(JSON.stringify({
+        id: "run-anchored",
+        taskId: "FEAT-001",
+        status: "stopped",
+      }));
+      mockTaskGet.mockImplementation((_orgId: string, taskId: string) => (
+        taskId === "DEC-001"
+          ? { id: "DEC-001", metadata: { decision_id: "6c1773c5" } }
+          : mockTaskList().find((task: { id: string }) => task.id === taskId)
+      ));
+
+      const res = await GET(makeRequest() as never);
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(mockTaskUpdate).toHaveBeenCalledWith(
+        "default",
+        "FEAT-001",
+        {
+          status: "open",
+          metadata: expect.objectContaining({
+            lifecycle_phase: "resuming",
+            decision_gate_released_run_id: "run-anchored",
+          }),
+        },
+        "default",
+      );
+      expect(body.data.results).toContainEqual(expect.objectContaining({
+        taskId: "FEAT-001",
+        newStatus: "decision_released",
+      }));
+    });
+
+    it("leaves the task untouched when the linked decision is unresolved", async () => {
+      mockGetDecision.mockReturnValue({ id: "6c1773c5", status: "pending" });
+      mockTaskList.mockReturnValue(makeTaskListReturn({
+        lifecycle_phase: "decision_blocked",
+        decision_subtask_id: "DEC-001",
+        last_run_decision_required: true,
+      }));
+      mockTaskGet.mockImplementation((_orgId: string, taskId: string) => (
+        taskId === "DEC-001"
+          ? { id: "DEC-001", metadata: { decision_id: "6c1773c5" } }
+          : mockTaskList().find((task: { id: string }) => task.id === taskId)
+      ));
+
+      const res = await GET(makeRequest() as never);
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(mockWithDecisionResolutionLock).not.toHaveBeenCalled();
+      expect(mockTaskUpdate).not.toHaveBeenCalledWith(
+        "default",
+        "FEAT-001",
+        expect.anything(),
+        "default",
+      );
+      expect(mockStartTaskOutcomeAudit).not.toHaveBeenCalled();
+      expect(mockApplyCompletionAudit).not.toHaveBeenCalled();
+      expect(body.data.results).toEqual([]);
+    });
   });
 });
