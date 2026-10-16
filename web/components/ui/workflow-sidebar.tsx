@@ -29,7 +29,8 @@ export function WorkflowSidebarPane({
       data-testid="workflow-sidebar-pane"
       data-workflow-sidebar-pane=""
       className={cn(
-        "relative flex shrink-0 flex-col overflow-hidden rounded-xl border border-border/60 bg-muted",
+        // max-w-full: a saved desktop width must never overflow a phone viewport
+        "relative flex max-w-full shrink-0 flex-col overflow-hidden rounded-xl border border-border/60 bg-muted",
         className
       )}
       style={style}
@@ -209,6 +210,38 @@ export function WorkflowSidebarToggleFilter<T extends string = string>({
         );
       })}
     </div>
+  );
+}
+
+interface WorkflowSidebarSelectProps<T extends string = string> {
+  options: Array<WorkflowSidebarOption<T>>;
+  value: T;
+  onChange: (value: T) => void;
+  "aria-label"?: string;
+  className?: string;
+}
+
+export function WorkflowSidebarSelect<T extends string = string>({
+  options,
+  value,
+  onChange,
+  "aria-label": ariaLabel,
+  className,
+}: WorkflowSidebarSelectProps<T>) {
+  return (
+    <select
+      value={value}
+      onChange={(event) => onChange(event.target.value as T)}
+      aria-label={ariaLabel}
+      data-workflow-sidebar-control=""
+      className={cn("w-full rounded-md bg-card px-2 py-1.5 text-[10px] text-muted-foreground", className)}
+    >
+      {options.map((option) => (
+        <option key={option.value} value={option.value}>
+          {option.label}
+        </option>
+      ))}
+    </select>
   );
 }
 

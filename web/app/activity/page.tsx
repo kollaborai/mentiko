@@ -28,6 +28,7 @@ import { WaveSpinner } from "@/components/ui/wave-spinner";
 import { EmptyState } from "@/components/common/empty-state";
 import {
   WorkflowSidebarPane,
+  WorkflowSidebarFilters,
   WorkflowSidebarItem,
   WorkflowSidebarResizeHandle,
   WorkflowSidebarSegmentedControl,
@@ -366,13 +367,13 @@ function LegacyFeed({ sidebarWidth, onDragStart }: {
     <div className="flex-1 flex gap-2 overflow-hidden pl-2 sm:pl-4">
       {/* Left: event list (resizable sidebar) */}
       <WorkflowSidebarPane style={{ width: sidebarWidth }}>
-        <div className="shrink-0 space-y-2 bg-accent p-3">
+        <WorkflowSidebarFilters>
           <WorkflowSidebarSegmentedControl
             options={feedFilters}
             value={filter}
             onChange={setFilter}
           />
-        </div>
+        </WorkflowSidebarFilters>
 
         {loading ? (
           <div className="flex items-center justify-center py-12">
@@ -578,7 +579,7 @@ function OperationsTimeline({ sidebarWidth, onDragStart }: {
     <div className="flex-1 flex gap-2 overflow-hidden pl-2 sm:pl-4">
       {/* Left: timeline (resizable sidebar) */}
       <WorkflowSidebarPane style={{ width: sidebarWidth }} className="hidden md:flex">
-        <div className="shrink-0 space-y-2 bg-accent p-3">
+        <WorkflowSidebarFilters>
           <WorkflowSidebarSegmentedControl
             options={timelineFilters}
             value={filter}
@@ -593,7 +594,7 @@ function OperationsTimeline({ sidebarWidth, onDragStart }: {
             value={range}
             onChange={setRange}
           />
-        </div>
+        </WorkflowSidebarFilters>
 
         {timeline.length === 0 ? (
           <div className="flex-1 flex items-center justify-center p-6">
@@ -729,21 +730,18 @@ function ActivityPageContent() {
         docs={[
           { label: "Activity Guide", href: "/docs/activity", icon: ActivityFilled },
         ]}
-      />
-
-      <div className="shrink-0 flex items-center px-2 sm:px-4 pb-2">
-        <div className="w-[320px]">
-          <WorkflowSidebarSegmentedControl
-            options={[
-              { value: "operations" as PageView, label: "Operations" },
-              { value: "feed" as PageView, label: "Feed" },
-              { value: "pulse" as PageView, label: "Pulse" },
-            ]}
-            value={pageView}
-            onChange={setPageView}
-          />
-        </div>
-      </div>
+      >
+        <WorkflowSidebarSegmentedControl
+          options={[
+            { value: "operations" as PageView, label: "Operations" },
+            { value: "feed" as PageView, label: "Feed" },
+            { value: "pulse" as PageView, label: "Pulse" },
+          ]}
+          value={pageView}
+          onChange={setPageView}
+          className="mt-3 w-fit"
+        />
+      </PageBanner>
 
       {pageView === "operations" ? (
         <OperationsTimeline sidebarWidth={sidebarWidth} onDragStart={onDragStart} />

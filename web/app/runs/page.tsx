@@ -34,6 +34,7 @@ import {
   WorkflowSidebarPane,
   WorkflowSidebarResizeHandle,
   WorkflowSidebarSearchInput,
+  WorkflowSidebarSelect,
   WorkflowSidebarToggleFilter,
   WorkflowSidebarVisibilityToggleGroup,
   matchesToggleFilter,
@@ -563,26 +564,23 @@ function RunsPageContent() {
               onChange={setFilterStatus}
             />
             {uniqueChains.length > 0 && (
-              <select
+              <WorkflowSidebarSelect
+                options={[{ value: "all", label: "All chains" }, ...uniqueChains.map((chain) => ({ value: chain, label: chain }))]}
                 value={chainFilter}
-                onChange={(e) => setChainFilter(e.target.value)}
-                className="w-full text-[10px] bg-card rounded-md px-2 py-1.5 text-muted-foreground"
-              >
-                <option value="all">All chains</option>
-                {uniqueChains.map((chain) => (
-                  <option key={chain} value={chain}>{chain}</option>
-                ))}
-              </select>
+                onChange={setChainFilter}
+                aria-label="Filter by chain"
+              />
             )}
-            <select
+            <WorkflowSidebarSelect<SortBy>
+              options={[
+                { value: "started", label: "Sort: Started" },
+                { value: "duration", label: "Sort: Duration" },
+                { value: "chain", label: "Sort: Chain" },
+              ]}
               value={sortBy}
-              onChange={(e) => setSortBy(e.target.value as SortBy)}
-              className="w-full text-[10px] bg-card rounded-md px-2 py-1.5 text-muted-foreground"
-            >
-              <option value="started">Sort: Started</option>
-              <option value="duration">Sort: Duration</option>
-              <option value="chain">Sort: Chain</option>
-            </select>
+              onChange={setSortBy}
+              aria-label="Sort runs"
+            />
             <WorkflowSidebarVisibilityToggleGroup
               options={[
                 { value: "user", label: "User", active: showUserRuns, count: userRunCount },

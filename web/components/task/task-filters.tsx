@@ -10,6 +10,7 @@ import type {
 import {
   WorkflowSidebarFilters,
   WorkflowSidebarSearchInput,
+  WorkflowSidebarSelect,
   WorkflowSidebarToggleFilter,
 } from "@/components/ui/workflow-sidebar";
 
@@ -52,10 +53,10 @@ const typeOptions: { value: TaskFilterType; label: string }[] = [
 ];
 
 const sortOptions: { value: TaskSortBy; label: string }[] = [
-  { value: "priority", label: "Priority" },
-  { value: "updated", label: "Updated" },
-  { value: "created", label: "Created" },
-  { value: "title", label: "Title" },
+  { value: "priority", label: "Sort: Priority" },
+  { value: "updated", label: "Sort: Updated" },
+  { value: "created", label: "Sort: Created" },
+  { value: "title", label: "Sort: Title" },
 ];
 
 export function TaskFilters({
@@ -77,7 +78,7 @@ export function TaskFilters({
   onGenerate,
 }: TaskFiltersProps) {
   return (
-    <WorkflowSidebarFilters className="space-y-1.5 bg-muted/60 p-2.5">
+    <WorkflowSidebarFilters>
       <div className="flex items-center gap-1.5">
         <WorkflowSidebarSearchInput
           value={searchQuery}
@@ -95,16 +96,20 @@ export function TaskFilters({
         value={filterStatus}
         onChange={onFilterStatusChange}
       />
+      {/* eight types: tighter padding keeps one row at the 280px minimum width */}
       <WorkflowSidebarToggleFilter
         options={typeOptions}
         value={filterType}
         onChange={onFilterTypeChange}
-        buttonClassName="text-[9px]"
+        buttonClassName="px-0.5"
+      />
+      <WorkflowSidebarSelect
+        options={sortOptions}
+        value={sortBy}
+        onChange={onSortChange}
+        aria-label="Sort tasks"
       />
       <div className="flex items-center justify-between gap-2">
-        <span className="text-[10px] text-muted-foreground">
-          {filteredCount} of {totalCount}
-        </span>
         <div className="flex items-center gap-1.5">
           {onToggleSelectMode && (
             <Button
@@ -129,24 +134,10 @@ export function TaskFilters({
               </Button>
             </>
           )}
-          <div className="flex items-center gap-1 rounded-md bg-card p-0.5">
-            {sortOptions.map((opt) => (
-              <button
-                key={opt.value}
-                type="button"
-                aria-pressed={sortBy === opt.value}
-                onClick={() => onSortChange(opt.value)}
-                className={
-                  sortBy === opt.value
-                    ? "h-6 rounded-sm bg-foreground px-2 text-[10px] text-background"
-                    : "h-6 rounded-sm px-2 text-[10px] text-muted-foreground hover:text-foreground"
-                }
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
         </div>
+        <span className="text-[10px] text-muted-foreground">
+          {filteredCount} of {totalCount}
+        </span>
       </div>
     </WorkflowSidebarFilters>
   );
