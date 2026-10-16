@@ -249,6 +249,9 @@ describe("runner-v2 completion entrypoint", () => {
       capacitySlotReleasedAt: expect.any(String),
     });
     expect(readFileSync(join(fixture.repositoryRoot, "left.ts"), "utf8")).toContain("agent-result");
+    // Merge-back already landed the node delta on the source worktree at node
+    // completion, so run-completion publication takes its already-published
+    // CAS path instead of applying anything.
     expect(JSON.parse(readFileSync(
       join(
         fixture.runDir,
@@ -258,7 +261,7 @@ describe("runner-v2 completion entrypoint", () => {
         "publication.json",
       ),
       "utf8",
-    ))).toMatchObject({ status: "published", runId: "run-123" });
+    ))).toMatchObject({ status: "already-published", runId: "run-123" });
     expect(existsSync(fixture.node.worktreeRoot)).toBe(false);
 
     const replay = runRunnerV2CompletionEntrypoint({

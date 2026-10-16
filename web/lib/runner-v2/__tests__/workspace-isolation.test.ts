@@ -12,9 +12,11 @@ import {
   finalizeGitNodeWorkspace,
   initializeGitRunWorkspaceIsolation,
   integrateGitNodeWorkspaceResult,
+  mergeGitNodeIntegration,
   publishGitRunWorkspaceResult,
   readGitNodeIntegrationResult,
   removeIntegratedGitNodeWorkspace,
+  WorkspaceMergeBackDriftError,
 } from "../workspace-isolation";
 import { captureGitWorkspaceSnapshot } from "../workspace-snapshot";
 
@@ -638,5 +640,130 @@ describe("Git node worktree isolation", () => {
     expect(recovered.status).toBe("published");
     expect(recovered.artifactPath).toContain(join("receipts", "publication.json"));
     expect(readFileSync(join(fixture.root, "left.ts"), "utf8")).toContain("agent-result");
+  });
+});
+
+describe("Git node worktree isolation merge-back", () => {
+  it("applies the integration delta to the main worktree at node completion", () => {
+    const fixture = repository();
+    const { baseline, runWorkspace } = initialize({ ...fixture, runId: "run-merge-back" });
+    const node = allocateGitNodeWorkspace({
+      runWorkspace,
+      agentId: "builder",
+      attemptId: "attempt-builder",
+    });
+    writeFileSync(join(node.workspacePath, "left.ts"), "export const left = 'merged-back';\n");
+    writeFileSync(join(node.workspacePath, "new-file.ts"), "export const fresh = true;\n");
+    const result = finalizeGitNodeWorkspace({ runWorkspace, node });
+    const integration = integrateGitNodeWorkspaceResult({ runWorkspace, result });
+
+    // Before merge-back the source worktree still sits at the baseline.
+    expect(readFileSync(join(fixture.root, "left.ts"), "utf8")).toContain("base");
+
+    expect(mergeGitNodeIntegration({ runWorkspace, integration })).toBe("applied");
+
+    // The delta landed: chain tree equals worktree tree, HEAD/branch untouched.
+    const integrationTree = git(
+      fixture.root,
+      "rev-parse",
+      `${integration.integrationCommit}^{tree}`,
+    );
+    const worktreeTree = captureGitWorkspaceSnapshot({
+      workspacePath: fixture.root,
+      scratchDir: fixture.scratch,
+      label: "run-merge-back-inspect",
+    }).snapshotTree;
+    expect(worktreeTree).toBe(integrationTree);
+    expect(readFileSync(join(fixture.root, "left.ts"), "utf8")).toContain("merged-back");
+    expect(readFileSync(join(fixture.root, "new-file.ts"), "utf8")).toContain("true");
+    expect(git(fixture.root, "rev-parse", "HEAD")).toBe(baseline.sourceHead);
+    // Worktree diffs against the untouched HEAD are exactly the node delta.
+    expect(git(fixture.root, "status", "--porcelain")).toBe("M left.ts\n?? new-file.ts");
+
+    // Run-completion publication degrades to the already-published path.
+    const publication = publishGitRunWorkspaceResult({
+      runWorkspace,
+      baseline,
+    });
+    expect(publication.status).toBe("already-published");
+    expect(publication.publishedSnapshot?.snapshotTree).toBe(integrationTree);
+  });
+
+  it("merge-back replay no-ops and publication stays already-published", () => {
+    const fixture = repository();
+    const { baseline, runWorkspace } = initialize({ ...fixture, runId: "run-merge-back-replay" });
+    const node = allocateGitNodeWorkspace({
+      runWorkspace,
+      agentId: "builder",
+      attemptId: "attempt-builder",
+    });
+    writeFileSync(join(node.workspacePath, "right.ts"), "export const right = 'replay';\n");
+    const result = finalizeGitNodeWorkspace({ runWorkspace, node });
+    const integration = integrateGitNodeWorkspaceResult({ runWorkspace, result });
+    expect(mergeGitNodeIntegration({ runWorkspace, integration })).toBe("applied");
+
+    // A later completion of the same node (or a crash replay) must be a no-op.
+    expect(mergeGitNodeIntegration({ runWorkspace, integration })).toBe("already-published");
+    const afterReplay = captureGitWorkspaceSnapshot({
+      workspacePath: fixture.root,
+      scratchDir: fixture.scratch,
+      label: "run-merge-back-replay-inspect",
+    }).snapshotTree;
+    expect(afterReplay).toBe(git(fixture.root, "rev-parse", `${integration.integrationCommit}^{tree}`));
+
+    // The second publication still takes the already-published CAS path.
+    const publication = publishGitRunWorkspaceResult({ runWorkspace, baseline });
+    expect(publication.status).toBe("already-published");
+    // No delta exists, so merge-back on an unchanged chain no-ops.
+    expect(mergeGitNodeIntegration({
+      runWorkspace,
+      integration: {
+        ...integration,
+        status: "no-changes",
+        integrationCommit: integration.previousIntegrationCommit,
+      },
+    })).toBe("no-changes");
+  });
+
+  it("merge-back fails loudly when the main worktree drifted from the chain", () => {
+    const fixture = repository();
+    const { baseline, runWorkspace } = initialize({ ...fixture, runId: "run-merge-back-drift" });
+    const node = allocateGitNodeWorkspace({
+      runWorkspace,
+      agentId: "builder",
+      attemptId: "attempt-builder",
+    });
+    writeFileSync(join(node.workspacePath, "left.ts"), "export const left = 'builder';\n");
+    const result = finalizeGitNodeWorkspace({ runWorkspace, node });
+    const integration = integrateGitNodeWorkspaceResult({ runWorkspace, result });
+
+    // An external writer touches the source worktree mid-run.
+    writeFileSync(join(fixture.root, "shared.ts"), "export const shared = 'user edit';\n");
+
+    let driftError: unknown;
+    try {
+      mergeGitNodeIntegration({ runWorkspace, integration });
+    } catch (error) {
+      driftError = error;
+    }
+    expect(driftError).toBeInstanceOf(WorkspaceMergeBackDriftError);
+    expect((driftError as Error).message).toContain(
+      "merge-back refused for attempt attempt-builder",
+    );
+    const conflictReceipt = JSON.parse(readFileSync(
+      (driftError as { conflictArtifactPath: string }).conflictArtifactPath,
+      "utf8",
+    ));
+    expect(conflictReceipt).toMatchObject({
+      kind: "git-run-workspace-merge-back-conflict",
+      runId: "run-merge-back-drift",
+      attemptId: "attempt-builder",
+      driftPaths: ["shared.ts"],
+    });
+    // The user edit is untouched: merge-back never applied or reverted it.
+    expect(readFileSync(join(fixture.root, "shared.ts"), "utf8")).toContain("user edit");
+    // Run-completion publication reports the drift via its normal conflict path.
+    const publication = publishGitRunWorkspaceResult({ runWorkspace, baseline });
+    expect(publication.status).toBe("source-changed");
   });
 });

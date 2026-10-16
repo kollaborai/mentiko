@@ -137,10 +137,39 @@ export interface GitRunWorkspacePublicationResult {
   rollback?: GitRunWorkspacePublicationRollback;
 }
 
+export interface GitRunWorkspaceMergeBackResult {
+  version: typeof WORKSPACE_ISOLATION_VERSION;
+  kind: "git-run-workspace-merge-back";
+  runId: string;
+  previousIntegrationCommit: string;
+  integrationCommit: string;
+  sourceTreeBefore: string;
+  sourceTreeAfter: string;
+  artifactPath: string;
+  appliedAt: string;
+}
+
 export class WorkspaceIsolationError extends Error {
   constructor(message: string, readonly cause?: unknown) {
     super(message);
     this.name = "WorkspaceIsolationError";
+  }
+}
+
+/**
+ * The main source worktree no longer matches the integration chain, so the
+ * merge-back delta cannot land. The refusal is recorded durably; the
+ * run-completion publication CAS reports the same drift loudly as
+ * source-changed and blocks the run.
+ */
+export class WorkspaceMergeBackDriftError extends WorkspaceIsolationError {
+  constructor(
+    message: string,
+    readonly conflictArtifactPath: string,
+    readonly driftPaths: string[],
+  ) {
+    super(message);
+    this.name = "WorkspaceMergeBackDriftError";
   }
 }
 
@@ -1418,6 +1447,186 @@ export function currentGitRunIntegrationCommit(
     statePath: runWorkspace.statePath,
   });
   return requiredRef(current.sourceRepositoryRoot, current.integrationRef);
+}
+
+function mergeBackArtifactPath(
+  runWorkspace: GitRunWorkspaceIsolation,
+  integrationCommit: string,
+): string {
+  return join(
+    runWorkspace.isolationRoot,
+    "receipts",
+    "merge-backs",
+    `${digest(integrationCommit, 32)}.json`,
+  );
+}
+
+function assertMergeBackReceipt(
+  runWorkspace: GitRunWorkspaceIsolation,
+  receipt: GitRunWorkspaceMergeBackResult,
+  artifactPath: string,
+): GitRunWorkspaceMergeBackResult {
+  if (
+    receipt.version !== WORKSPACE_ISOLATION_VERSION
+    || receipt.kind !== "git-run-workspace-merge-back"
+    || receipt.runId !== runWorkspace.runId
+    || receipt.artifactPath !== artifactPath
+    || typeof receipt.appliedAt !== "string"
+    || !Number.isFinite(Date.parse(receipt.appliedAt))
+    || receipt.sourceTreeAfter !== runGit(
+      runWorkspace.sourceRepositoryRoot,
+      ["rev-parse", `${receipt.integrationCommit}^{tree}`],
+    )
+  ) {
+    throw new WorkspaceIsolationError(`run workspace merge-back identity mismatch: ${artifactPath}`);
+  }
+  return receipt;
+}
+
+/**
+ * Merge-back: apply the private integration chain delta
+ * (previousIntegrationCommit -> integrationCommit) onto the main source
+ * worktree as soon as a builder node completes, instead of deferring every
+ * byte to run completion. The worktree tree is moved to the chain tree while
+ * HEAD, the branch, and the index stay untouched, so the run-completion
+ * publication CAS observes its already-published path and never re-applies
+ * anything. Each applied delta gets an immutable receipt; replays of an
+ * already-applied integration commit are no-ops. Any drift between the source
+ * worktree and the previous chain commit fails loudly instead of silently
+ * skipping the merge-back.
+ */
+export function mergeGitNodeIntegration(input: {
+  runWorkspace: GitRunWorkspaceIsolation;
+  integration: GitNodeIntegrationResult;
+  now?: Date;
+}): "applied" | "no-changes" | "already-published" {
+  const runWorkspace = assertRunIsolation(input.runWorkspace, {
+    runId: input.runWorkspace.runId,
+    statePath: input.runWorkspace.statePath,
+  });
+  const integrationTree = runGit(
+    runWorkspace.sourceRepositoryRoot,
+    ["rev-parse", `${input.integration.integrationCommit}^{tree}`],
+  );
+  const previousTree = runGit(
+    runWorkspace.sourceRepositoryRoot,
+    ["rev-parse", `${input.integration.previousIntegrationCommit}^{tree}`],
+  );
+  // no-changes, already-integrated, and conflict receipts never move the
+  // chain tree, so there is no delta to land on the source worktree.
+  if (integrationTree === previousTree) return "no-changes";
+
+  const artifactPath = mergeBackArtifactPath(runWorkspace, input.integration.integrationCommit);
+  const appliedAt = (input.now || new Date()).toISOString();
+  // Same exclusive claim as run-completion publication: merge-back and the
+  // publication CAS can never race on the same source worktree.
+  const mergeBackClaim = join(
+    runWorkspace.gitCommonDir,
+    "mentiko-workspace-publication-claims",
+    `${digest(runWorkspace.sourceWorkspacePath, 32)}.claim`,
+  );
+  return withExclusiveFileClaim(mergeBackClaim, () => {
+    if (existsSync(artifactPath)) {
+      assertMergeBackReceipt(
+        runWorkspace,
+        readJson<GitRunWorkspaceMergeBackResult>(artifactPath),
+        artifactPath,
+      );
+      return "already-published";
+    }
+    const scratchDir = createWorkspaceSnapshotScratchDir(runWorkspace.runDir);
+    const before = captureGitWorkspaceSnapshot({
+      workspacePath: runWorkspace.sourceWorkspacePath,
+      scratchDir,
+      label: `${runWorkspace.runId}-merge-back-cas`,
+      capturedAt: appliedAt,
+    });
+    if (before.snapshotTree !== previousTree) {
+      const drift = runGitResult(runWorkspace.sourceRepositoryRoot, [
+        "diff",
+        "--name-only",
+        previousTree,
+        before.snapshotTree,
+      ]);
+      const driftPaths = drift.status === 0
+        ? drift.stdout.toString("utf8").trim().split("\n").filter(Boolean)
+        : [];
+      const conflictArtifactPath = join(
+        runWorkspace.isolationRoot,
+        "receipts",
+        "merge-back-conflicts",
+        `${digest(input.integration.attemptId, 32)}.json`,
+      );
+      writeJsonOnce(conflictArtifactPath, {
+        version: WORKSPACE_ISOLATION_VERSION,
+        kind: "git-run-workspace-merge-back-conflict",
+        runId: runWorkspace.runId,
+        attemptId: input.integration.attemptId,
+        expectedTree: previousTree,
+        observedTree: before.snapshotTree,
+        driftPaths,
+        refusedAt: appliedAt,
+      });
+      throw new WorkspaceMergeBackDriftError(
+        `main worktree drifted from the run integration chain; merge-back refused for attempt ${input.integration.attemptId}${driftPaths.length ? `: ${driftPaths.join(", ")}` : ""}`,
+        conflictArtifactPath,
+        driftPaths,
+      );
+    }
+    const patch = runGitResult(runWorkspace.sourceRepositoryRoot, [
+      "diff",
+      "--binary",
+      "--full-index",
+      input.integration.previousIntegrationCommit,
+      input.integration.integrationCommit,
+      "--",
+      runWorkspace.relativeWorkspacePath,
+    ]);
+    if (patch.status !== 0) {
+      const detail = patch.stderr.toString("utf8").trim();
+      throw new WorkspaceIsolationError(
+        `merge-back diff failed for attempt ${input.integration.attemptId}${detail ? `: ${detail}` : ""}`,
+      );
+    }
+    runGitWithInput(runWorkspace.sourceRepositoryRoot, [
+      "apply",
+      "--check",
+      "--binary",
+      "--whitespace=nowarn",
+      "-",
+    ], patch.stdout);
+    runGitWithInput(runWorkspace.sourceRepositoryRoot, [
+      "apply",
+      "--binary",
+      "--whitespace=nowarn",
+      "-",
+    ], patch.stdout);
+    const verified = captureGitWorkspaceSnapshot({
+      workspacePath: runWorkspace.sourceWorkspacePath,
+      scratchDir,
+      label: `${runWorkspace.runId}-merge-back-verify`,
+      capturedAt: appliedAt,
+    });
+    if (verified.snapshotTree !== integrationTree) {
+      throw new WorkspaceIsolationError(
+        `merge-back verification failed for attempt ${input.integration.attemptId}:`
+        + ` worktree tree ${verified.snapshotTree} does not match integration tree ${integrationTree}`,
+      );
+    }
+    const candidate: GitRunWorkspaceMergeBackResult = {
+      version: WORKSPACE_ISOLATION_VERSION,
+      kind: "git-run-workspace-merge-back",
+      runId: runWorkspace.runId,
+      previousIntegrationCommit: input.integration.previousIntegrationCommit,
+      integrationCommit: input.integration.integrationCommit,
+      sourceTreeBefore: before.snapshotTree,
+      sourceTreeAfter: verified.snapshotTree,
+      artifactPath,
+      appliedAt,
+    };
+    writeJsonOnce(artifactPath, candidate);
+    return "applied";
+  }, { waitTimeoutMs: 30_000 });
 }
 
 /** Read the current private integration commit at the exact instant a delayed
