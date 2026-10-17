@@ -9,6 +9,7 @@ import {
 } from "@/lib/orgs/org-storage";
 import { Unauthorized, NotFound, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
+import { taskAttachmentsPurgeOrg } from "@/lib/tasks/task-attachment-store";
 
 export const dynamic = "force-dynamic";
 
@@ -105,6 +106,13 @@ export const DELETE = withErrorHandling(
     }
 
     await deleteOrg(namespaceId, org);
+
+    // FEAT-001/TASK-005: attachment rows + blobs must not outlive the org.
+    try {
+      taskAttachmentsPurgeOrg(org.id, namespaceId);
+    } catch {
+      // purge is best-effort; blob sweep reaps leftovers on next delete/init
+    }
 
     return apiSuccess({ deleted: true });
   }
