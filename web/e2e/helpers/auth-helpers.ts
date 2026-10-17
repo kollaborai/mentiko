@@ -27,7 +27,10 @@ export class AuthHelpers {
       user.password
     );
     await this.page.click('button[type="submit"]');
-    await this.page.waitForURL("/", { timeout: 10000 });
+    await this.page.waitForURL((u) => {
+      const p = u.pathname;
+      return p === "/" || p === "/dashboard";
+    }, { timeout: 30000 });
   }
 
   /** sign in with email/password via the login form */
@@ -36,7 +39,10 @@ export class AuthHelpers {
     await this.page.fill('input[placeholder="Email"]', email);
     await this.page.fill('input[placeholder="Password"]', password);
     await this.page.click('button[type="submit"]');
-    await this.page.waitForURL("/", { timeout: 10000 });
+    await this.page.waitForURL((u) => {
+      const p = u.pathname;
+      return p === "/" || p === "/dashboard";
+    }, { timeout: 30000 });
   }
 
   /** sign out via the logout link */

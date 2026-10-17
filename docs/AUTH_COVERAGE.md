@@ -322,6 +322,7 @@ Routes with explicit auth checks via `checkAuth`, `getServerSession`, `requirePe
 - system/stop-all/route.ts
 - system/viewport/route.ts
 - system/web-proxy/route.ts
+- tasks/[id]/attachments/[attachmentId]/route.ts
 - tasks/[id]/attachments/route.ts
 - tasks/[id]/attempts/route.ts
 - tasks/[id]/auto-run/route.ts

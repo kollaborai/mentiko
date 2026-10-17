@@ -6,6 +6,10 @@ import { CloseCircleFilled as X, MagicStarFilled as Sparkles, ArrowLeftFilled as
 import { Button } from "@/components/ui/button";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { unwrapApiData } from "@/lib/api/api-client";
+import {
+  TaskAttachmentStager,
+  uploadStagedAttachments,
+} from "./task-attachment-upload";
 
 interface GeneratedTask {
   title: string;
@@ -163,6 +167,10 @@ export function TaskGenerateDialog({
   const [parentPickerOpen, setParentPickerOpen] = useState(false);
   const [parentQuery, setParentQuery] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [stagedAttachments, setStagedAttachments] = useState<File[]>([]);
+  const [attachmentFailures, setAttachmentFailures] = useState<
+    { name: string; message: string }[]
+  >([]);
   const [createProgress, setCreateProgress] = useState<{ done: number; total: number } | null>(null);
 
   useEffect(() => {
@@ -185,6 +193,8 @@ export function TaskGenerateDialog({
     setCreateDecisionTask(initialMode === "decision");
     setManualTaskType("task");
     setManualPriority(2);
+    setStagedAttachments([]);
+    setAttachmentFailures([]);
     setParentPickerOpen(false);
     setParentQuery("");
     setCreateProgress(null);
@@ -299,13 +309,28 @@ export function TaskGenerateDialog({
     const [title, ...descriptionLines] = value.split(/\n+/);
 
     try {
-      await onCreate({
+      // ORDERING CONTRACT (FEAT-001/TASK-006): the task must exist before any
+      // attachment upload. Create first, then upload staged files against the
+      // returned id. Task creation success is never blocked by upload errors.
+      const newTaskId = await onCreate({
         title: title.trim(),
         description: descriptionLines.join("\n").trim(),
         type: manualTaskType,
         priority: manualPriority,
         parent: parent || undefined,
       });
+
+      if (stagedAttachments.length > 0 && newTaskId) {
+        const { failed } = await uploadStagedAttachments(newTaskId, stagedAttachments);
+        if (failed.length > 0) {
+          // surface failures, keep the dialog open so the user sees them
+          setAttachmentFailures(failed);
+          setStagedAttachments([]);
+          onRefresh?.();
+          return;
+        }
+      }
+
       onRefresh?.();
       resetForm();
       onClose();
@@ -746,6 +771,39 @@ export function TaskGenerateDialog({
                 {!createDecisionTask && (
                     manualTask ? (
                       <>
+                        <div className={optionGroupClass}>
+                          <span className={subOptionLabelClass}>Attachments</span>
+                          <TaskAttachmentStager
+                            staged={stagedAttachments}
+                            onStaged={setStagedAttachments}
+                            onRemove={(index) =>
+                              setStagedAttachments((prev) => prev.filter((_, i) => i !== index))
+                            }
+                          />
+                          {attachmentFailures.length > 0 && (
+                            <div className="mt-1.5 flex flex-wrap gap-1" data-testid="attachment-error-chips">
+                              {attachmentFailures.map((f) => (
+                                <span
+                                  key={f.name}
+                                  className="inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-[10px] bg-destructive/15 text-red-300"
+                                >
+                                  {f.name}: {f.message}
+                                  <button
+                                    type="button"
+                                    aria-label="Dismiss attachment error"
+                                    onClick={() =>
+                                      setAttachmentFailures((prev) => prev.filter((x) => x.name !== f.name))
+                                    }
+                                    className="text-current opacity-60 hover:opacity-100"
+                                  >
+                                    <X className="h-2.5 w-2.5" />
+                                  </button>
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
                         <div className={optionGroupClass}>
                           <span className={subOptionLabelClass}>Type</span>
                           <div className="flex flex-wrap items-center gap-1">

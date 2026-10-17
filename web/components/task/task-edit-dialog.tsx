@@ -5,6 +5,7 @@ import { CloseCircleFilled as X, Link2Filled as Link2 } from "@aliimam/icons";
 import { Button } from "@/components/ui/button";
 import type { Task } from "@/lib/tasks/task-types";
 import { useSharedChains } from "@/lib/chains/chains-store";
+import { TaskAttachments } from "./task-attachments";
 
 interface Chain {
   id: string;
@@ -108,6 +109,9 @@ export function TaskEditDialog({
             className="w-full h-24 px-2.5 py-2 text-xs bg-muted rounded-md outline-none placeholder:text-foreground/30 focus:bg-accent resize-none"
           />
         </div>
+
+        {/* image attachments: upload only against the existing task */}
+        <TaskAttachments taskId={task.id} editable />
 
         <div className="flex items-center gap-2">
           <div className="flex-1">
