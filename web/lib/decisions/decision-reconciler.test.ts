@@ -268,4 +268,70 @@ describe("decision reconciler", () => {
     };
     expect(ledger.entries).toEqual({});
   });
+
+  it("nudges a completion-audit decision stuck at briefed with an explicit selection and a completed plan", () => {
+    // Regression for decision 6c1773c5: an explicitly selected round-2 option
+    // (MCP ops select) whose round-3 plan run completed left the record at
+    // status "briefed" forever. No phase was generating, the finished run was
+    // already imported, so recovery had nothing to replay -- the periodic
+    // sweep is the only remaining path that nudges the driver, and the fixed
+    // driver turns that nudge into the resolve route. The reconciler must
+    // therefore keep advancing this exact shape.
+    const decision: Decision = {
+      id: "6c1773c5-stuck-briefed",
+      status: "briefed",
+      source: "completion-audit",
+      prompt: "unstick FEAT-001 via PR #13 fixes",
+      createdAt: "2026-10-16T18:36:00.000Z",
+      updatedAt: "2026-10-16T20:36:00.000Z",
+      workspacePath: "/workspace/mentiko",
+      options: [],
+      guidedFlow: {
+        currentRound: 3,
+        round1: { status: "in_progress", questions: [], answers: [] },
+        round2: {
+          status: "ready",
+          tailoredOptions: [],
+          selectedOptionId: "opt-b",
+          generationRunId: "run-round2",
+        },
+        round3: {
+          status: "ready",
+          generationRunId: "run-1792164017391-436afb2e",
+          plan: { summary: "plan", tasks: [], dependencies: [] },
+        },
+      },
+    };
+    const { deps, advance } = dependencies({
+      workspaces: [{ id: "mentiko", path: "/workspace/mentiko" }],
+      decisions: { "/workspace/mentiko": [decision] },
+      inspect: () => null,
+    });
+
+    const result = reconcileDecisions({
+      namespaceId: "ns",
+      orgId: "org",
+      codeRoot: "/code",
+      ledgerPath,
+      dependencies: deps,
+    });
+
+    expect(result).toMatchObject({
+      examined: 1,
+      activeGenerating: 0,
+      deadPointers: 0,
+      awaitingImports: 0,
+      recoveriesScheduled: 0,
+      replaysScheduled: 0,
+      errors: [],
+    });
+    expect(advance).toHaveBeenCalledTimes(1);
+    expect(advance).toHaveBeenCalledWith({
+      namespaceId: "ns",
+      orgId: "org",
+      decision,
+    });
+    // No recovery was needed, so the retry ledger must stay untouched.
+    expect(existsSync(ledgerPath)).toBe(false);
+  });
 });
