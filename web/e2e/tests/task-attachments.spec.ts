@@ -15,6 +15,7 @@ import { AuthHelpers } from "../helpers/auth-helpers";
 // per-test unique email: one shared address would 422 on the second signup
 let emailCounter = 0;
 const uniqueEmail = () => `e2e-attach-${Date.now()}-${++emailCounter}@test.local`;
+const runId = Date.now().toString(36);
 const password = ["test", "pass", "1234", "5678"].join("");
 
 // 1x1 PNG, valid magic bytes so the server-side sniff accepts it
@@ -62,12 +63,12 @@ test.describe("task image attachments (TASK-006)", () => {
     await expect(page.getByText(/will upload after create/i)).toBeVisible();
 
     // fill the manual prompt (first line = title) and create
-    await page.getByPlaceholder(/describe what needs to be done/i).fill("Attachment e2e task\ncreated by TASK-006 e2e");
+    await page.getByPlaceholder(/describe what needs to be done/i).fill(`Attachment e2e ${runId}\ncreated by TASK-006 e2e`);
     await page.getByRole("button", { name: "Create Task", exact: true }).click();
 
     // after create, the dialog closes; open the new task's detail
     await expect(page.getByText("Create Work Item", { exact: true })).toBeHidden();
-    await page.getByText("Attachment e2e task").first().click();
+    await page.getByText(`Attachment e2e ${runId}`).first().click();
 
     // detail view: attachments section shows the uploaded image
     const card = page.getByTestId("task-attachment-card");
@@ -102,22 +103,22 @@ test.describe("task image attachments (TASK-006)", () => {
 
     await expect(page.getByText(/will upload after create/i)).toBeVisible();
 
-    await page.getByPlaceholder(/describe what needs to be done/i).fill("Paste e2e task\nvia clipboard");
+    await page.getByPlaceholder(/describe what needs to be done/i).fill(`Paste e2e ${runId}\nvia clipboard`);
     await page.getByRole("button", { name: "Create Task", exact: true }).click();
     await expect(page.getByText("Create Work Item", { exact: true })).toBeHidden();
 
-    await page.getByText("Paste e2e task").first().click();
+    await page.getByText(`Paste e2e ${runId}`).first().click();
     await expect(page.getByTestId("task-attachment-card").getByText("pasted.png")).toBeVisible();
   });
 
   test("edit flow: picker uploads against the existing task and renders", async ({ page }) => {
     // seed a task through the create dialog (no attachments)
     await openCreateDialog(page);
-    await page.getByPlaceholder(/describe what needs to be done/i).fill("Edit attach task\nseed");
+    await page.getByPlaceholder(/describe what needs to be done/i).fill(`Edit attach ${runId}\nseed`);
     await page.getByRole("button", { name: "Create Task", exact: true }).click();
     await expect(page.getByText("Create Work Item", { exact: true })).toBeHidden();
 
-    await page.getByText("Edit attach task").first().click();
+    await page.getByText(`Edit attach ${runId}`).first().click();
 
     // detail view -> Edit button (Pencil icon, text "Edit") opens the dialog
     await page.getByRole("button", { name: "Edit", exact: true }).click();
@@ -146,7 +147,7 @@ test.describe("task image attachments (TASK-006)", () => {
     // let client hydration settle before clicking: a click during hydration
     // hits the SSR markup and the detail's fetch never fires
     await page.waitForTimeout(1000);
-    await page.getByText("Edit attach task").first().click();
+    await page.getByText(`Edit attach ${runId}`).first().click();
     // dev-mode first fetch of the attachments list can be slow: give it room
     await expect(
       page.getByTestId("task-attachment-card").getByText("edit-added.png"),
@@ -165,7 +166,7 @@ test.describe("task image attachments (TASK-006)", () => {
     });
     await expect(page.getByText(/will upload after create/i)).toBeVisible();
 
-    await page.getByPlaceholder(/describe what needs to be done/i).fill("Empty e2e task\nshould show chip");
+    await page.getByPlaceholder(/describe what needs to be done/i).fill(`Empty e2e ${runId}\nshould show chip`);
     await page.getByRole("button", { name: "Create Task", exact: true }).click();
 
     const chips = page.getByTestId("attachment-error-chips");
