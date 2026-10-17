@@ -45,8 +45,8 @@ function makePostRequest(body: Record<string, unknown>) {
     headers: new Headers({ "content-type": "application/json" }),
     nextUrl: { search: "" },
     arrayBuffer: async () => {
-      const bytes = Buffer.from(JSON.stringify(body));
-      return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+      const bytes = Uint8Array.from(Buffer.from(JSON.stringify(body)));
+      return bytes.buffer;
     },
   } as never;
 }
@@ -87,5 +87,28 @@ describe("/api/kollabor/engine/[...path]", () => {
       error: "session token unavailable: BETTER_AUTH_SECRET missing",
     });
     expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  test("honors a valid client session id so accepted creates can be reconciled", async () => {
+    (mintSessionToken as jest.Mock).mockResolvedValue("signed-session-token");
+
+    const request = makePostRequest({
+        session_id: "sess_client_stable_123",
+        profile: "mentiko",
+        agent: "mentiko",
+        mcp_servers: ["mentiko"],
+      });
+    const res = await POST(
+      request,
+      { params: Promise.resolve({ path: ["sessions"] }) },
+    );
+
+    expect(res.status).toBe(200);
+    expect(mintSessionToken).toHaveBeenCalledWith(expect.objectContaining({ jti: "sess_client_stable_123" }));
+    const [, init] = (global.fetch as jest.Mock).mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      session_id: "sess_client_stable_123",
+      user_token: "signed-session-token",
+    });
   });
 });

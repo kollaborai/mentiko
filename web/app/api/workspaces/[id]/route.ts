@@ -4,6 +4,7 @@ import { listWorkspaces, removeWorkspace, updateWorkspace, checkWorkspaceAccess 
 import type { WorkspaceExecution, WorkspaceModel, WorkspaceProject } from "@/lib/workspaces/workspace-storage";
 import { Unauthorized, NotFound, Forbidden } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
+import { readOnboardingState, writeOnboardingState } from "@/lib/onboarding/onboarding-state";
 import { getSessionUser } from "@/lib/auth/auth-bridge";
 
 export const dynamic = "force-dynamic";
@@ -136,6 +137,17 @@ export const DELETE = withErrorHandling(async (
     throw new Forbidden("You do not have access to this workspace");
   }
 
-  removeWorkspace(namespaceId, orgId, decodeURIComponent(id));
+  const workspaceId = decodeURIComponent(id);
+  removeWorkspace(namespaceId, orgId, workspaceId);
+
+  // don't leave onboarding pointing at a deleted workspace (ghost state that
+  // bricks the setup wizard's project/run steps)
+  const onboarding = readOnboardingState(namespaceId, orgId);
+  if (onboarding.workspace.id === workspaceId) {
+    onboarding.workspace = { status: "not_started", id: null };
+    onboarding.readiness = { status: "not_started", runId: null, operationId: null };
+    writeOnboardingState(namespaceId, orgId, onboarding, onboarding.revision);
+  }
+
   return apiSuccess({ success: true });
 });

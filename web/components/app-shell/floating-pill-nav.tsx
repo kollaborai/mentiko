@@ -32,6 +32,7 @@ import {
   isFloatingPanelRoute,
 } from "@/lib/ui/floating-app-panel-routing";
 import { FLOATING_SURFACE_Z } from "@/lib/ui/floating-surface-z";
+import { usePillNavInsets, type PillNavVerticalBounds } from "@/components/app-shell/use-pill-nav-insets";
 
 
 // ─── categories ──────────────────────────────────────────────
@@ -576,17 +577,22 @@ function getLiquidStyle(
   };
 }
 
-function getDockedStyle(pos: PillPosition): React.CSSProperties {
-  if (pos.edge === "top") return { top: 0, left: `${pos.offset}%`, transform: "translateX(-50%)", borderRadius: "0 0 24px 24px" };
-  if (pos.edge === "bottom") return { bottom: 0, left: `${pos.offset}%`, transform: "translateX(-50%)", borderRadius: "24px 24px 0 0" };
-  if (pos.edge === "left") return { left: 0, top: `${pos.offset}%`, transform: "translateY(-50%)", borderRadius: "0 24px 24px 0" };
-  return { right: 0, top: `${pos.offset}%`, transform: "translateY(-50%)", borderRadius: "24px 0 0 24px" };
+function getDockedStyle(pos: PillPosition, verticalBounds: PillNavVerticalBounds | null): React.CSSProperties {
+  const horizontalCenter = `clamp(var(--mentiko-pill-nav-horizontal-center-min, 0px), ${pos.offset}%, var(--mentiko-pill-nav-horizontal-center-max, 100vw))`;
+  const verticalCenter = verticalBounds
+    ? `clamp(${verticalBounds.minCenter}px, ${pos.offset}%, ${verticalBounds.maxCenter}px)`
+    : `${pos.offset}%`;
+  if (pos.edge === "top") return { top: 0, left: horizontalCenter, transform: "translateX(-50%)", borderRadius: "0 0 24px 24px" };
+  if (pos.edge === "bottom") return { bottom: 0, left: horizontalCenter, transform: "translateX(-50%)", borderRadius: "24px 24px 0 0" };
+  if (pos.edge === "left") return { left: 0, top: verticalCenter, transform: "translateY(-50%)", borderRadius: "0 24px 24px 0" };
+  return { right: 0, top: verticalCenter, transform: "translateY(-50%)", borderRadius: "24px 0 0 24px" };
 }
 
 // ─── component ──────────────────────────────────────────────
 
 const MOBILE_NAV_HEIGHT = 58;
 const MOBILE_NAV_OFFSET = `calc(${MOBILE_NAV_HEIGHT}px + env(safe-area-inset-top, 0px))`;
+const PILL_DOCK_TRANSITION = "left 0.25s cubic-bezier(0.25, 0.46, 0.45, 0.94), right 0.25s cubic-bezier(0.25, 0.46, 0.45, 0.94), bottom 0.25s cubic-bezier(0.25, 0.46, 0.45, 0.94), transform 0.25s cubic-bezier(0.25, 0.46, 0.45, 0.94), border-radius 0.25s cubic-bezier(0.25, 0.46, 0.45, 0.94)";
 
 function useIsMobile() {
   const [mobile, setMobile] = useState(false);
@@ -612,7 +618,6 @@ export function FloatingPillNav() {
   const [isDragging, setIsDragging] = useState(false);
   const [dragPos, setDragPos] = useState<{ x: number; y: number } | null>(null);
   const [edgeProximity, setEdgeProximity] = useState<{ edge: SnapEdge; pull: number; locked: boolean }>({ edge: "top", pull: 0, locked: true });
-  const [isSnapping, setIsSnapping] = useState(false);
   const [recents, setRecents] = useState<string[]>([]);
   const [isLocked, setIsLocked] = useState(true);
   const [pillScale, setPillScale] = useState(1);
@@ -656,6 +661,12 @@ export function FloatingPillNav() {
   const summonStartTime = useRef<number | null>(null);
   const summonRaf = useRef<number | null>(null);
   const summonStartPos = useRef<{ x: number; y: number } | null>(null);
+
+  const verticalDockBounds = usePillNavInsets(pillRef, {
+    edge: isMobile ? "top" : position.edge,
+    scale: isMobile ? 1 : pillScale,
+    suspended: isDragging || summonTarget !== null,
+  });
 
   // hydration: load from localStorage after mount
   useEffect(() => { if (!isMobile) setPosition(loadPosition()); }, [isMobile]);
@@ -720,8 +731,6 @@ export function FloatingPillNav() {
     const newPos = snapToEdge(target.x, target.y);
     setPosition(newPos);
     savePosition(newPos);
-    setIsSnapping(true);
-    setTimeout(() => setIsSnapping(false), 500);
     cancelSummon();
   }, [cancelSummon]);
 
@@ -862,7 +871,6 @@ export function FloatingPillNav() {
     };
     hasMoved.current = false;
     setIsDragging(true);
-    setIsSnapping(false);
     cancelSummon();
   }, [cancelSummon]);
 
@@ -883,13 +891,9 @@ export function FloatingPillNav() {
     setIsDragging(false);
     if (hasMoved.current && dragPos) {
       const newPos = snapToEdge(dragPos.x, dragPos.y);
-      setIsSnapping(true);
       setPosition(newPos);
       savePosition(newPos);
-      setTimeout(() => {
-        setIsSnapping(false);
-        setEdgeProximity({ edge: newPos.edge, pull: 0, locked: false });
-      }, 500);
+      setEdgeProximity({ edge: newPos.edge, pull: 0, locked: false });
     }
     setDragPos(null);
     dragStart.current = null;
@@ -1125,7 +1129,7 @@ export function FloatingPillNav() {
     : summonStyle
     ? { ...summonStyle, transform: `translate(-50%, -50%) scale(${pillScale})`, transformOrigin: scaleOrigin }
     : (() => {
-        const docked = getDockedStyle(position);
+        const docked = getDockedStyle(position, verticalDockBounds);
         const baseTransform = docked.transform || "";
         return {
           position: "fixed" as const,
@@ -1133,9 +1137,14 @@ export function FloatingPillNav() {
           transform: pillScale === 1 ? baseTransform : `${baseTransform} scale(${pillScale})`,
           transformOrigin: scaleOrigin,
           zIndex: FLOATING_SURFACE_Z.pillNav,
-          transition: isSnapping
-            ? "all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)"
-            : "all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94)",
+          transition: PILL_DOCK_TRANSITION,
+          maxWidth: !isMobile && !isVertical
+            ? "var(--mentiko-pill-nav-horizontal-max-width, 100vw)"
+            : undefined,
+          maxHeight: isVertical && !isDragging ? verticalDockBounds?.maxHeight : undefined,
+          overflowY: isVertical && !isDragging ? "auto" : undefined,
+          overscrollBehaviorY: isVertical && !isDragging ? "contain" : undefined,
+          scrollbarWidth: isVertical && !isDragging ? "none" : undefined,
         };
       })();
 
@@ -1193,6 +1202,8 @@ export function FloatingPillNav() {
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerCancel}
         data-pill-nav=""
+        data-pill-nav-edge={isMobile ? "top" : position.edge}
+        data-pill-nav-dragging={isDragging || undefined}
       >
         {/* ── shine border overlay ── */}
         <style>{`

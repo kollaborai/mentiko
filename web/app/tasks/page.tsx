@@ -96,8 +96,8 @@ function TasksPageContent() {
   // sidebar width (persisted)
   const SIDEBAR_KEY = "tasks-sidebar-width";
   const MIN_W = 280;
-  const MAX_W = 700;
-  const DEFAULT_W = 420;
+  const MAX_W = 600;
+  const DEFAULT_W = 340;
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_W);
   const dragging = useRef(false);
   const startX = useRef(0);
@@ -1161,9 +1161,7 @@ function TasksPageContent() {
         docs={[
           { label: "Tasks Guide", href: "/docs/tasks", icon: TaskSquareFilled },
         ]}
-      />
-
-      <div className="shrink-0 px-4 pb-2 flex items-center gap-2">
+      >
         <WorkflowSidebarSegmentedControl
           options={[
             { value: "list" as const, label: "List" },
@@ -1172,9 +1170,9 @@ function TasksPageContent() {
           ]}
           value={viewMode}
           onChange={(v) => setViewMode(v as typeof viewMode)}
-          className="w-fit"
+          className="mt-3 w-fit"
         />
-      </div>
+      </PageBanner>
 
       {/* view modes */}
       {viewMode === "overview" ? (
@@ -1361,10 +1359,13 @@ function TasksPageContent() {
               <div className="px-2 py-2">
                 {groups.map((group) => {
                   const groupKey = group.epic?.id || "ungrouped";
-                  const isCollapsed = collapsedEpics.has(groupKey);
+                  // a lone "Ungrouped" header labels nothing; flat lists match the other
+                  // sidebars. Without a header there is no way to expand, so never collapse.
+                  const showHeader = groups.length > 1 || !!group.epic;
+                  const isCollapsed = showHeader && collapsedEpics.has(groupKey);
                   return (
                     <div key={groupKey} className="mb-3 last:mb-0">
-                      <EpicGroupHeader
+                      {showHeader && <EpicGroupHeader
                         epic={group.epic}
                         taskCount={group.tasks.length}
                         collapsed={isCollapsed}
@@ -1381,7 +1382,7 @@ function TasksPageContent() {
                           const epicTask = tasks.find(t => t.id === group.epic!.id);
                           if (epicTask) handleSelect(epicTask);
                         } : undefined}
-                      />
+                      />}
                       {!isCollapsed && (
                         <div className="space-y-1">
                           {group.tasks.map((task) => (

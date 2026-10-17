@@ -11,6 +11,7 @@ import {
   WorkflowSidebarPane,
   WorkflowSidebarFilters,
   WorkflowSidebarSearchInput,
+  WorkflowSidebarSelect,
   WorkflowSidebarToggleFilter,
   WorkflowSidebarItem,
   WorkflowSidebarResizeHandle,
@@ -261,22 +262,6 @@ function AgentsPageContent() {
         ]}
       />
 
-      {/* category filter chips */}
-      {agents.length > 0 && (
-        <div className="flex items-center gap-1 px-4 pb-2 shrink-0 overflow-x-auto">
-          <WorkflowSidebarToggleFilter
-            options={[
-              { value: "all", label: "All" },
-              ...AGENT_CATEGORIES.map(c => ({ value: c.id, label: c.label }))
-            ] as WorkflowSidebarOption<AgentCategory>[]}
-            value={categoryFilter}
-            onChange={setCategoryFilter}
-            className="bg-transparent p-0 gap-1"
-            buttonClassName="px-2.5 rounded-full"
-          />
-        </div>
-      )}
-
       {/* list-detail split */}
       <div className="flex-1 flex overflow-hidden pl-4">
         {/* left: agent list */}
@@ -312,17 +297,21 @@ function AgentsPageContent() {
                     <Sparkles className="h-3 w-3" />
                   </Button>
                 </div>
+                <WorkflowSidebarToggleFilter
+                  options={[
+                    { value: "all", label: "All" },
+                    ...AGENT_CATEGORIES.map(c => ({ value: c.id, label: c.label }))
+                  ] as WorkflowSidebarOption<AgentCategory>[]}
+                  value={categoryFilter}
+                  onChange={setCategoryFilter}
+                />
                 {roles.length > 1 && (
-                  <select
+                  <WorkflowSidebarSelect
+                    options={[{ value: "all", label: "All roles" }, ...roles.map((r) => ({ value: r, label: r }))]}
                     value={roleFilter}
-                    onChange={(e) => setRoleFilter(e.target.value)}
-                    className="h-7 rounded-lg border border-border/50 bg-card px-2 text-xs"
-                  >
-                    <option value="all">All roles</option>
-                    {roles.map((r) => (
-                      <option key={r} value={r}>{r}</option>
-                    ))}
-                  </select>
+                    onChange={setRoleFilter}
+                    aria-label="Filter by role"
+                  />
                 )}
                 <div className="flex items-center gap-1.5">
                   <Button size="xs" variant="ghost" className="text-[10px]" data-testid="agents-import-btn" onClick={() => setShowImport(true)}>

@@ -211,7 +211,7 @@ export function PageBanner({
     (!background ? <PageBannerMist sectionColor={sectionColor} /> : undefined);
   const hasWatermarkFill = !!resolvedWatermarkFill;
   const watermarkFrameClass =
-    "relative h-[125%] aspect-square translate-x-[2%] overflow-visible";
+    "relative h-full aspect-square translate-x-[2%] overflow-visible";
 
   // watermarkFill mode: serialize the rendered icon to a data-URI mask so the
   // provided node (a shader, etc.) shows only through the icon's silhouette.
@@ -234,8 +234,8 @@ export function PageBanner({
   }, [hasWatermarkFill, title]);
 
   return (
-    <div className={`shrink-0 ${background ? "" : "px-3 pt-3 pb-2 sm:px-4 sm:pt-4 sm:pb-3"}`}>
-      <div className={`relative bg-transparent overflow-visible p-4 sm:p-6 ${background ? "min-h-[224px] flex flex-col justify-center" : "rounded-xl"}`}>
+    <div className={`shrink-0 ${background ? "" : "px-3 pt-2 pb-1 sm:px-4 sm:pt-2 sm:pb-1"}`}>
+      <div className={`relative bg-transparent overflow-visible p-3 sm:px-6 sm:py-2 ${background ? "min-h-[224px] flex flex-col justify-center" : "rounded-xl"}`}>
         {/* custom full-bleed background — replaces default pattern + watermark when provided */}
         {background ? (
           <div className="absolute inset-0 pointer-events-none overflow-hidden">{background}</div>

@@ -68,8 +68,11 @@ describe("decision navigation", () => {
     expect(tree).toContain("gate");
     expect(overview).toContain('task.type === "decision"');
     expect(overview).toContain("gate");
-    expect(listItem).toContain('task.type === "decision"');
-    expect(listItem).toContain("bg-blue-500/5");
+    // the list item no longer branches on task.type === "decision"; decisions
+    // needing review surface through the chainBinding run-review mechanism
+    expect(listItem).toContain("task.chainBinding?.last_run_decision_required");
+    expect(listItem).toContain("needsRunReview");
+    expect(listItem).toContain("review run");
   });
 
   it("does not keep the standalone decisions route alive", () => {

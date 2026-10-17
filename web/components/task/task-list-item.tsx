@@ -19,6 +19,7 @@ import {
   MAX_AUTO_RUN_RETRIES,
 } from "@/lib/tasks/auto-run-state";
 import { WorkflowSidebarItem } from "@/components/ui/workflow-sidebar";
+import { statusBar } from "@/lib/ui/status-colors";
 import {
   TaskOpIndicator,
   type TaskOpIndicatorState,
@@ -60,6 +61,15 @@ interface TaskListItemProps {
   isChecked?: boolean;
   /** Operational state from /api/operations/timeline — richer than depInfo when present. */
   op?: TaskOpIndicatorState;
+}
+
+// rail semantics shared with every workflow sidebar (lib/ui/status-colors):
+// amber in progress, green done, orange needs attention, none while waiting
+function taskStatusRail(task: Task, isRunning: boolean, needsRunReview: boolean) {
+  if (task.completed) return statusBar("completed");
+  if (needsRunReview) return statusBar("stopped");
+  if (isRunning) return statusBar("running");
+  return undefined;
 }
 
 function isRunRecent(lastRunId: string | undefined): boolean {
@@ -204,6 +214,7 @@ export function TaskListItem({
     <WorkflowSidebarItem
       selected={!selectMode && selected}
       onClick={() => onSelect(task)}
+      accentClassName={taskStatusRail(task, isRunning, needsRunReview)}
       className={isRunning ? "animate-in fade-in duration-300" : undefined}
     >
       <div className={cn("relative", selectMode ? "pl-7" : "pl-4")}>

@@ -6,6 +6,7 @@ import {
   WorkflowSidebarItem,
   WorkflowSidebarPane,
   WorkflowSidebarSegmentedControl,
+  WorkflowSidebarSelect,
   WorkflowSidebarToggleFilter,
   WorkflowSidebarVisibilityToggleGroup,
   matchesToggleFilter,
@@ -122,5 +123,25 @@ describe("workflow sidebar panel surfaces", () => {
     expect(css).toContain("var(--background) var(--floating-panel-body-mix), transparent) !important");
     expect(css).toContain("var(--accent) var(--floating-panel-filters-mix), transparent) !important");
     expect(css).toContain("var(--card) var(--floating-panel-item-mix), transparent) !important");
+  });
+
+  it("renders the shared select as a sidebar control and reports the chosen value", () => {
+    const onChange = jest.fn();
+    render(
+      <WorkflowSidebarSelect
+        options={[
+          { value: "priority", label: "Sort: Priority" },
+          { value: "title", label: "Sort: Title" },
+        ]}
+        value="priority"
+        onChange={onChange}
+        aria-label="Sort tasks"
+      />,
+    );
+
+    const select = screen.getByRole("combobox", { name: "Sort tasks" });
+    expect(select).toHaveAttribute("data-workflow-sidebar-control");
+    fireEvent.change(select, { target: { value: "title" } });
+    expect(onChange).toHaveBeenCalledWith("title");
   });
 });

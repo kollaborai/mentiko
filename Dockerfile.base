@@ -292,9 +292,14 @@ RUN echo "=== Antigravity CLI ===" && \
 # 9. python tools (uv for kollab, pipx for aider)
 # ---------------------------------------------------------------------------
 
+# Keep the engine version in sync with mentiko's dev setup.
+COPY web/config/kollabor-engine-version /opt/mentiko/kollabor-engine-version
+
+# kollab must ride along: engine 0.16.x imports kollabor.* runtime modules from it.
+
 RUN echo "=== uv venv: kollab + kollabor-engine ===" && \
     uv venv --seed --python 3.12 /opt/pipx/venvs/kollab && \
-    /opt/pipx/venvs/kollab/bin/python -m pip install --no-cache-dir kollab kollabor-engine && \
+    /opt/pipx/venvs/kollab/bin/python -m pip install --no-cache-dir kollab "kollabor-engine==$(cat /opt/mentiko/kollabor-engine-version)" && \
     ln -sf /opt/pipx/venvs/kollab/bin/kollab /usr/local/bin/kollab \
     || echo "WARNING: kollab install failed, skipping"
 

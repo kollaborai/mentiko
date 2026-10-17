@@ -305,6 +305,30 @@ describe('FloatingPillNav', () => {
   })
 
   describe('position persistence', () => {
+    it('reserves the measured footprint for the restored edge and scale', () => {
+      const width = jest.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(52)
+      const height = jest.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(44)
+      const contentHeight = jest.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(800)
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: 600 })
+      localStorageMap.set('mentiko-pill-position', JSON.stringify({ edge: 'right', offset: 0 }))
+      localStorageMap.set('mentiko-pill-scale', '1.25')
+      const { unmount } = render(<FloatingPillNav />)
+      const nav = document.querySelector('[data-pill-nav]') as HTMLDivElement
+
+      expect(nav).toHaveAttribute('data-pill-nav-edge', 'right')
+      expect(document.documentElement.style.getPropertyValue('--mentiko-pill-nav-inset-right')).toBe('77px')
+      expect(document.documentElement.style.getPropertyValue('--mentiko-pill-nav-inset-top')).toBe('0px')
+      expect(nav.style.maxHeight).toBe('460.8px')
+      expect(nav.style.overflowY).toBe('auto')
+      expect(nav.style.top).toBe('clamp(300px, 0%, 300px)')
+
+      unmount()
+      width.mockRestore()
+      height.mockRestore()
+      contentHeight.mockRestore()
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: 768 })
+    })
+
     it('saves position to localStorage on mount default', () => {
       render(<FloatingPillNav />)
       // default position is top/50 - loaded from localStorage (empty = default)

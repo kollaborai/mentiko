@@ -1,3 +1,7 @@
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -158,6 +162,23 @@ function formatArgsPreview(args: Record<string, any>): string {
   return str.length > 300 ? str.slice(0, 300) + "…" : str;
 }
 
+// Persistent trust flag: $MENTIKO_MCP_TRUST_FILE (or ~/.kollab/mcp/trust) is
+// the file-backed source of truth for MENTIKO_MCP_TRUST. Written once by the
+// user (or the app) with a "1"; survives bridge restarts, app relaunches and
+// reboots, unlike session-scoped env vars. Read on every gate decision so a
+// bridge spawned without the env still honors persisted trust.
+function isMcpTrustEnabled(): boolean {
+  if (process.env.MENTIKO_MCP_TRUST === "1") return true;
+  try {
+    const trustPath =
+      process.env.MENTIKO_MCP_TRUST_FILE ||
+      join(homedir(), ".kollab", "mcp", "trust");
+    return readFileSync(trustPath, "utf8").trim() === "1";
+  } catch {
+    return false;
+  }
+}
+
 // Returns true if the tool is allowed to proceed. For tier-B/C, dispatches
 // an ask_confirm to the user and blocks until they respond.
 async function checkPermission(
@@ -178,6 +199,15 @@ async function checkPermission(
   // approval for this tool call before invoking it — re-gating here is redundant
   // double-gating. Defer to the host and allow.
   if (!process.env.MENTIKO_INBOX_KEY) {
+    return { allowed: true, approvedAlwaysGranted: false };
+  }
+
+  // Trust short-circuit: enabled via MENTIKO_MCP_TRUST=1 (env override, set
+  // by the app's MCP env launcher, see web/lib/kollabor-mcp-server-env.ts) or
+  // the persistent file-backed setting (see isMcpTrustEnabled). Tier-B tools
+  // (medium risk) proceed without per-call portal approval; tier-C (high
+  // risk: deletes, runs, secrets) stays gated.
+  if (isMcpTrustEnabled() && isB) {
     return { allowed: true, approvedAlwaysGranted: false };
   }
 

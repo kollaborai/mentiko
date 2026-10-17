@@ -8,6 +8,10 @@ const withNextIntl = createNextIntlPlugin("./lib/i18n/i18n-request.ts");
 const nextConfig: NextConfig = {
   output: "standalone",
 
+  // dev server runs on localhost but internal-web-origin.ts (and pasted links)
+  // use 127.0.0.1 — Next 16 blocks cross-origin HMR from other hosts by default.
+  allowedDevOrigins: ["127.0.0.1", "localhost"],
+
   // version-skew protection: when a user has a tab open during a redeploy,
   // their cached chunks / server-action hashes are stale. with deploymentId set,
   // next.js stamps `?dpl=<id>` on static assets and emits x-deployment-id headers

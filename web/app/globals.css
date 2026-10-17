@@ -577,7 +577,30 @@
     50%      { transform: translateY(-16px) rotate(2deg); }
 }
 
+.pill-nav-viewport {
+    /* the top dock reserves half its footprint so the blurred pill overlaps the page a little */
+    margin-top: calc(var(--mentiko-pill-nav-inset-top, 0px) / 2);
+    margin-right: var(--mentiko-pill-nav-inset-right, 0px);
+    margin-bottom: var(--mentiko-pill-nav-inset-bottom, 0px);
+    margin-left: var(--mentiko-pill-nav-inset-left, 0px);
+    transition: margin 250ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+/* the mobile rail is opaque and full width, so it keeps its whole footprint */
+[data-mobile-pill-nav] .pill-nav-viewport {
+    margin-top: var(--mentiko-pill-nav-inset-top, 0px);
+}
+
+/* top dock: the page fades in under the pill, opaque by the pill's bottom edge
+   (half the footprint minus the 12px dock gap from use-pill-nav-insets).
+   ponytail: the mask also clips fixed overlays rendered inline in <main>; portal them if it shows */
+:root:not([data-mobile-pill-nav]):has([data-pill-nav-edge="top"]) .pill-nav-viewport {
+    mask-image: linear-gradient(to bottom, transparent, #000 calc(var(--mentiko-pill-nav-inset-top, 0px) / 2 - 12px));
+}
+
 @media (prefers-reduced-motion: reduce) {
+    .pill-nav-viewport,
+    [data-pill-nav] { transition: none !important; }
     [style*="watermark-float"] { animation: none !important; }
 }
 

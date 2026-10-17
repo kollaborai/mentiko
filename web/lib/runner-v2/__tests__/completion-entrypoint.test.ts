@@ -249,6 +249,9 @@ describe("runner-v2 completion entrypoint", () => {
       capacitySlotReleasedAt: expect.any(String),
     });
     expect(readFileSync(join(fixture.repositoryRoot, "left.ts"), "utf8")).toContain("agent-result");
+    // Merge-back already landed the node delta on the source worktree at node
+    // completion, so run-completion publication takes its already-published
+    // CAS path instead of applying anything.
     expect(JSON.parse(readFileSync(
       join(
         fixture.runDir,
@@ -258,7 +261,7 @@ describe("runner-v2 completion entrypoint", () => {
         "publication.json",
       ),
       "utf8",
-    ))).toMatchObject({ status: "published", runId: "run-123" });
+    ))).toMatchObject({ status: "already-published", runId: "run-123" });
     expect(existsSync(fixture.node.worktreeRoot)).toBe(false);
 
     const replay = runRunnerV2CompletionEntrypoint({
@@ -1235,6 +1238,7 @@ describe("runner-v2 completion entrypoint", () => {
   function seedRoutedRun(root: string, options?: {
     downstream?: boolean;
     downstreamStatus?: AgentStatus;
+    downstreamWaitForEvents?: { events: string[]; wait_for: string };
     omitChainId?: boolean;
     runChainId?: string;
     runMetadata?: Record<string, unknown>;
@@ -1259,6 +1263,7 @@ describe("runner-v2 completion entrypoint", () => {
             id: "publisher",
             name: "Publisher",
             triggers: ["verification-complete"],
+            ...(options.downstreamWaitForEvents ? { wait_for_events: options.downstreamWaitForEvents } : {}),
             ...(options.downstreamStatus ? { status: options.downstreamStatus } : {}),
           }]
           : []),
@@ -1712,6 +1717,73 @@ describe("runner-v2 completion entrypoint", () => {
     expect(run.status).toBe("running");
     expect(existsSync(join(fixture.runDir, "chain-loop-state.json"))).toBe(false);
     expect(existsSync(shellLoopStatePath(fixture.runDir))).toBe(false);
+  });
+
+  it("launches an AND-join agent whose sibling prerequisite event exists only in the archive for the same run", () => {
+    const root = tempRoot();
+    const fixture = seedRoutedRun(root, {
+      downstream: true,
+      downstreamWaitForEvents: { events: ["verification-complete", "review-complete"], wait_for: "all" },
+    });
+    emitVerifierEvent(fixture.eventsDir);
+    // The "review-complete" sibling fired earlier in this run and was already
+    // processed into archive/. It exists ONLY under archive/ — routing fired
+    // events must still count it toward the AND-join.
+    mkdirSync(join(fixture.eventsDir, "archive"), { recursive: true });
+    writeFileSync(join(fixture.eventsDir, "archive", "run-123-reviewer-review-complete.event"), runnerEventFixture({
+      event: "review-complete",
+      source: "reviewer-run-123",
+      runId: "run-123",
+      processed: true,
+      data: "ok",
+    }));
+
+    const result = runRunnerV2CompletionEntrypoint({
+      sessionName: "verifier-run-123",
+      chainPath: fixture.chainPath,
+      env: routedEnv(fixture),
+      dryRun: true,
+      now: new Date("2026-07-04T00:00:00.000Z"),
+    });
+
+    expect(result).toMatchObject({
+      status: "handled",
+      decision: "route",
+      plan: { action: "route", launches: [{ kind: "single", agentIds: ["publisher"] }] },
+    });
+  });
+
+  it("keeps an AND-join agent waiting when the archived sibling prerequisite event belongs to a different run", () => {
+    const root = tempRoot();
+    const fixture = seedRoutedRun(root, {
+      downstream: true,
+      downstreamWaitForEvents: { events: ["verification-complete", "review-complete"], wait_for: "all" },
+    });
+    emitVerifierEvent(fixture.eventsDir);
+    mkdirSync(join(fixture.eventsDir, "archive"), { recursive: true });
+    writeFileSync(join(fixture.eventsDir, "archive", "run-999-reviewer-review-complete.event"), runnerEventFixture({
+      event: "review-complete",
+      source: "reviewer-run-999",
+      runId: "run-999",
+      processed: true,
+      data: "ok",
+    }));
+
+    const result = runRunnerV2CompletionEntrypoint({
+      sessionName: "verifier-run-123",
+      chainPath: fixture.chainPath,
+      env: routedEnv(fixture),
+      dryRun: true,
+      now: new Date("2026-07-04T00:00:00.000Z"),
+    });
+
+    // Cross-run archived evidence must not satisfy the join: the publisher
+    // stays pending and nothing launches.
+    expect(result).toMatchObject({
+      status: "handled",
+      decision: "route",
+      plan: { action: "route", launches: [] },
+    });
   });
 
   it("rolls back completion-owned writes when attempt completion fails mid-pipeline", () => {

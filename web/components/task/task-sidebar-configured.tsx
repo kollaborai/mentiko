@@ -213,12 +213,10 @@ export function TaskSidebarConfiguredLayout({
   depInfo?: Map<string, DependencyInfo>;
   footer?: ReactNode;
 }) {
-  const { card, theme } = state;
-  const surface =
-    theme.mode === "gradient"
-      ? `linear-gradient(${theme.gradientAngle}deg, ${theme.surfaceColor}, ${theme.surfaceColor2})`
-      : theme.surfaceColor;
+  const { card } = state;
 
+  // The shared sidebar item is the card. Applying the editor's card chrome
+  // (surface, border, radius, padding, opacity) here drew a second card inside it.
   return (
     <div
       data-testid="task-sidebar-configured-layout"
@@ -226,17 +224,7 @@ export function TaskSidebarConfiguredLayout({
         "min-w-0",
         card.clipContent ? "overflow-hidden" : "overflow-visible",
       )}
-      style={{
-        minHeight: card.minHeight || undefined,
-        padding: `${card.paddingY}px ${card.paddingX}px`,
-        borderRadius: `${card.radius}px`,
-        border: card.border
-          ? `${card.borderWidth}px solid ${theme.borderColor}`
-          : undefined,
-        background: surface,
-        color: theme.textColor,
-        opacity: card.opacity / 100,
-      }}
+      style={{ minHeight: card.minHeight || undefined }}
     >
       <div
         className="grid min-w-0"
@@ -292,11 +280,7 @@ export function TaskSidebarConfiguredLayout({
           </div>
         ))}
       </div>
-      {footer ? (
-        <div className="mt-2 min-w-0 border-t border-foreground/10 pt-1.5">
-          {footer}
-        </div>
-      ) : null}
+      {footer ? <div className="mt-1.5 min-w-0">{footer}</div> : null}
     </div>
   );
 }

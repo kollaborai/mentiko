@@ -11,7 +11,7 @@ export interface KollaborPermissionPromptProps {
   input: unknown;
   riskLevel: "low" | "medium" | "high" | string;
   riskReason?: string;
-  decision?: "approve" | "approve_always" | "deny";
+  decision?: "approve" | "approve_always" | "deny" | "cancelled";
   /** tier-C tools: hide the "approve always" button so the user must approve every time */
   hideApproveAlways?: boolean;
   onRespond: (decision: "approve" | "approve_always" | "deny") => void;
@@ -30,6 +30,7 @@ const RESOLVED_LABEL: Record<
   approve: "approved",
   approve_always: "approved always",
   deny: "denied",
+  cancelled: "cancelled",
 };
 
 const RESOLVED_CLASSES: Record<
@@ -39,6 +40,7 @@ const RESOLVED_CLASSES: Record<
   approve: "bg-green-400/20 text-green-300",
   approve_always: "bg-green-400/20 text-green-300",
   deny: "bg-red-400/20 text-red-300",
+  cancelled: "bg-muted-foreground/20 text-muted-foreground",
 };
 
 function getRiskClasses(riskLevel: string): string {

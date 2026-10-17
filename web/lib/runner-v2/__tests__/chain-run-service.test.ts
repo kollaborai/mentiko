@@ -7,6 +7,12 @@ import { mkdtempSync, readFileSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { spawn, spawnSync, type ChildProcess } from "child_process";
+
+// Jest inherits the developer shell's WEB_PORT/PORT (e.g. :3200); pin the
+// internal web origin so MENTIKO_WEB_URL resolves deterministically to :3000.
+process.env.WEB_PORT = "3000";
+process.env.PORT = "3000";
+
 import { isRunnerV2Enabled } from "@/lib/runner-v2/flags";
 import { startRunnerV2Launch } from "@/lib/runner-v2/controller";
 

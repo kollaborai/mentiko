@@ -17,7 +17,11 @@ import { defineConfig, devices } from '@playwright/test';
 // server (faster iteration; you accept shared-DB pollution — clean it with
 // `node scripts/clean-test-users.mjs --apply`).
 const REUSE_DEV = process.env.E2E_REUSE_DEV === '1';
-const baseURL = REUSE_DEV ? 'http://localhost:3000' : 'http://localhost:3100';
+// Set E2E_BASE_URL to inspect an already-running runtime. In that mode the
+// config must not create a second Next dev server; this is the path used for
+// live mentiko-dev verification.
+const EXISTING_BASE_URL = process.env.E2E_BASE_URL;
+const baseURL = EXISTING_BASE_URL || (REUSE_DEV ? 'http://localhost:3000' : 'http://localhost:3100');
 
 export default defineConfig({
   testDir: './e2e/tests',
@@ -26,8 +30,8 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 0,
   workers: process.env.CI ? 1 : undefined,
   reporter: 'html',
-  globalSetup: REUSE_DEV ? undefined : './e2e/global-setup.ts',
-  globalTeardown: REUSE_DEV ? undefined : './e2e/global-teardown.ts',
+  globalSetup: EXISTING_BASE_URL || REUSE_DEV ? undefined : './e2e/global-setup.ts',
+  globalTeardown: EXISTING_BASE_URL || REUSE_DEV ? undefined : './e2e/global-teardown.ts',
   use: {
     baseURL,
     trace: 'on-first-retry',
@@ -39,10 +43,12 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'] },
     },
   ],
-  webServer: {
-    command: 'npm run dev',
-    url: baseURL,
-    reuseExistingServer: REUSE_DEV,
-    timeout: 180 * 1000,
-  },
+  ...(EXISTING_BASE_URL ? {} : {
+    webServer: {
+      command: 'npm run dev',
+      url: baseURL,
+      reuseExistingServer: REUSE_DEV,
+      timeout: 180 * 1000,
+    },
+  }),
 });

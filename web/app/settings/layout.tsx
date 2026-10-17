@@ -49,9 +49,13 @@ export default function SettingsLayout({ children }: SettingsLayoutProps) {
     if (pathname === "/orgs") return "organization";
     if (pathname === "/settings") return "dashboard";
 
-    const match = SETTINGS_ITEMS.find((item) => (
-      pathname === item.href || pathname.startsWith(`${item.href}/`)
-    ));
+    const match = SETTINGS_ITEMS
+      .filter((item) => (
+        pathname === item.href || (
+          item.href !== "/settings" && pathname.startsWith(`${item.href}/`)
+        )
+      ))
+      .sort((a, b) => b.href.length - a.href.length)[0];
     if (match) return match.id;
 
     return "dashboard";
@@ -164,6 +168,7 @@ export default function SettingsLayout({ children }: SettingsLayoutProps) {
                           ? "bg-foreground/10 text-foreground font-medium"
                           : "text-foreground/50 hover:text-foreground/85 hover:bg-foreground/5"
                       )}
+                      aria-current={isActive ? "page" : undefined}
                     >
                       <Icon
                         className={cn(

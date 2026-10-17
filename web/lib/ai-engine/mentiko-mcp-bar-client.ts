@@ -31,27 +31,31 @@ function normalizeStorageScope(scope?: string | null): string {
   return value || DEFAULT_STORAGE_SCOPE;
 }
 
-function scopedStorageKey(baseKey: string): string {
-  return `${baseKey}:${mcpBarStorageScope}`;
+function scopedStorageKey(baseKey: string, scope = mcpBarStorageScope): string {
+  return `${baseKey}:${scope}`;
 }
 
 export function setMcpBarStorageScope(scope?: string | null): void {
   mcpBarStorageScope = normalizeStorageScope(scope);
 }
 
-export function getStoredSessionToken(): string | null {
+export function getMcpBarStorageScope(): string {
+  return mcpBarStorageScope;
+}
+
+export function getStoredSessionToken(scope = mcpBarStorageScope): string | null {
   if (typeof sessionStorage === "undefined") return null;
-  try { return sessionStorage.getItem(scopedStorageKey(SESSION_TOKEN_KEY)); } catch { return null; }
+  try { return sessionStorage.getItem(scopedStorageKey(SESSION_TOKEN_KEY, scope)); } catch { return null; }
 }
 
-export function storeSessionToken(token: string): void {
+export function storeSessionToken(token: string, scope = mcpBarStorageScope): void {
   if (typeof sessionStorage === "undefined") return;
-  try { sessionStorage.setItem(scopedStorageKey(SESSION_TOKEN_KEY), token); } catch {}
+  try { sessionStorage.setItem(scopedStorageKey(SESSION_TOKEN_KEY, scope), token); } catch {}
 }
 
-export function clearSessionToken(): void {
+export function clearSessionToken(scope = mcpBarStorageScope): void {
   if (typeof sessionStorage === "undefined") return;
-  try { sessionStorage.removeItem(scopedStorageKey(SESSION_TOKEN_KEY)); } catch {}
+  try { sessionStorage.removeItem(scopedStorageKey(SESSION_TOKEN_KEY, scope)); } catch {}
 }
 
 export function syncSessionToken(token: string | null | undefined): void {
@@ -62,12 +66,12 @@ export function syncSessionToken(token: string | null | undefined): void {
   clearSessionToken();
 }
 
-export function getStoredSessionId(): string | null {
+export function getStoredSessionId(scope = mcpBarStorageScope): string | null {
   if (typeof localStorage === "undefined") return null;
   try {
     return (
-      localStorage.getItem(scopedStorageKey(SESSION_ID_KEY)) ||
-      localStorage.getItem(scopedStorageKey(LEGACY_SESSION_ID_KEY))
+      localStorage.getItem(scopedStorageKey(SESSION_ID_KEY, scope)) ||
+      localStorage.getItem(scopedStorageKey(LEGACY_SESSION_ID_KEY, scope))
     );
   } catch {
     return null;
@@ -83,15 +87,20 @@ export class MCPBarClient {
   private onEffect: EffectHandler;
   private closed = false;
   private refreshing = false;
+  private refreshController: AbortController | null = null;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly scopeAtCreation: string;
 
   constructor(onEffect: EffectHandler) {
     this.onEffect = onEffect;
+    this.scopeAtCreation = mcpBarStorageScope;
   }
 
   connect() {
-    if (this.eventSource) return;
+    if (this.closed || this.eventSource || mcpBarStorageScope !== this.scopeAtCreation) return;
 
-    const token = getStoredSessionToken();
+    const scope = this.scopeAtCreation;
+    const token = getStoredSessionToken(scope);
     let url: string;
     if (token) {
       url = `/api/mentiko-mcp/stream?sessionToken=${encodeURIComponent(token)}`;
@@ -99,7 +108,7 @@ export class MCPBarClient {
       // dev fallback: no signed token (user not logged in). pass the engine
       // session id so the server route can match the bucket the MCP
       // subprocess dispatches into (MENTIKO_SESSION_ID).
-      const sid = getStoredSessionId();
+      const sid = getStoredSessionId(scope);
       url = sid
         ? `/api/mentiko-mcp/stream?sessionId=${encodeURIComponent(sid)}`
         : `/api/mentiko-mcp/stream`;
@@ -111,7 +120,7 @@ export class MCPBarClient {
     es.onmessage = (event) => {
       try {
         const effect = JSON.parse(event.data) as UIEffect;
-        this.onEffect(effect);
+        if (!this.closed && mcpBarStorageScope === this.scopeAtCreation) this.onEffect(effect);
       } catch (err) {
         console.error("[mcp-bar] effect parse error:", err);
       }
@@ -121,54 +130,73 @@ export class MCPBarClient {
       if (this.closed) return;
       es.close();
       this.eventSource = null;
+      if (mcpBarStorageScope !== this.scopeAtCreation) return;
 
       // Check if error might be auth-related (401) — try refresh first
       const sessionId = (() => {
         if (typeof localStorage === "undefined") return null;
         try {
-          localStorage.removeItem(scopedStorageKey(LEGACY_SESSION_ID_KEY));
-          return localStorage.getItem(scopedStorageKey(SESSION_ID_KEY));
+          localStorage.removeItem(scopedStorageKey(LEGACY_SESSION_ID_KEY, this.scopeAtCreation));
+          return localStorage.getItem(scopedStorageKey(SESSION_ID_KEY, this.scopeAtCreation));
         } catch { return null; }
       })();
 
       if (sessionId && !this.refreshing) {
         this.refreshing = true;
+        this.refreshController = new AbortController();
         fetch(`/api/kollabor/engine/sessions/${encodeURIComponent(sessionId)}/refresh-token`, {
           method: "POST",
           credentials: "same-origin",
+          signal: this.refreshController.signal,
         })
           .then((res) => res.ok ? res.json() : null)
           .then((data) => {
             this.refreshing = false;
+            if (this.closed || mcpBarStorageScope !== this.scopeAtCreation) {
+              this.refreshController = null;
+              return;
+            }
             if (data?.session_token) {
-              storeSessionToken(data.session_token);
+              storeSessionToken(data.session_token, this.scopeAtCreation);
             } else {
-              clearSessionToken();
+              clearSessionToken(this.scopeAtCreation);
             }
-            if (!this.closed) {
-              setTimeout(() => this.connect(), 500);
-            }
+            this.refreshController = null;
+            this.scheduleReconnect(500);
           })
           .catch(() => {
             this.refreshing = false;
-            clearSessionToken();
-            if (!this.closed) {
-              setTimeout(() => this.connect(), 3000);
+            if (this.closed || mcpBarStorageScope !== this.scopeAtCreation) {
+              this.refreshController = null;
+              return;
             }
+            this.refreshController = null;
+            clearSessionToken(this.scopeAtCreation);
+            this.scheduleReconnect(3000);
           });
       } else {
-        clearSessionToken();
-        setTimeout(() => {
-          if (!this.closed) {
-            this.connect();
-          }
-        }, 3000);
+        clearSessionToken(this.scopeAtCreation);
+        this.scheduleReconnect(3000);
       }
     };
   }
 
+  private scheduleReconnect(delayMs: number) {
+    if (this.closed || mcpBarStorageScope !== this.scopeAtCreation) return;
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      if (!this.closed && mcpBarStorageScope === this.scopeAtCreation) this.connect();
+    }, delayMs);
+  }
+
   disconnect() {
     this.closed = true;
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+    this.refreshController?.abort();
+    this.refreshController = null;
+    this.refreshing = false;
     if (this.eventSource) {
       this.eventSource.close();
       this.eventSource = null;
@@ -185,9 +213,14 @@ export class MCPBarClient {
 export async function replyToTool(
   toolId: string,
   result: unknown,
+  guard?: { scope?: string; isCurrent?: () => boolean },
 ): Promise<void> {
-  const token = getStoredSessionToken();
-  const sessionId = getStoredSessionId();
+  const requestScope = guard?.scope ?? mcpBarStorageScope;
+  if (requestScope !== mcpBarStorageScope) throw new Error("stale MCP scope");
+  if (guard?.isCurrent && !guard.isCurrent()) throw new Error("stale MCP reply");
+  if (requestScope !== mcpBarStorageScope) throw new Error("stale MCP scope");
+  const token = getStoredSessionToken(requestScope);
+  const sessionId = getStoredSessionId(requestScope);
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (token) {
     headers["Authorization"] = `Bearer ${token}`;
@@ -202,7 +235,10 @@ export async function replyToTool(
       ...(sessionId ? { sessionId } : {}),
     }),
   });
+  if (requestScope !== mcpBarStorageScope) throw new Error("stale MCP scope");
   if (!res.ok) {
     throw new Error(`reply failed: ${res.status}`);
   }
+  if (guard?.isCurrent && !guard.isCurrent()) throw new Error("stale MCP reply");
+  if (requestScope !== mcpBarStorageScope) throw new Error("stale MCP scope");
 }

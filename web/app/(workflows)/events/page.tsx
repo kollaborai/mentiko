@@ -637,9 +637,7 @@ export default function EventsPage() {
         docs={[
           { label: "Events Guide", href: "/docs/events", icon: SendFilled },
         ]}
-      />
-
-      <div className="shrink-0 px-4 pb-2 flex items-center gap-2">
+      >
         <WorkflowSidebarSegmentedControl
           options={[
             { value: "triggers" as const, label: "Triggers" },
@@ -647,9 +645,9 @@ export default function EventsPage() {
           ]}
           value={activeTab}
           onChange={(v) => setActiveTab(v as "triggers" | "registry")}
-          className="w-fit"
+          className="mt-3 w-fit"
         />
-      </div>
+      </PageBanner>
 
       {activeTab === "registry" ? (
         <RegistryPanel />

@@ -1,10 +1,12 @@
-import { render, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import * as React from "react";
 import { RootLayoutClient } from "./layout-client";
 
 let mockPathname = "/login";
 let mockIsFloatingPanelSurface = false;
+let mockDeploymentBarEnabled = false;
 const mockHydrate = jest.fn();
+const mockShowToast = jest.fn();
 let mockThemeProviderMounts = 0;
 let mockThemeProviderUnmounts = 0;
 
@@ -43,10 +45,12 @@ jest.mock("@/lib/ui-context/workspace-context", () => ({
 
 jest.mock("@/lib/ui-context/user-context", () => ({
   UserProvider: ({ children }: { children: React.ReactNode }) => children,
+  useUser: () => ({ user: null, loading: false }),
 }));
 
 jest.mock("@/components/app-shell/notifications-panel", () => ({
   ToastContainer: () => null,
+  showToast: (...args: unknown[]) => mockShowToast(...args),
 }));
 
 jest.mock("@/hooks/use-notifications-listener", () => ({
@@ -103,7 +107,10 @@ jest.mock("@/components/app-shell/floating-kollabor-bar", () => ({
 }));
 
 jest.mock("@/lib/ai-engine/kollabor-bar-flag", () => ({
-  isKollaborBarEnabled: () => false,
+  isKollaborBarEnabled: () => mockDeploymentBarEnabled,
+  getKollaborBarWidth: () => 373,
+  KOLLABOR_BAR_MIN_WIDTH_PX: 240,
+  KOLLABOR_BAR_MAX_WIDTH_PX: 720,
 }));
 
 jest.mock("@/lib/ui/floating-app-panel-routing", () => ({
@@ -125,7 +132,9 @@ describe("RootLayoutClient", () => {
   beforeEach(() => {
     mockPathname = "/login";
     mockIsFloatingPanelSurface = false;
+    mockDeploymentBarEnabled = false;
     mockHydrate.mockReset();
+    mockShowToast.mockReset();
     mockThemeProviderMounts = 0;
     mockThemeProviderUnmounts = 0;
     document.documentElement.removeAttribute("data-floating-panel-surface");
@@ -177,6 +186,35 @@ describe("RootLayoutClient", () => {
     );
 
     expect(getByTestId("session-gate")).toBeInTheDocument();
+  });
+
+  it("does not mount UI-control approval or attach its listeners when deployment disables the bar", () => {
+    mockPathname = "/dashboard";
+    const addDocumentListener = jest.spyOn(document, "addEventListener");
+
+    try {
+      render(
+        <RootLayoutClient>
+          <div>dashboard content</div>
+        </RootLayoutClient>,
+      );
+
+      expect(addDocumentListener.mock.calls.filter(
+        ([type, , options]) => type === "paste" && options === true,
+      )).toHaveLength(0);
+
+      const grantText = JSON.stringify({
+        type: "mentiko-ui-control",
+        code: "ABCD-EFGH",
+      });
+      fireEvent.paste(document, { clipboardData: { getData: () => grantText } });
+      fireEvent.keyDown(window, { key: "m", metaKey: true });
+
+      expect(screen.queryByRole("dialog", { name: "Grant UI control" })).not.toBeInTheDocument();
+      expect(mockShowToast).not.toHaveBeenCalled();
+    } finally {
+      addDocumentListener.mockRestore();
+    }
   });
 
   it("marks panel-surface documents so iframe backgrounds stay transparent", async () => {

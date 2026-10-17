@@ -100,10 +100,12 @@ export function runRunnerV2CompletionEntrypoint(
 
   const eventsDir = resolveEventsDir(env);
   const events = readEvents(eventsDir);
-  // Archived processed events are replay evidence only. Keep them out of the
-  // completion pipeline so an old handoff can never become a new trigger, but
-  // let an already-completed agent prove that this exact event was consumed.
+  // Archived processed events are replay evidence only for completion matching.
+  // Keep them out of candidate events so an old handoff can never become a new
+  // trigger, but merge same-run archived events into routing firedEvents so
+  // multi-trigger prerequisites are satisfied when sibling events are already archived.
   const archivedEvents = readEvents(join(eventsDir, "archive"));
+  const sameRunArchivedEvents = archivedEvents.filter((event) => eventMatchesRunId(event, runId));
   const generationDuplicate = alreadyCompletedGeneration(run, runJsonPath, stateDir, agent.id);
   const duplicate = alreadyCompletedVerdict({
     run,
@@ -347,6 +349,7 @@ export function runRunnerV2CompletionEntrypoint(
       agent,
       chain,
       events,
+      firedEvents: [...events, ...sameRunArchivedEvents],
       maxRounds,
       now: input.now,
       terminal,

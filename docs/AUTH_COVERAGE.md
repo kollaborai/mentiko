@@ -1,8 +1,8 @@
-# api route auth coverage (as of 2026-07-28)
+# api route auth coverage (as of 2026-10-16)
 
 ## summary
-- total routes: 358
-- authenticated: 342   (doc mechanically matches disk via scripts/check-auth-coverage.mjs)
+- total routes: 370
+- authenticated: 353   (doc mechanically matches disk via scripts/check-auth-coverage.mjs; includes 11 routes confirmed + fixed in RBAC-5b)
 - public-by-design: 17
 - unclear (needs human review): 0
 - likely bug (probably accidentally public): 0
@@ -150,6 +150,11 @@ Routes with explicit auth checks via `checkAuth`, `getServerSession`, `requirePe
 - generation-templates/test/route.ts
 - git/route.ts
 - health/route.ts
+- integrations/github/callback/route.ts
+- integrations/github/connect/route.ts
+- integrations/github/connection/route.ts
+- integrations/github/repositories/branches/route.ts
+- integrations/github/repositories/route.ts
 - integrations/save/route.ts
 - integrations/test/route.ts
 - invite/[token]/route.ts
@@ -233,6 +238,13 @@ Routes with explicit auth checks via `checkAuth`, `getServerSession`, `requirePe
 - notifications/dispatch/route.ts
 - notifications/preferences/route.ts
 - notifications/route.ts
+- onboarding/input-bar/check/route.ts
+- onboarding/provider/complete/route.ts
+- onboarding/provider/readiness/route.ts
+- onboarding/sample-run/route.ts
+- onboarding/state/route.ts
+- onboarding/workspace/from-github/route.ts
+- onboarding/workspace/select/route.ts
 - operations/timeline/route.ts
 - orgs/[id]/invite/route.ts
 - orgs/[id]/invites/[inviteId]/route.ts

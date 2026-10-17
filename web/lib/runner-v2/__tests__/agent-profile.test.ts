@@ -219,7 +219,23 @@ describe("runner-v2 agent profile contract", () => {
     const root = tempDir();
     const profilePath = join(root, "claude.json");
     writeJson(profilePath, { id: "claude", name: "Claude", cli: "claude", pipe_flag: "-p" });
-    const command = buildAgentProfileCommand({ profilePath, interactive: false, namespaceId: "default", orgId: "default" });
+    // this case builds a Claude profile WITHOUT the helper's MCP env pins, so
+    // drop the shell-inherited MENTIKO_* values to keep the run hermetic
+    const previous = {
+      MENTIKO_WEB_URL: process.env.MENTIKO_WEB_URL,
+      MENTIKO_SESSION_ID: process.env.MENTIKO_SESSION_ID,
+      MENTIKO_SESSION_TOKEN: process.env.MENTIKO_SESSION_TOKEN,
+    };
+    for (const key of Object.keys(previous)) delete process.env[key];
+    let command: string;
+    try {
+      command = buildAgentProfileCommand({ profilePath, interactive: false, namespaceId: "default", orgId: "default" });
+    } finally {
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
     expect(command).toContain("'claude' '-p'");
     expect(command).not.toContain("'codex'");
     expect(command).not.toContain("check_for_update_on_startup");

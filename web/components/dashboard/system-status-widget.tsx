@@ -11,6 +11,7 @@ import {
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { useKollaborBarStore } from "@/lib/ui/kollabor-bar-store";
 import { isKollaborBarEnabled } from "@/lib/ai-engine/kollabor-bar-flag";
+import { useFloatingBarAvailability } from "@/lib/ui/floating-bar-availability";
 
 // 30s between polls -- health API does disk I/O, don't hammer it
 const POLL_INTERVAL = 30_000;
@@ -227,6 +228,7 @@ function ServiceRow({ service, stacked = false }: { service: ServiceState; stack
 }
 
 export function SystemStatusWidget() {
+  const availability = useFloatingBarAvailability();
   const { fetchWithNamespace } = useNamespaceFetch();
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [daemon, setDaemon] = useState<DaemonStatus | null>(null);
@@ -300,7 +302,7 @@ export function SystemStatusWidget() {
                       ? "unhealthy"
                       : "unknown"}
             </span>
-            {isKollaborBarEnabled() && !loading && (
+            {isKollaborBarEnabled() && availability.runtimeMayStart && !loading && (
               <button
                 type="button"
                 onClick={() => {

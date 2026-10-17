@@ -278,7 +278,7 @@ describe("buildOperationsView", () => {
     const { sources } = makeSources({ tasks });
     const view = await buildOperationsView("default", "default", undefined, sources);
     expect(view.humanGates).toHaveLength(1);
-    expect(view.humanGates[0]).toMatchObject({ kind: "decision", decisionId: "DEC-X", actionUrl: "/decisions?id=DEC-X" });
+    expect(view.humanGates[0]).toMatchObject({ kind: "decision", decisionId: "DEC-X", actionUrl: "/tasks?type=decision&task=DEC-001" });
   });
 
   it("accomplishments require an applied audited close; unlocked tasks come from the dep store", async () => {

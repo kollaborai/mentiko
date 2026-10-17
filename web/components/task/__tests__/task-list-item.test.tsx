@@ -163,6 +163,10 @@ describe("TaskListItem", () => {
     const configured = screen.getByTestId("task-sidebar-configured-layout");
     expect(screen.getByText("Auto").closest("[data-testid]")).toBe(configured);
     expect(configured).toHaveClass("min-w-0");
+    // the shared item is the card; no second surface nested inside it
+    expect(configured.style.background).toBe("");
+    expect(configured.style.padding).toBe("");
+    expect(configured.style.borderRadius).toBe("");
 
     const item = screen.getByTestId("workflow-sidebar-item");
     expect(item).not.toHaveClass(
@@ -279,26 +283,33 @@ describe("TaskListItem", () => {
     expect(screen.queryByTitle("Blocked by 1 task")).not.toBeInTheDocument();
   });
 
-  it("does not render a sidebar accent rail", () => {
-    render(
+  it("uses the shared status rail: amber running, green done, none while waiting", () => {
+    const item = (task: Task) => (
       <TaskListItem
-        task={{
-          ...baseTask,
-          chainBinding: {
-            chain_id: "chain-1",
-            chain_name: "Chain",
-            auto_run: false,
-            last_run_status: "running",
-          },
-        }}
+        task={task}
         selected={false}
         onSelect={jest.fn()}
         onToggleComplete={jest.fn()}
-      />,
+      />
     );
+    const { rerender } = render(
+      item({
+        ...baseTask,
+        chainBinding: {
+          chain_id: "chain-1",
+          chain_name: "Chain",
+          auto_run: false,
+          last_run_status: "running",
+        },
+      }),
+    );
+    const rail = () => screen.getByTestId("workflow-sidebar-item");
+    expect(rail()).toHaveAttribute("data-accent", "bg-amber-400");
 
-    expect(screen.getByTestId("workflow-sidebar-item")).not.toHaveAttribute(
-      "data-accent",
-    );
+    rerender(item({ ...baseTask, completed: true, status: "closed" }));
+    expect(rail()).toHaveAttribute("data-accent", "bg-emerald-400");
+
+    rerender(item(baseTask));
+    expect(rail()).not.toHaveAttribute("data-accent");
   });
 });

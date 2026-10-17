@@ -488,10 +488,8 @@ export default function WebhooksPage() {
         docs={[
           { label: "Webhooks Guide", href: "/docs/webhooks", icon: Webhook },
         ]}
-      />
-
-      {/* Outbound / Inbound tab switcher */}
-      <div className="shrink-0 px-4 pb-2 flex items-center gap-2">
+      >
+        {/* Outbound / Inbound tab switcher */}
         <WorkflowSidebarSegmentedControl
           options={[
             { value: "outbound" as const, label: "Outbound" },
@@ -499,9 +497,9 @@ export default function WebhooksPage() {
           ]}
           value={pageTab}
           onChange={setPageTab}
-          className="w-fit"
+          className="mt-3 w-fit"
         />
-      </div>
+      </PageBanner>
 
       {/* List-Detail split (inbound) */}
       {pageTab === "inbound" && <div className="flex-1 flex overflow-hidden pl-4">

@@ -5,9 +5,11 @@ import {
   finalizeGitNodeWorkspace,
   initializeGitRunWorkspaceIsolation,
   integrateGitNodeWorkspaceResult,
+  mergeGitNodeIntegration,
   publishGitRunWorkspaceResult,
   readGitNodeIntegrationResult,
   readGitNodeWorkspace,
+  WorkspaceMergeBackDriftError,
   type GitNodeIntegrationResult,
   type GitRunWorkspacePublicationResult,
 } from "@/lib/runner-v2/workspace-isolation";
@@ -60,7 +62,20 @@ export function integrateCompletedNodeWorkspace(input: {
     attemptId: input.attemptId,
   });
   const result = finalizeGitNodeWorkspace({ runWorkspace, node, now: input.now });
-  return integrateGitNodeWorkspaceResult({ runWorkspace, result, now: input.now });
+  const integration = integrateGitNodeWorkspaceResult({ runWorkspace, result, now: input.now });
+  if (integration.status === "conflict") return integration;
+  // Merge-back: land the chain delta on the main worktree now, so builders'
+  // work is visible mid-run and the run-completion publication CAS degrades
+  // to its already-published path. Source drift refuses the merge-back with a
+  // durable receipt here, then blocks loudly through the existing publication
+  // CAS conflict path — publication stays the correctness backstop. Apply or
+  // verification failures still crash loudly.
+  try {
+    mergeGitNodeIntegration({ runWorkspace, integration, now: input.now });
+  } catch (error) {
+    if (!(error instanceof WorkspaceMergeBackDriftError)) throw error;
+  }
+  return integration;
 }
 
 export function cleanupIntegratedNodeWorkspace(input: {

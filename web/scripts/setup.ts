@@ -9,6 +9,11 @@ import {
   type PtyManagerCandidate,
 } from "../lib/system/dev-environment-checks";
 
+const KOLLABOR_ENGINE_VERSION = readFileSync(
+  join(process.cwd(), "config", "kollabor-engine-version"),
+  "utf8",
+).trim();
+
 type StepResult = "changed" | "skipped";
 
 const ENV_DEFAULTS: Record<string, string> = {
@@ -64,11 +69,36 @@ function ensureKollaborEngine(): StepResult {
     "pip",
     "install",
     "--user",
-    "kollabor-engine",
+    `kollabor-engine==${KOLLABOR_ENGINE_VERSION}`,
   ]);
   if (!installed || !commandSucceeds("python", ["-c", "import kollabor_engine"])) {
     process.stderr.write(
-      "\nCould not install kollabor-engine automatically.\nTry: python -m pip install --user kollabor-engine\n",
+      `\nCould not install kollabor-engine automatically.\nTry: python -m pip install --user kollabor-engine==${KOLLABOR_ENGINE_VERSION}\n`,
+    );
+    process.exitCode = 1;
+  }
+
+  return "changed";
+}
+
+function ensureKollab(): StepResult {
+  if (commandSucceeds("python", ["-c", "import kollabor"])) {
+    return "skipped";
+  }
+
+  process.stdout.write(
+    "\nInstalling kollab (required by kollabor-engine runtime)...\n",
+  );
+  const installed = run("python", [
+    "-m",
+    "pip",
+    "install",
+    "--user",
+    "kollab>=0.16,<0.17",
+  ]);
+  if (!installed || !commandSucceeds("python", ["-c", "import kollabor"])) {
+    process.stderr.write(
+      "\nCould not install kollab automatically.\nTry: python -m pip install --user 'kollab>=0.16,<0.17'\n",
     );
     process.exitCode = 1;
   }
@@ -150,6 +180,11 @@ process.stdout.write(
 const engineResult = ensureKollaborEngine();
 process.stdout.write(
   `${engineResult === "changed" ? "Installed" : "Found"} kollabor-engine.\n`,
+);
+
+const kollabResult = ensureKollab();
+process.stdout.write(
+  `${kollabResult === "changed" ? "Installed" : "Found"} kollab runtime sibling.\n`,
 );
 
 const ptyResult = ensurePtyManager();

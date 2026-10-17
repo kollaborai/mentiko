@@ -1,69 +1,146 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useKollaborBarStore } from "@/lib/ui/kollabor-bar-store";
+import { getFloatingBarAvailability, useFloatingBarAvailability } from "@/lib/ui/floating-bar-availability";
 import { showToast } from "@/components/app-shell/notifications-panel";
 import { FLOATING_SURFACE_Z } from "@/lib/ui/floating-surface-z";
+
+type ApprovalContext = {
+  scope: string;
+  generation: number;
+  sessionId: string;
+  sessionScope: string;
+};
 
 /**
  * UIControlGrant — in-app approval surface for letting an external agent (e.g.
  * Claude Code over MCP) drive THIS browser window.
  *
- * Two ways in, both binding the window the user is focused on (we read the live
- * engine sessionId from the bar store at approve time — no localStorage guessing,
- * so multi-window targeting is exact):
+ * Two ways in, both binding the window the user is focused on. The dialog
+ * captures the live engine session when it opens and refuses to approve if the
+ * storage scope, session, or runtime generation changes before confirmation.
  *   1. Paste the grant JSON ({ "type": "mentiko-ui-control", "code": "..." })
  *      anywhere on the page — a global paste listener recognizes it and pops a
  *      one-tap confirm (not a silent auto-register, so a stray clipboard can't
  *      bind your UI).
- *   2. Press Cmd/Ctrl+Shift+M to open the box and type the code.
+ *   2. Press Cmd/Ctrl+M to open the box and type the code.
  *
  * Approve is cookie-authed server-side (POST /auth/device/approve), so only the
  * logged-in user can grant.
  */
 export function UIControlGrant() {
+  const availability = useFloatingBarAvailability();
+  const approvalControllerRef = useRef<AbortController | null>(null);
+  const dialogContextRef = useRef<ApprovalContext | null>(null);
+  const generation = useKollaborBarStore((state) => state.generation);
+  const scope = useKollaborBarStore((state) => state.storageScope);
+  const sessionId = useKollaborBarStore((state) => state.sessionId);
+  const sessionScope = useKollaborBarStore((state) => state.sessionScope);
+  const observedContextRef = useRef({ scope, generation, sessionId, sessionScope });
   const [open, setOpen] = useState(false);
   const [code, setCode] = useState("");
   const [label, setLabel] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const approve = useCallback(async (rawCode: string) => {
-    const userCode = rawCode.trim();
-    if (!userCode || submitting) return;
-    const sessionId = useKollaborBarStore.getState().sessionId;
-    if (!sessionId) {
+  const closeDialog = useCallback(() => {
+    approvalControllerRef.current?.abort();
+    approvalControllerRef.current = null;
+    dialogContextRef.current = null;
+    setSubmitting(false);
+    setOpen(false);
+    setCode("");
+    setLabel(null);
+  }, []);
+
+  const openDialog = useCallback((initialCode = "", initialLabel: string | null = null) => {
+    const state = useKollaborBarStore.getState();
+    if (!getFloatingBarAvailability(state).canApproveUiControl) {
+      showToast({
+        type: "error",
+        title: "The Mentiko bar is off - enable it in Settings -> Mentiko Agent.",
+        message: "",
+        duration: 5000,
+      });
+      return false;
+    }
+    if (!state.sessionId || !state.sessionScope || state.sessionScope !== state.storageScope) {
       showToast({
         type: "error",
         title: "No active session in this window yet",
         message: "Wait for the assistant bar to connect, then try again.",
         duration: 5000,
       });
+      return false;
+    }
+
+    dialogContextRef.current = {
+      scope: state.storageScope,
+      generation: state.generation,
+      sessionId: state.sessionId,
+      sessionScope: state.sessionScope,
+    };
+    setCode(initialCode);
+    setLabel(initialLabel);
+    setOpen(true);
+    return true;
+  }, []);
+
+  const approve = useCallback(async (rawCode: string) => {
+    const userCode = rawCode.trim();
+    if (!userCode || submitting) return;
+    const context = dialogContextRef.current;
+    const currentState = useKollaborBarStore.getState();
+    const isCurrent = () => {
+      const state = useKollaborBarStore.getState();
+      return Boolean(
+        context &&
+        dialogContextRef.current === context &&
+        state.storageScope === context.scope &&
+        state.generation === context.generation &&
+        state.sessionId === context.sessionId &&
+        state.sessionScope === context.sessionScope &&
+        getFloatingBarAvailability(state).canApproveUiControl,
+      );
+    };
+    if (
+      !context ||
+      currentState.storageScope !== context.scope ||
+      currentState.generation !== context.generation ||
+      currentState.sessionId !== context.sessionId ||
+      currentState.sessionScope !== context.sessionScope ||
+      !getFloatingBarAvailability(currentState).canApproveUiControl
+    ) {
+      closeDialog();
       return;
     }
+
     setSubmitting(true);
+    const controller = new AbortController();
+    approvalControllerRef.current = controller;
     try {
       const res = await fetch("/api/mentiko-mcp/auth/device/approve", {
         method: "POST",
         headers: { "content-type": "application/json" },
         credentials: "same-origin",
+        signal: controller.signal,
         body: JSON.stringify({
           user_code: userCode,
           decision: "approve",
-          target_session_id: sessionId,
+          expected_grant_kind: "ui",
+          target_session_id: context.sessionId,
         }),
       });
       const data = await res.json().catch(() => ({}));
-      if (res.ok && data?.ok) {
+      if (res.ok && data?.ok && data?.kind === "ui" && isCurrent()) {
         showToast({
           type: "success",
           title: `${label || "Agent"} can now control this window`,
           message: "",
           duration: 5000,
         });
-        setOpen(false);
-        setCode("");
-        setLabel(null);
-      } else {
+        closeDialog();
+      } else if (!controller.signal.aborted && isCurrent()) {
         showToast({
           type: "error",
           title: (data && data.error) || "Couldn't grant control",
@@ -72,16 +149,37 @@ export function UIControlGrant() {
         });
       }
     } catch {
-      showToast({
-        type: "error",
-        title: "Couldn't reach the server",
-        message: "",
-        duration: 4000,
-      });
+      if (!controller.signal.aborted && isCurrent()) {
+        showToast({
+          type: "error",
+          title: "Couldn't reach the server",
+          message: "",
+          duration: 4000,
+        });
+      }
     } finally {
-      setSubmitting(false);
+      if (approvalControllerRef.current === controller) {
+        approvalControllerRef.current = null;
+        setSubmitting(false);
+      }
     }
-  }, [submitting, label]);
+  }, [closeDialog, submitting, label]);
+
+  useEffect(() => {
+    const previous = observedContextRef.current;
+    const contextChanged = previous.scope !== scope ||
+      previous.generation !== generation ||
+      previous.sessionId !== sessionId ||
+      previous.sessionScope !== sessionScope;
+    observedContextRef.current = { scope, generation, sessionId, sessionScope };
+    if (!availability.canApproveUiControl || contextChanged) closeDialog();
+  }, [availability.canApproveUiControl, closeDialog, generation, scope, sessionId, sessionScope]);
+
+  useEffect(() => () => {
+    approvalControllerRef.current?.abort();
+    approvalControllerRef.current = null;
+    dialogContextRef.current = null;
+  }, []);
 
   // 1) recognize a pasted grant JSON anywhere on the page
   useEffect(() => {
@@ -95,27 +193,25 @@ export function UIControlGrant() {
         return;
       }
       if (parsed?.type !== "mentiko-ui-control" || typeof parsed.code !== "string") return;
-      e.preventDefault();
-      setCode(parsed.code);
-      setLabel(typeof parsed.label === "string" ? parsed.label : "Claude");
-      setOpen(true);
+      if (openDialog(parsed.code, typeof parsed.label === "string" ? parsed.label : "Claude")) {
+        e.preventDefault();
+      }
     };
     document.addEventListener("paste", onPaste, true);
     return () => document.removeEventListener("paste", onPaste, true);
-  }, []);
+  }, [openDialog]);
 
-  // 2) Cmd/Ctrl+Shift+M opens the manual box
+  // 2) Cmd/Ctrl+M opens the manual box
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && (e.key === "M" || e.key === "m")) {
         e.preventDefault();
-        setLabel(null);
-        setOpen(true);
+        openDialog();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [openDialog]);
 
   if (!open) return null;
 
@@ -129,7 +225,7 @@ export function UIControlGrant() {
     >
       <div
         className="absolute inset-0 bg-black/40"
-        onClick={() => !submitting && setOpen(false)}
+        onClick={() => !submitting && closeDialog()}
       />
       <div className="relative w-[min(92vw,380px)] rounded-md border border-border bg-card p-4 shadow-xl">
         <p className="text-sm font-medium">
@@ -146,7 +242,7 @@ export function UIControlGrant() {
           onChange={(e) => setCode(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && code.trim()) approve(code);
-            if (e.key === "Escape") setOpen(false);
+            if (e.key === "Escape") closeDialog();
           }}
           placeholder="XXXX-XXXX"
           spellCheck={false}
@@ -154,7 +250,7 @@ export function UIControlGrant() {
         />
         <div className="mt-3 flex justify-end gap-2">
           <button
-            onClick={() => setOpen(false)}
+            onClick={closeDialog}
             disabled={submitting}
             className="rounded-sm px-3 py-1.5 text-xs hover:bg-accent disabled:opacity-50"
           >
