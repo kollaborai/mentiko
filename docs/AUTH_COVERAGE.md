@@ -1,8 +1,8 @@
 # api route auth coverage (as of 2026-10-16)
 
 ## summary
-- total routes: 370
-- authenticated: 353   (doc mechanically matches disk via scripts/check-auth-coverage.mjs; includes 11 routes confirmed + fixed in RBAC-5b)
+- total routes: 371
+- authenticated: 354   (doc mechanically matches disk via scripts/check-auth-coverage.mjs; includes 11 routes confirmed + fixed in RBAC-5b)
 - public-by-design: 17
 - unclear (needs human review): 0
 - likely bug (probably accidentally public): 0
@@ -322,6 +322,7 @@ Routes with explicit auth checks via `checkAuth`, `getServerSession`, `requirePe
 - system/stop-all/route.ts
 - system/viewport/route.ts
 - system/web-proxy/route.ts
+- tasks/[id]/attachments/route.ts
 - tasks/[id]/attempts/route.ts
 - tasks/[id]/auto-run/route.ts
 - tasks/[id]/close/route.ts
