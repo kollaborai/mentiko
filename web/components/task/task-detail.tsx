@@ -5,6 +5,7 @@ import { ArrowDown1Filled, ArrowRight1Filled, ToggleOffFilled as ToggleLeft, Tog
 import { TaskDetailHeader } from "./task-detail-header";
 import { TaskChildren } from "./task-children";
 import { TaskComments } from "./task-comments";
+import { TaskAttachments } from "./task-attachments";
 import { TaskActivity } from "./task-activity";
 import { TaskDepsGraph } from "./task-deps-graph";
 import { TaskAttemptsPanel } from "./task-attempts-panel";
@@ -193,6 +194,9 @@ export function TaskDetail({
           </div>
         </div>
       )}
+
+      {/* image attachments (FEAT-001/TASK-006) */}
+      <TaskAttachments taskId={task.id} />
 
       {/* acceptance criteria */}
       {task.acceptance && (

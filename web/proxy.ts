@@ -41,7 +41,8 @@ function isTaskReadPath(pathname: string): boolean {
     pathname === "/api/tasks/epics" ||
     pathname === "/api/tasks/graph" ||
     /^\/api\/tasks\/[^/]+$/.test(pathname) ||
-    /^\/api\/tasks\/[^/]+\/(deps|comments)$/.test(pathname)
+    /^\/api\/tasks\/[^/]+\/(deps|comments)$/.test(pathname) ||
+  /^\/api\/tasks\/[^/]+\/attachments(\/[^/]+)?$/.test(pathname)
   );
 }
 
