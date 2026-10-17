@@ -1,9 +1,10 @@
 // Native in-process SQLite task store.
 
 import Database from "better-sqlite3";
-import { mkdirSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, rmSync } from "fs";
 import { join, dirname } from "path";
 import config from "../config";
+import { attachmentTaskBlobDir } from "./task-attachment-types";
 import { ISSUE_TYPE_PREFIX } from "./task-store-types";
 import { TERMINAL_TASK_STATUSES, isTerminalTaskStatus } from "./task-status";
 import type {
@@ -603,13 +604,110 @@ export function taskDelete(
   namespaceId?: string
 ): void {
   const db = getDb(namespaceId);
+  const safeId = validateTaskId(id);
+  const ns = namespaceId ?? "default";
+  // FEAT-001/TASK-005: capture blob placement BEFORE the delete -- the FK
+  // cascade wipes task_attachments rows (and their paths) together with the
+  // task row, so the cleanup anchor must be fixed first. The table may not
+  // exist in namespaces that never ran the attachment migration; treat that
+  // as "no attachments".
+  const namespaceRoot = join(config.globalRoot, "namespaces", ns);
+  const blobDir = attachmentTaskBlobDir(namespaceRoot, orgId, safeId);
+  let attachmentRows: Array<{ id: string; stored_filename: string }> = [];
+  try {
+    attachmentRows = db.prepare(
+      "SELECT id, stored_filename FROM task_attachments WHERE task_id = ? AND org_id = ?"
+    ).all(safeId, orgId) as Array<{ id: string; stored_filename: string }>;
+  } catch {
+    // task_attachments not migrated in this namespace -> nothing to clean
+  }
   // remove dependencies first
-  db.prepare("DELETE FROM task_dependencies WHERE task_id = ? OR depends_on_id = ?").run(id, id);
+  db.prepare("DELETE FROM task_dependencies WHERE task_id = ? OR depends_on_id = ?").run(safeId, safeId);
   // remove comments
-  db.prepare("DELETE FROM task_comments WHERE task_id = ?").run(id);
-  // remove the task
-  db.prepare("DELETE FROM tasks WHERE id = ? AND org_id = ?").run(id, orgId);
+  db.prepare("DELETE FROM task_comments WHERE task_id = ?").run(safeId);
+  // remove the task (attachment rows go with it via ON DELETE CASCADE)
+  db.prepare("DELETE FROM tasks WHERE id = ? AND org_id = ?").run(safeId, orgId);
+  // AFTER the row is gone: drop the task's blob dir -- one anchor covers every
+  // attachment. Failure is non-fatal; the sweep below retries it.
+  if (attachmentRows.length > 0 || existsSync(blobDir)) {
+    try {
+      rmSync(blobDir, { recursive: true, force: true });
+    } catch (err) {
+      console.warn(`taskDelete: could not remove attachment blobs at ${blobDir}:`, err);
+    }
+  }
+  // unconditional post-delete sweep: also reaps pre-existing orphans in this org
+  sweepOrphanAttachmentBlobs(ns, orgId);
 }
+
+// ---------- attachment blob GC (FEAT-001/TASK-005) ----------
+
+/** namespaces whose init-time orphan sweep already ran in this process */
+const attachmentInitSwept = new Set<string>();
+
+/** tree root for task attachment blobs, derived via the contract helpers only */
+function taskAttachmentsTreeRoot(namespaceRoot: string, orgId?: string): string {
+  // empty segments collapse inside attachmentTaskBlobDir, so this yields
+  // {namespaceRoot}/data/task-attachments[/orgId]
+  return orgId
+    ? attachmentTaskBlobDir(namespaceRoot, orgId, "")
+    : attachmentTaskBlobDir(namespaceRoot, "", "");
+}
+
+const TASK_ID_DIR_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
+
+/**
+ * Remove attachment blob dirs whose task no longer exists. Returns the number
+ * of orphaned task dirs removed. Entries that are not valid task ids are left
+ * untouched (conservative: never delete what we cannot attribute).
+ */
+export function sweepOrphanAttachmentBlobs(namespaceId = "default", orgId?: string): number {
+  const db = getDb(namespaceId);
+  const namespaceRoot = join(config.globalRoot, "namespaces", namespaceId);
+  const treeRoot = taskAttachmentsTreeRoot(namespaceRoot);
+  if (!existsSync(treeRoot)) return 0;
+
+  const hasTask = db.prepare("SELECT 1 FROM tasks WHERE id = ? LIMIT 1");
+  let removed = 0;
+  const orgDirs = orgId ? [orgId] : readdirSync(treeRoot);
+  for (const org of orgDirs) {
+    const orgDir = join(treeRoot, org);
+    let taskDirs: string[];
+    try {
+      taskDirs = readdirSync(orgDir);
+    } catch {
+      continue; // org entry is not a listable dir
+    }
+    for (const taskId of taskDirs) {
+      if (!TASK_ID_DIR_RE.test(taskId)) continue; // unattributable -- keep
+      if (hasTask.get(taskId)) continue; // task still exists -- keep
+      try {
+        rmSync(join(orgDir, taskId), { recursive: true, force: true });
+        removed++;
+      } catch (err) {
+        console.warn(`sweepOrphanAttachmentBlobs: could not remove ${join(orgDir, taskId)}:`, err);
+      }
+    }
+  }
+  return removed;
+}
+
+/**
+ * Init-time orphan sweep, guarded to run at most once per namespace per
+ * process. The portal dev server re-inits stores on hot reload; without the
+ * guard every store construction would rescan the attachment tree.
+ */
+export function sweepOrphanAttachmentBlobsOnce(namespaceId = "default"): void {
+  if (attachmentInitSwept.has(namespaceId)) return;
+  attachmentInitSwept.add(namespaceId);
+  try {
+    sweepOrphanAttachmentBlobs(namespaceId);
+  } catch {
+    // init sweep is best-effort; post-delete sweeps remain the backstop
+  }
+}
+
+// ---------- dependencies ----------
 
 // ---------- dependencies ----------
 

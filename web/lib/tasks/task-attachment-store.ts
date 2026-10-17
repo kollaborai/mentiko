@@ -22,9 +22,10 @@ import { dirname, join } from "path";
 import type Database from "better-sqlite3";
 import config from "../config";
 import { BadRequest, NotFound } from "../api-errors";
-import { _getDb, validateTaskId } from "./task-store";
+import { _getDb, sweepOrphanAttachmentBlobsOnce, validateTaskId } from "./task-store";
 import {
   attachmentBlobPath,
+  attachmentTaskBlobDir,
   newTaskAttachmentId,
   taskAttachmentStoredFilename,
   type TaskAttachment,
@@ -39,7 +40,7 @@ import {
 
 const TASK_ATTACHMENTS_MIGRATION_VERSION = 2;
 
-function ensureAttachmentTables(db: Database.Database): void {
+function ensureAttachmentTables(db: Database.Database, namespaceId = "default"): void {
   const row = db.prepare("SELECT MAX(version) as v FROM _migrations").get() as
     | { v: number | null }
     | undefined;
@@ -69,6 +70,10 @@ function ensureAttachmentTables(db: Database.Database): void {
     // concurrent migration insert lost the UNIQUE race; the winner's schema
     // is identical, so continue.
   }
+
+  // FEAT-001/TASK-005: orphan sweep at attachment-store init. Guarded to run
+  // once per namespace per process (portal hot reload re-inits stores).
+  sweepOrphanAttachmentBlobsOnce(namespaceId);
 }
 
 // ---------- row helpers ----------
@@ -133,7 +138,7 @@ export interface TaskAttachmentCreateInput {
 export function taskAttachmentCreate(input: TaskAttachmentCreateInput): TaskAttachment {
   const taskId = validateTaskId(input.taskId);
   const db = _getDb(input.namespaceId);
-  ensureAttachmentTables(db);
+  ensureAttachmentTables(db, input.namespaceId ?? "default");
 
   const task = db
     .prepare("SELECT id FROM tasks WHERE id = ? AND org_id = ?")
@@ -210,7 +215,7 @@ export function taskAttachmentGet(
   namespaceId?: string,
 ): TaskAttachment | null {
   const db = _getDb(namespaceId);
-  ensureAttachmentTables(db);
+  ensureAttachmentTables(db, namespaceId ?? "default");
   const row = db
     .prepare(`SELECT ${ATTACHMENT_COLUMNS} FROM task_attachments WHERE id = ? AND task_id = ? AND org_id = ?`)
     .get(attachmentId, taskId, orgId) as RawAttachmentRow | undefined;
@@ -223,7 +228,7 @@ export function taskAttachmentsForTask(
   namespaceId?: string,
 ): TaskAttachment[] {
   const db = _getDb(namespaceId);
-  ensureAttachmentTables(db);
+  ensureAttachmentTables(db, namespaceId ?? "default");
   const rows = db
     .prepare(
       `SELECT ${ATTACHMENT_COLUMNS} FROM task_attachments
@@ -232,4 +237,26 @@ export function taskAttachmentsForTask(
     )
     .all(taskId, orgId) as RawAttachmentRow[];
   return rows.map(rowToAttachment);
+}
+
+// ---------- org purge (FEAT-001/TASK-005) ----------
+
+/**
+ * Remove every attachment row and blob for one org. Called on org deletion so
+ * no attachment blobs outlive their org. Best-effort on the filesystem side:
+ * a failed blob removal must not fail the org deletion; the per-namespace
+ * sweep reaps the leftover dir on the next delete or init.
+ */
+export function taskAttachmentsPurgeOrg(orgId: string, namespaceId?: string): void {
+  const ns = namespaceId ?? "default";
+  const db = _getDb(namespaceId);
+  ensureAttachmentTables(db, ns);
+  db.prepare("DELETE FROM task_attachments WHERE org_id = ?").run(orgId);
+  const namespaceRoot = join(config.globalRoot, "namespaces", ns);
+  const orgBlobDir = attachmentTaskBlobDir(namespaceRoot, orgId, "");
+  try {
+    rmSync(orgBlobDir, { recursive: true, force: true });
+  } catch (err) {
+    console.warn(`taskAttachmentsPurgeOrg: could not remove ${orgBlobDir}:`, err);
+  }
 }
