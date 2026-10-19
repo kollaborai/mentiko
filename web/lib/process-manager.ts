@@ -183,6 +183,12 @@ async function waitReady(_name: string, r: ReadinessConfig | undefined): Promise
   return false;
 }
 
+// the health url of an adoptExisting process that is already answering, else null
+async function adoptableUrl(config: ProcessConfig): Promise<string | null> {
+  const r = config.readiness;
+  return config.adoptExisting && r.type === 'http' && await checkHttp(r.url) ? r.url : null;
+}
+
 // -- process lifecycle --
 
 function spawnChild(config: ProcessConfig): ManagedProcess {
@@ -284,6 +290,20 @@ async function startOne(config: ProcessConfig, options: StartOptions = {}): Prom
   if (prev?.status === 'ready' && (prev.child || prev.pid)) {
     log(`${config.name} already ready, skipping duplicate start`);
     return prev;
+  }
+  const adoptedUrl = await adoptableUrl(config);
+  if (adoptedUrl) {
+    // someone else's healthy instance (e.g. the engine behind `kollab --web-ui`):
+    // use it. no child, no pid, so nothing below ever signals or restarts it.
+    const adopted: ManagedProcess = {
+      config, child: null, pid: 0, status: 'ready',
+      restarts: 0, startedAt: Date.now(),
+      lastExit: null, lastExitCode: null,
+      restartTimer: null, stoppedByUser: false,
+    };
+    managed.set(config.name, adopted);
+    log(`${config.name} already running (${adoptedUrl}), using it instead of starting one`);
+    return adopted;
   }
   const m = spawnChild(config);
   m.restarts = prev?.restarts ?? 0;
@@ -794,7 +814,16 @@ async function housekeep() {
 
   // dev mode: kill stale processes on ports we need, then wait for ports to free
   if (isDev) {
-    for (const port of [Number(webPort), 3099, 7433].filter((p) => Number.isFinite(p))) {
+    // a healthy adoptExisting service (the kollabor engine) is not stale: it is
+    // the user's own `kollab --web-ui` engine, and killing it drops their agents.
+    const adopted = new Set<number>();
+    try {
+      for (const p of loadConfig(findConfig()).processes) {
+        const port = readinessPort(p.readiness);
+        if (port && await adoptableUrl(p)) adopted.add(port);
+      }
+    } catch {} // main() reports a bad or missing config
+    for (const port of [Number(webPort), 3099, 7433].filter((p) => Number.isFinite(p) && !adopted.has(p))) {
       try {
         const pids = execSync(`lsof -ti :${port} 2>/dev/null`, { encoding: 'utf-8' }).trim();
         if (!pids) continue;

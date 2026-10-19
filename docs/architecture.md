@@ -151,7 +151,7 @@ Dev process config: `web/processes.dev.json`
 - `ws-terminal`: terminal websocket bridge on port 3099.
 - `worker`: background worker.
 - `platform`: `next dev` on port 3200.
-- `kollabor-engine`: optional local engine on port 7433.
+- `kollabor-engine`: optional local engine on port 7433. If a healthy engine already answers there (the one behind `kollab --web-ui`), dev start uses it instead of killing it and starting its own; it is never supervised or stopped by the manager.
 
 Production process config: `web/processes.json`
 
