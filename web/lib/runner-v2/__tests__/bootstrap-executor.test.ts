@@ -9,7 +9,9 @@ import {
   resolveRunnerV2LaunchEnv,
 } from "@/lib/runner-v2/bootstrap-executor";
 import { startLaunch } from "@/lib/runner-v2/adapters";
+import { authorizeTypedRelaunch } from "@/lib/runner-v2/error-handling";
 import { claimRoutedLaunchJob, persistRoutedLaunchJob } from "@/lib/runner-v2/launch-job";
+import { transitionAgentAttempt } from "@/lib/runner-v2/agent-attempt";
 import { createRunRecord, updateRunJson, type RunStatus } from "@/lib/runner-v2/run-state";
 import { createRunRecordFile } from "@/lib/runs/run-record";
 import type { AgentBootstrapPlan } from "@/lib/runner-v2/agent-bootstrap-plan";
@@ -794,10 +796,8 @@ describe("runner-v2 bootstrap executor", () => {
           transitions: [],
         }],
       },
-      relaunchAuthorization: {
-        agentId: "writer",
-        launchJobId: job.id,
-        authorizedAt: "2026-07-15T00:02:00.000Z",
+      relaunchAuthorizations: {
+        writer: { launchJobId: job.id, authorizedAt: "2026-07-15T00:02:00.000Z" },
       },
     }));
     const routedContext = {
@@ -844,10 +844,8 @@ describe("runner-v2 bootstrap executor", () => {
         }],
       },
       // scoped to a different agent in the same run: must not admit writer
-      relaunchAuthorization: {
-        agentId: "designer",
-        launchJobId: "job-revisit",
-        authorizedAt: "2026-07-15T00:02:00.000Z",
+      relaunchAuthorizations: {
+        designer: { launchJobId: "job-revisit", authorizedAt: "2026-07-15T00:02:00.000Z" },
       },
     }));
     const routedContext = {
@@ -884,10 +882,8 @@ describe("runner-v2 bootstrap executor", () => {
           transitions: [],
         }],
       },
-      relaunchAuthorization: {
-        agentId: "writer",
-        launchJobId: "job-first-visit",
-        authorizedAt: "2026-07-15T00:02:00.000Z",
+      relaunchAuthorizations: {
+        writer: { launchJobId: "job-first-visit", authorizedAt: "2026-07-15T00:02:00.000Z" },
       },
     }));
     const routedContext = {
@@ -900,6 +896,110 @@ describe("runner-v2 bootstrap executor", () => {
       "agent writer has terminal attempt run-1:writer:1 (completed)",
     );
     expect(executor.spawn).not.toHaveBeenCalled();
+  });
+
+  it("admits a retry authorization once and refuses after the new attempt is terminal", async () => {
+    const root = tempDir();
+    writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
+    const runJsonPath = seedRunJson(root, "running");
+    updateRunJson(runJsonPath, (run) => ({
+      ...run!,
+      runnerV2: {
+        attempts: [{
+          id: "run-1:writer:1",
+          runId: "run-1",
+          agentId: "writer",
+          phase: "completed",
+          desiredPhase: "completed",
+          observedPhase: "completed",
+          terminalReason: "completed_from_event",
+          instructionLedger: [],
+          recoveryDecisionCount: 0,
+          createdAt: "2026-07-15T00:00:00.000Z",
+          updatedAt: "2026-07-15T00:01:00.000Z",
+          transitions: [],
+        }],
+      },
+    }));
+    authorizeTypedRelaunch(runJsonPath, "run-1", { agentId: "writer" }); // retry path: no launchJobId
+    const executor = executorWithCapture("claude ready >");
+
+    await executeLocalBootstrap(plan(root), context(root), executor);
+    const spawnsAfterFirst = executor.spawn.mock.calls.length;
+    expect(spawnsAfterFirst).toBeGreaterThan(0);
+
+    const second = JSON.parse(readFileSync(runJsonPath, "utf8")).runnerV2.attempts
+      .find((attempt: { id: string }) => attempt.id === "run-1:writer:2");
+    expect(second).toBeTruthy(); // the authorization admitted exactly one new attempt
+    transitionAgentAttempt({ runJsonPath, attemptId: second.id, to: "completed" });
+
+    await expect(executeLocalBootstrap(plan(root), context(root), executor)).rejects.toThrow(
+      "agent writer has terminal attempt run-1:writer:2 (completed)",
+    );
+    expect(executor.spawn.mock.calls.length).toBe(spawnsAfterFirst); // refused: nothing new spawned
+  });
+
+  it("keeps one authorization per agent so a retry and a routed revisit coexist in the same run", async () => {
+    const root = tempDir();
+    writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }, { id: "designer" }] }));
+    const runJsonPath = seedRunJson(root, "running");
+    const job = persistRoutedLaunchJob({
+      runJsonPath,
+      occurrenceId: "run-1:step-two:two-done",
+      runId: "run-1",
+      runDir: root,
+      chainPath: join(root, "chain.json"),
+      targetAgentIds: ["designer"],
+    });
+    claimRoutedLaunchJob({
+      runJsonPath,
+      jobId: job.id,
+      ownerId: "gate-owner",
+      pid: process.pid,
+      leaseMs: 60_000,
+    });
+    const terminalAttempt = (agentId: string) => ({
+      id: `run-1:${agentId}:1`,
+      runId: "run-1",
+      agentId,
+      phase: "completed",
+      desiredPhase: "completed",
+      observedPhase: "completed",
+      terminalReason: "completed_from_event",
+      instructionLedger: [],
+      recoveryDecisionCount: 0,
+      createdAt: "2026-07-15T00:00:00.000Z",
+      updatedAt: "2026-07-15T00:01:00.000Z",
+      transitions: [],
+    });
+    updateRunJson(runJsonPath, (run) => ({
+      ...run!,
+      runnerV2: {
+        ...run!.runnerV2,
+        attempts: [terminalAttempt("writer"), terminalAttempt("designer")],
+      },
+    }));
+    authorizeTypedRelaunch(runJsonPath, "run-1", { agentId: "writer" }); // retry relaunch of A
+    authorizeTypedRelaunch(runJsonPath, "run-1", { agentId: "designer", launchJobId: job.id }); // routed revisit of B
+
+    const map = JSON.parse(readFileSync(runJsonPath, "utf8")).relaunchAuthorizations;
+    expect(Object.keys(map).sort()).toEqual(["designer", "writer"]); // B must not overwrite A
+
+    const executor = executorWithCapture("claude ready >");
+    await executeLocalBootstrap(plan(root), context(root), executor); // A, direct bootstrap — admitted
+    await executeLocalBootstrap(routedPlan(root, "designer", "Designer", "designer-done"), {
+      ...context(root),
+      env: {
+        ...context(root).env,
+        MENTIKO_LAUNCH_JOB_ID: job.id,
+        MENTIKO_LAUNCH_JOB_OWNER_ID: "gate-owner",
+        MENTIKO_COMPLETION_OCCURRENCE_ID: job.occurrenceId,
+      },
+    }, executor); // B, routed bootstrap — admitted
+    const attempts = JSON.parse(readFileSync(runJsonPath, "utf8")).runnerV2.attempts
+      .map((attempt: { id: string }) => attempt.id);
+    expect(attempts).toEqual(expect.arrayContaining(["run-1:writer:2", "run-1:designer:2"])); // both admitted
+    expect(executor.spawn.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 
   it("makes two absent fan-out targets durably acceptable through real bootstrap registration", async () => {

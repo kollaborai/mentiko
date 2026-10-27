@@ -450,13 +450,11 @@ describe("routing-driven revisit of a terminal-attempt agent", () => {
     // The authorization is scoped to one agent and one launch-job occurrence,
     // and deliberately is not resumedAt (which the watchdog and reconciler
     // read as a stall-detection grace window).
-    expect(run.relaunchAuthorization).toEqual({
-      agentId: "step-one",
-      launchJobId: job.id,
-      authorizedAt: expect.any(String),
+    expect(run.relaunchAuthorizations).toEqual({
+      "step-one": { launchJobId: job.id, authorizedAt: expect.any(String) },
     });
     expect(run.resumedAt).toBeUndefined();
-    expect(Date.parse(run.relaunchAuthorization.authorizedAt)).toBeGreaterThan(Date.parse(firstUpdatedAt));
+    expect(Date.parse(run.relaunchAuthorizations["step-one"].authorizedAt)).toBeGreaterThan(Date.parse(firstUpdatedAt));
   });
 
   it("does not bootstrap again when the same launch job id is replayed", async () => {
@@ -518,7 +516,7 @@ describe("routing-driven revisit of a terminal-attempt agent", () => {
     });
 
     await revisit();
-    const authorizedAt = JSON.parse(readFileSync(runJsonPath, "utf8")).relaunchAuthorization?.authorizedAt;
+    const authorizedAt = JSON.parse(readFileSync(runJsonPath, "utf8")).relaunchAuthorizations?.["step-one"]?.authorizedAt;
     expect(authorizedAt).toEqual(expect.any(String));
 
     // Simulate the replay window: the worker died after the revisit attempt was
@@ -546,7 +544,7 @@ describe("routing-driven revisit of a terminal-attempt agent", () => {
     });
     expect(replay).toEqual({ status: "completed", jobId: job.id });
     const run = JSON.parse(readFileSync(runJsonPath, "utf8"));
-    expect(run.relaunchAuthorization.authorizedAt).toBe(authorizedAt); // no re-authorization
+    expect(run.relaunchAuthorizations["step-one"].authorizedAt).toBe(authorizedAt); // no re-authorization
     expect(readRunnerV2AttemptState(runJsonPath).attempts).toHaveLength(2); // no third occurrence
   });
 });

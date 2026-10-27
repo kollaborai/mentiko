@@ -503,7 +503,7 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
       },
       {
         id: "typed-error-lifecycle-owner",
-        label: "Detect report failures, resolve retry policy, mutate retry state, authorize one fresh occurrence (run.relaunchAuthorization), and dispatch typed retry/handler relaunches through runner-v2-launch-agent",
+        label: "Detect report failures, resolve retry policy, mutate retry state, authorize one fresh occurrence (run.relaunchAuthorizations[agentId]), and dispatch typed retry/handler relaunches through runner-v2-launch-agent",
         owner: "runner-v2",
         paths: ["web/lib/runner-v2/error-handling.ts", "web/lib/runner-v2/error-handling-cli.ts", "lib/runner-v2-launch-agent.js"],
       },
