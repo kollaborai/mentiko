@@ -1,4 +1,4 @@
-import { decideNextRoute, normalizeRouteEvent, hasCompletedTrigger, routingContextForEvents } from "@/lib/runner-v2/routing";
+import { decideNextRoute, normalizeRouteEvent, hasCompletedTrigger, routingContextForEvents, type RoutingChain } from "@/lib/runner-v2/routing";
 import { runnerEventFixture } from "@/lib/runner-v2/test-support/runner-event-fixture";
 
 describe("runner-v2 routing decision", () => {
@@ -318,5 +318,40 @@ describe("runner-v2 routing decision", () => {
       reason: "targets already active or complete",
       pending: true,
     });
+  });
+});
+
+describe("manual admission trigger must not gate loop revisits", () => {
+  // Shape of stalled run-1793073754169-85d6b7a6: the starter agent is also the
+  // loop-back target, so its triggers mix "manual-start" with a real event.
+  const loopChain = (): RoutingChain => ({
+    agents: [
+      { id: "step-one", emits: "one-done", triggers: ["manual-start", "two-done"], status: "complete", lastAttemptCreatedAt: "2026-10-27T04:02:34.286Z" },
+      { id: "step-two", emits: "two-done", triggers: ["one-done"], status: "complete", lastAttemptCreatedAt: "2026-10-27T04:03:07.040Z" },
+    ],
+  });
+
+  it("re-launches the completed starter agent when the loop-back event fires (1 -> 2 -> back to 1)", () => {
+    const decision = decideNextRoute(
+      loopChain(),
+      "two-done",
+      "2026-10-27T04:03:27.911Z",
+      { firedEvents: ["one-done", "two-done"] },
+    );
+    expect(decision).toMatchObject({ action: "launch", agentIds: ["step-one"] });
+  });
+
+  it("multi-trigger merge of real events still waits for both before launching", () => {
+    const chain: RoutingChain = {
+      agents: [
+        { id: "a", emits: "ea", triggers: ["manual-start"], status: "complete" },
+        { id: "b", emits: "eb", triggers: ["manual-start"], status: "complete" },
+        { id: "merge", emits: "em", triggers: ["ea", "eb"] },
+      ],
+    };
+    expect(decideNextRoute(chain, "ea", "2026-10-27T05:00:00.000Z", { firedEvents: ["ea"] }))
+      .toMatchObject({ action: "wait", pending: true });
+    expect(decideNextRoute(chain, "eb", "2026-10-27T05:01:00.000Z", { firedEvents: ["ea", "eb"] }))
+      .toMatchObject({ action: "launch", agentIds: ["merge"] });
   });
 });

@@ -1,6 +1,6 @@
 /** @jest-environment node */
 
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -377,5 +377,77 @@ describe("routed launch job crash recovery", () => {
       status: "blocked",
       lastError: "physical instruction delivery could not be proven",
     });
+  });
+});
+
+describe("routing-driven revisit of a terminal-attempt agent", () => {
+  it("authorizes one fresh occurrence and bootstraps instead of failing closed (1 -> 2 -> back to 1)", async () => {
+    const runId = "run-revisit";
+    const runDir = mkdtempSync(join(tmpdir(), "routed-launch-revisit-"));
+    const runJsonPath = join(runDir, "run.json");
+    const chainPath = join(runDir, "chain.json");
+    writeFileSync(chainPath, JSON.stringify({ id: "revisit", name: "Revisit" }));
+    updateRunJson(runJsonPath, () => ({
+      ...createRunRecord({ runId, chainName: "revisit", goal: "loop" }),
+      status: "running",
+    }));
+    const first = createAgentAttempt({
+      runJsonPath,
+      runId,
+      agentId: "step-one",
+      leaseId: `step-one-${runId}`,
+    });
+    for (const phase of ["queued", "lease_acquired", "pty_allocated", "process_spawned", "ready_for_instructions", "instructions_submitted", "completed"] as const) {
+      transitionAgentAttempt({ runJsonPath, attemptId: first.id, to: phase });
+    }
+    const job = persistRoutedLaunchJob({
+      runJsonPath,
+      occurrenceId: `${runId}:step-two:two-done`,
+      runId,
+      runDir,
+      chainPath,
+      targetAgentIds: ["step-one"],
+      now: new Date("2026-10-27T05:00:00.000Z"),
+    });
+    claimRoutedLaunchJob({
+      runJsonPath,
+      jobId: job.id,
+      ownerId: "revisit-owner",
+      pid: process.pid,
+      leaseMs: 60_000,
+      now: new Date("2026-10-27T05:00:01.000Z"),
+    });
+
+    let bootstrapped = 0;
+    const result = await runRoutedLaunchJob({
+      runJsonPath,
+      jobId: job.id,
+      ownerId: "revisit-owner",
+      dependencies: {
+        bootstrap: async () => {
+          bootstrapped += 1;
+          const second = createAgentAttempt({
+            runJsonPath,
+            runId,
+            agentId: "step-one",
+            leaseId: `step-one-${runId}-2`,
+            launchJobId: job.id,
+            launchOccurrenceId: job.occurrenceId,
+          });
+          for (const phase of ["queued", "lease_acquired", "pty_allocated", "process_spawned", "ready_for_instructions", "instructions_submitted"] as const) {
+            transitionAgentAttempt({ runJsonPath, attemptId: second.id, to: phase });
+          }
+          expect(second.id).not.toBe(first.id);
+          return { support: "supported", mode: "typed-plan", sessionName: `step-one-${runId}-2` };
+        },
+      },
+    });
+    expect(result).toEqual({ status: "completed", jobId: job.id });
+    expect(bootstrapped).toBe(1);
+    const run = JSON.parse(readFileSync(runJsonPath, "utf8"));
+    const firstUpdatedAt = readRunnerV2AttemptState(runJsonPath).attempts
+      .find((attempt) => attempt.id === first.id)!.updatedAt;
+    expect(typeof run.resumedAt).toBe("string");
+    expect(Date.parse(run.resumedAt)).toBeGreaterThan(Date.parse(firstUpdatedAt));
   });
 });
