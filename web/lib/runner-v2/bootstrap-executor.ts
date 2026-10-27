@@ -634,11 +634,25 @@ function assertBootstrapLaunchable(
 
   // A resume route authorizes one fresh occurrence by persisting resumedAt on
   // the run before relaunch. This is durable route state, unlike an environment
-  // occurrence id (which is only a caller claim). createAgentAttempt then
-  // allocates the next attempt id and preserves the terminal history.
-  const resumedAt = typeof run.resumedAt === "string" ? Date.parse(run.resumedAt) : Number.NaN;
+  // occurrence id (which is only a caller claim). authorizeTypedRelaunch writes
+  // a separate occurrence-scoped relaunchAuthorization (agent id + launch job
+  // id) for retry and routed-revisit relaunches, so a replayed or duplicate
+  // launch job cannot admit a completed agent, and relaunches do not extend
+  // the watchdog/reconciler resumedAt grace windows. createAgentAttempt then
+  // allocates the next attempt id and preserves the terminal history; the new
+  // attempt's updatedAt is newer than the authorization, so each authorization
+  // admits exactly one attempt.
   const attemptUpdatedAt = Date.parse(latestAttempt.updatedAt);
+  const resumedAt = typeof run.resumedAt === "string" ? Date.parse(run.resumedAt) : Number.NaN;
   if (Number.isFinite(resumedAt) && Number.isFinite(attemptUpdatedAt) && resumedAt > attemptUpdatedAt) return;
+  const relaunch = run.relaunchAuthorization;
+  if (
+    relaunch
+    && typeof relaunch === "object"
+    && relaunch.agentId === agentId
+    && relaunch.launchJobId === launchJobId
+    && Date.parse(typeof relaunch.authorizedAt === "string" ? relaunch.authorizedAt : "") > attemptUpdatedAt
+  ) return;
 
   // Existing routed launches are replayed from their persisted acceptance
   // receipt by adapters.ts before bootstrap is reached; a direct bootstrap

@@ -9,6 +9,7 @@ import {
   resolveRunnerV2LaunchEnv,
 } from "@/lib/runner-v2/bootstrap-executor";
 import { startLaunch } from "@/lib/runner-v2/adapters";
+import { claimRoutedLaunchJob, persistRoutedLaunchJob } from "@/lib/runner-v2/launch-job";
 import { createRunRecord, updateRunJson, type RunStatus } from "@/lib/runner-v2/run-state";
 import { createRunRecordFile } from "@/lib/runs/run-record";
 import type { AgentBootstrapPlan } from "@/lib/runner-v2/agent-bootstrap-plan";
@@ -752,6 +753,153 @@ describe("runner-v2 bootstrap executor", () => {
       expect.objectContaining({ id: "run-1:writer:1", phase: "completed" }),
       expect.objectContaining({ id: "run-1:writer:2", leaseId: "workspace-writer-run-1" }),
     ]));
+  });
+
+  it("admits a routed revisit only through an authorization scoped to the same agent and launch job", async () => {
+    const root = tempDir();
+    writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
+    const runJsonPath = seedRunJson(root, "running");
+    const job = persistRoutedLaunchJob({
+      runJsonPath,
+      occurrenceId: "run-1:step-two:two-done",
+      runId: "run-1",
+      runDir: root,
+      chainPath: join(root, "chain.json"),
+      targetAgentIds: ["writer"],
+      now: new Date("2026-07-15T00:01:30.000Z"),
+    });
+    claimRoutedLaunchJob({
+      runJsonPath,
+      jobId: job.id,
+      ownerId: "gate-owner",
+      pid: process.pid,
+      leaseMs: 60_000,
+    });
+    updateRunJson(runJsonPath, (run) => ({
+      ...run!,
+      runnerV2: {
+        ...run!.runnerV2,
+        attempts: [{
+          id: "run-1:writer:1",
+          runId: "run-1",
+          agentId: "writer",
+          phase: "completed",
+          desiredPhase: "completed",
+          observedPhase: "completed",
+          terminalReason: "completed_from_event",
+          instructionLedger: [],
+          recoveryDecisionCount: 0,
+          createdAt: "2026-07-15T00:00:00.000Z",
+          updatedAt: "2026-07-15T00:01:00.000Z",
+          transitions: [],
+        }],
+      },
+      relaunchAuthorization: {
+        agentId: "writer",
+        launchJobId: job.id,
+        authorizedAt: "2026-07-15T00:02:00.000Z",
+      },
+    }));
+    const routedContext = {
+      ...context(root),
+      env: {
+        ...context(root).env,
+        MENTIKO_LAUNCH_JOB_ID: job.id,
+        MENTIKO_LAUNCH_JOB_OWNER_ID: "gate-owner",
+        MENTIKO_COMPLETION_OCCURRENCE_ID: job.occurrenceId,
+      },
+    };
+    const executor = executorWithCapture("claude ready >");
+
+    await executeLocalBootstrap(plan(root), routedContext, executor);
+
+    expect(executor.spawn).toHaveBeenCalledWith(
+      "workspace-writer-run-1",
+      "zsh",
+      [],
+      expect.objectContaining({ cwd: join(root, "workspace") }),
+    );
+  });
+
+  it("does not admit a second terminal agent on an authorization scoped to another agent", async () => {
+    const root = tempDir();
+    writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
+    const runJsonPath = seedRunJson(root, "running");
+    updateRunJson(runJsonPath, (run) => ({
+      ...run!,
+      runnerV2: {
+        attempts: [{
+          id: "run-1:writer:1",
+          runId: "run-1",
+          agentId: "writer",
+          phase: "completed",
+          desiredPhase: "completed",
+          observedPhase: "completed",
+          terminalReason: "completed_from_event",
+          instructionLedger: [],
+          recoveryDecisionCount: 0,
+          createdAt: "2026-07-15T00:00:00.000Z",
+          updatedAt: "2026-07-15T00:01:00.000Z",
+          transitions: [],
+        }],
+      },
+      // scoped to a different agent in the same run: must not admit writer
+      relaunchAuthorization: {
+        agentId: "designer",
+        launchJobId: "job-revisit",
+        authorizedAt: "2026-07-15T00:02:00.000Z",
+      },
+    }));
+    const routedContext = {
+      ...context(root),
+      env: { ...context(root).env, MENTIKO_LAUNCH_JOB_ID: "job-revisit" },
+    };
+    const executor = executorWithCapture("claude ready >");
+
+    await expect(executeLocalBootstrap(plan(root), routedContext, executor)).rejects.toThrow(
+      "agent writer has terminal attempt run-1:writer:1 (completed)",
+    );
+    expect(executor.spawn).not.toHaveBeenCalled();
+  });
+
+  it("does not admit a terminal agent when the authorization names a different launch job", async () => {
+    const root = tempDir();
+    writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
+    const runJsonPath = seedRunJson(root, "running");
+    updateRunJson(runJsonPath, (run) => ({
+      ...run!,
+      runnerV2: {
+        attempts: [{
+          id: "run-1:writer:1",
+          runId: "run-1",
+          agentId: "writer",
+          phase: "completed",
+          desiredPhase: "completed",
+          observedPhase: "completed",
+          terminalReason: "completed_from_event",
+          instructionLedger: [],
+          recoveryDecisionCount: 0,
+          createdAt: "2026-07-15T00:00:00.000Z",
+          updatedAt: "2026-07-15T00:01:00.000Z",
+          transitions: [],
+        }],
+      },
+      relaunchAuthorization: {
+        agentId: "writer",
+        launchJobId: "job-first-visit",
+        authorizedAt: "2026-07-15T00:02:00.000Z",
+      },
+    }));
+    const routedContext = {
+      ...context(root),
+      env: { ...context(root).env, MENTIKO_LAUNCH_JOB_ID: "job-revisit" },
+    };
+    const executor = executorWithCapture("claude ready >");
+
+    await expect(executeLocalBootstrap(plan(root), routedContext, executor)).rejects.toThrow(
+      "agent writer has terminal attempt run-1:writer:1 (completed)",
+    );
+    expect(executor.spawn).not.toHaveBeenCalled();
   });
 
   it("makes two absent fan-out targets durably acceptable through real bootstrap registration", async () => {

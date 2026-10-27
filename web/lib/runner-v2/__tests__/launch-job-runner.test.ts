@@ -447,7 +447,106 @@ describe("routing-driven revisit of a terminal-attempt agent", () => {
     const run = JSON.parse(readFileSync(runJsonPath, "utf8"));
     const firstUpdatedAt = readRunnerV2AttemptState(runJsonPath).attempts
       .find((attempt) => attempt.id === first.id)!.updatedAt;
-    expect(typeof run.resumedAt).toBe("string");
-    expect(Date.parse(run.resumedAt)).toBeGreaterThan(Date.parse(firstUpdatedAt));
+    // The authorization is scoped to one agent and one launch-job occurrence,
+    // and deliberately is not resumedAt (which the watchdog and reconciler
+    // read as a stall-detection grace window).
+    expect(run.relaunchAuthorization).toEqual({
+      agentId: "step-one",
+      launchJobId: job.id,
+      authorizedAt: expect.any(String),
+    });
+    expect(run.resumedAt).toBeUndefined();
+    expect(Date.parse(run.relaunchAuthorization.authorizedAt)).toBeGreaterThan(Date.parse(firstUpdatedAt));
+  });
+
+  it("does not bootstrap again when the same launch job id is replayed", async () => {
+    const runId = "run-revisit-replay";
+    const runDir = mkdtempSync(join(tmpdir(), "routed-launch-revisit-replay-"));
+    const runJsonPath = join(runDir, "run.json");
+    const chainPath = join(runDir, "chain.json");
+    writeFileSync(chainPath, JSON.stringify({ id: "revisit-replay", name: "Revisit Replay" }));
+    updateRunJson(runJsonPath, () => ({
+      ...createRunRecord({ runId, chainName: "revisit-replay", goal: "loop" }),
+      status: "running",
+    }));
+    const first = createAgentAttempt({
+      runJsonPath,
+      runId,
+      agentId: "step-one",
+      leaseId: `step-one-${runId}`,
+    });
+    for (const phase of ["queued", "lease_acquired", "pty_allocated", "process_spawned", "ready_for_instructions", "instructions_submitted", "completed"] as const) {
+      transitionAgentAttempt({ runJsonPath, attemptId: first.id, to: phase });
+    }
+    const job = persistRoutedLaunchJob({
+      runJsonPath,
+      occurrenceId: `${runId}:step-two:two-done`,
+      runId,
+      runDir,
+      chainPath,
+      targetAgentIds: ["step-one"],
+      now: new Date("2026-10-27T05:00:00.000Z"),
+    });
+    claimRoutedLaunchJob({
+      runJsonPath,
+      jobId: job.id,
+      ownerId: "replay-owner",
+      pid: process.pid,
+      leaseMs: 60_000,
+      now: new Date("2026-10-27T05:00:01.000Z"),
+    });
+    const revisit = async () => runRoutedLaunchJob({
+      runJsonPath,
+      jobId: job.id,
+      ownerId: "replay-owner",
+      dependencies: {
+        bootstrap: async () => {
+          const second = createAgentAttempt({
+            runJsonPath,
+            runId,
+            agentId: "step-one",
+            leaseId: `step-one-${runId}-2`,
+            launchJobId: job.id,
+            launchOccurrenceId: job.occurrenceId,
+          });
+          for (const phase of ["queued", "lease_acquired", "pty_allocated", "process_spawned", "ready_for_instructions", "instructions_submitted", "completed"] as const) {
+            transitionAgentAttempt({ runJsonPath, attemptId: second.id, to: phase });
+          }
+          return { support: "supported", mode: "typed-plan", sessionName: `step-one-${runId}-2` };
+        },
+      },
+    });
+
+    await revisit();
+    const authorizedAt = JSON.parse(readFileSync(runJsonPath, "utf8")).relaunchAuthorization?.authorizedAt;
+    expect(authorizedAt).toEqual(expect.any(String));
+
+    // Simulate the replay window: the worker died after the revisit attempt was
+    // durably terminal but before the job completed, so the reconciler requeues
+    // the SAME job id. It must not bootstrap a third occurrence.
+    updateRunJson(runJsonPath, (run) => ({
+      ...run!,
+      runnerV2: {
+        ...run!.runnerV2,
+        launchJobs: {
+          ...run!.runnerV2?.launchJobs,
+          [job.id]: { ...readRoutedLaunchJob(runJsonPath, job.id)!, status: "queued", lease: undefined },
+        },
+      },
+    }));
+    const replay = await runRoutedLaunchJob({
+      runJsonPath,
+      jobId: job.id,
+      ownerId: "replay-owner",
+      dependencies: {
+        bootstrap: async () => {
+          throw new Error("replayed job id must not bootstrap again");
+        },
+      },
+    });
+    expect(replay).toEqual({ status: "completed", jobId: job.id });
+    const run = JSON.parse(readFileSync(runJsonPath, "utf8"));
+    expect(run.relaunchAuthorization.authorizedAt).toBe(authorizedAt); // no re-authorization
+    expect(readRunnerV2AttemptState(runJsonPath).attempts).toHaveLength(2); // no third occurrence
   });
 });
