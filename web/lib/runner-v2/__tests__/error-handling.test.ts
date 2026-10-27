@@ -128,25 +128,30 @@ describe("typed error handling", () => {
       expect(() => buildTypedRelaunchPlan(chainFile, "agent-1", join(bundleDir, "runner-error-handling.js"))).toThrow("launch-agent bundle missing");
     });
 
-    it("authorizes one fresh occurrence for the matching run and leaves a foreign record untouched", () => {
+    it("authorizes one scoped fresh occurrence for the matching run and leaves a foreign record untouched", () => {
       const runRoot = mkdtempSync(join(tmpdir(), "mentiko-error-authorize-"));
       const runJsonPath = join(runRoot, "run.json");
       const record = { id: "run-auth", chain: "c", goal: "g", started: "2026-07-16T00:00:00.000Z", status: "running", sessions: ["s1"], agents: [], parent_run_id: "run-parent" };
       writeFileSync(runJsonPath, JSON.stringify(record));
 
-      authorizeTypedRelaunch(runJsonPath, "run-auth");
+      authorizeTypedRelaunch(runJsonPath, "run-auth", { agentId: "writer", launchJobId: "job-revisit" });
       const authorized = JSON.parse(readFileSync(runJsonPath, "utf8"));
       expect(authorized.id).toBe("run-auth");
       expect(authorized.parent_run_id).toBe("run-parent");
-      expect(authorized.resumedAt).toEqual(expect.any(String));
+      expect(authorized.relaunchAuthorization).toEqual({
+        agentId: "writer",
+        launchJobId: "job-revisit",
+        authorizedAt: expect.any(String),
+      });
+      expect(authorized.resumedAt).toBeUndefined(); // must not touch the resume-route/grace field
 
-      authorizeTypedRelaunch(runJsonPath, "run-foreign");
+      authorizeTypedRelaunch(runJsonPath, "run-foreign", { agentId: "writer" });
       const foreign = JSON.parse(readFileSync(runJsonPath, "utf8"));
       expect(foreign.id).toBe("run-auth");
-      expect(foreign.resumedAt).toBe(authorized.resumedAt); // foreign id must not re-authorize or mutate
+      expect(foreign.relaunchAuthorization).toEqual(authorized.relaunchAuthorization); // foreign id must not re-authorize or mutate
 
       // best-effort: a missing record never throws
-      expect(() => authorizeTypedRelaunch(join(runRoot, "absent.json"), "run-auth")).not.toThrow();
+      expect(() => authorizeTypedRelaunch(join(runRoot, "absent.json"), "run-auth", { agentId: "writer" })).not.toThrow();
     });
   });
 });

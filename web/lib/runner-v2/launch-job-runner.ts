@@ -7,7 +7,8 @@ import {
   recoverInterruptedRoutedBootstrap,
   type RoutedBootstrapRecoveryResult,
 } from "@/lib/runner-v2/bootstrap-recovery";
-import { readRunnerV2AttemptState, type AgentAttemptRecord } from "@/lib/runner-v2/agent-attempt";
+import { readRunnerV2AttemptState, isTerminalAgentAttemptPhase, type AgentAttemptRecord } from "@/lib/runner-v2/agent-attempt";
+import { authorizeTypedRelaunch } from "@/lib/runner-v2/error-handling";
 import {
   bindRoutedLaunchJobAttempt,
   blockRoutedLaunchJob,
@@ -264,6 +265,28 @@ async function runLaunchTarget(input: {
       attemptId: prior.id,
     });
     return;
+  }
+  // A routing-driven revisit targets an agent whose previous occurrence is
+  // already terminal (the 1 -> 2 -> back-to-1 loop shape). The bootstrap gate
+  // admits a terminal-attempt agent only with a durable fresh-occurrence
+  // authorization — the same documented mechanism the resume route and retry
+  // relaunches use — so authorize one scoped to this agent and this launch job
+  // before the direct bootstrap instead of failing closed on the terminal
+  // attempt. Skipped when the terminal attempt already belongs to this job: a
+  // replayed job id must not bootstrap a second occurrence of work it already
+  // produced.
+  const latestForAgent = [...readRunnerV2AttemptState(input.runJsonPath).attempts]
+    .reverse()
+    .find((attempt) => attempt.runId === input.job.runId && attempt.agentId === input.agentId);
+  if (
+    latestForAgent
+    && isTerminalAgentAttemptPhase(latestForAgent.phase)
+    && latestForAgent.launchJobId !== input.job.id
+  ) {
+    authorizeTypedRelaunch(input.runJsonPath, input.job.runId, {
+      agentId: input.agentId,
+      launchJobId: input.job.id,
+    });
   }
   const bootstrap = input.dependencies.bootstrap || startRunnerV2Bootstrap;
   const result = await bootstrap(context);

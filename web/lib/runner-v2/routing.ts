@@ -199,11 +199,23 @@ function routeConditionMatches(condition: string, eventName: string): boolean {
   }
 }
 
+// "manual-start" is an admission marker for the initial agent, not an event
+// any agent emits (chain validation exempts it the same way; launchers use it
+// to pick the first agent). Requiring it as a fired prerequisite permanently
+// blocks the re-visit of any agent whose triggers mix manual-start with real
+// events (the 1 -> 2 -> back-to-1 loop shape): the routing decision waits
+// pending forever while no agent is actually in flight.
+const MANUAL_ADMISSION_TRIGGER = "manual-start";
+
+function eventTriggers(triggers: string[]): string[] {
+  return triggers.filter((trigger) => normalizeRouteEvent(trigger) !== MANUAL_ADMISSION_TRIGGER);
+}
+
 // Explicit wait_for_events policies use the validated same-run event history
 // supplied by completion, recovery, reconcile, and resume. Legacy multi-trigger
 // chains retain their historical AND fallback when no policy is declared.
 function prerequisitesComplete(target: RoutingAgent, agents: RoutingAgent[], context?: RoutingContext): boolean {
-  const triggers = routeTriggers(target);
+  const triggers = eventTriggers(routeTriggers(target));
   if (triggers.length <= 1) return true;
 
   const fired = normalizedFiredEvents(context);

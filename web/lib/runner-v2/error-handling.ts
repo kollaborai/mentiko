@@ -161,7 +161,7 @@ export function scheduleChainRunner(chainFile: string, agentId: string, delaySec
  * occurrence and spawn the typed launch-agent bundle detached. The launcher
  * reuses the exact run id, the run-local immutable chain snapshot, parent
  * provenance, and terminal attempt history (createAgentAttempt preserves it);
- * the resumedAt authorization is the typed runtime's documented mechanism for a
+ * the scoped relaunchAuthorization is the typed runtime's documented mechanism for a
  * direct bootstrap of an agent whose latest attempt is terminal, mirroring the
  * resume route. Detached + unref'd: the relaunch outlives this process and
  * never blocks the error decision that scheduled it.
@@ -171,7 +171,7 @@ export function dispatchChainRunner(chainFile: string, agentId: string, delaySec
   assertNonNegativeFinite(delaySeconds, "delay seconds");
   return new Promise((resolveDispatch) => {
     setTimeout(() => {
-      authorizeTypedRelaunch(plan.runJsonPath, plan.runId);
+      authorizeTypedRelaunch(plan.runJsonPath, plan.runId, { agentId });
       const child = spawn(process.execPath, [plan.launcher, ...plan.args], {
         detached: true,
         stdio: "ignore",
@@ -232,22 +232,38 @@ function resolveTypedLauncher(bundlePath: string): string {
 }
 
 /**
- * Authorize one fresh typed occurrence for a non-terminal run. The typed
- * bootstrap's assertBootstrapLaunchable gate admits a direct relaunch of an
- * agent whose latest attempt is terminal only when run.resumedAt is newer than
- * that attempt's updatedAt; retry/handler relaunches are detached direct
- * bootstraps (not routed-completion replays), so they need this durable
- * authorization rather than an env occurrence claim. Identity-guarded and
- * best-effort: a missing record or write failure never changes the durable
- * retry/handler decision, and a record whose id does not match is left untouched.
+ * Authorize one fresh typed occurrence for a non-terminal run, scoped to one
+ * agent and, when routed, one launch-job occurrence. The typed bootstrap's
+ * assertBootstrapLaunchable gate admits a direct relaunch of an agent whose
+ * latest attempt is terminal only when a durable authorization matches that
+ * agent and occurrence and is newer than the attempt's updatedAt;
+ * retry/handler relaunches are detached direct bootstraps (not
+ * routed-completion replays), so they need this durable authorization rather
+ * than an env occurrence claim. The authorization is written to
+ * relaunchAuthorization, not resumedAt: resumedAt also feeds the watchdog and
+ * reconciler grace windows, so every relaunch would otherwise suspend stall
+ * detection. Identity-guarded and best-effort: a missing record or write
+ * failure never changes the durable retry/handler decision, and a record whose
+ * id does not match is left untouched.
  */
-export function authorizeTypedRelaunch(runJsonPath: string, runId: string): void {
+export function authorizeTypedRelaunch(
+  runJsonPath: string,
+  runId: string,
+  scope: { agentId: string; launchJobId?: string },
+): void {
   if (!existsSync(runJsonPath)) return;
   try {
     updateRunJson(runJsonPath, (current) => {
       if (!current) throw new Error(`run.json not found during relaunch authorization: ${runJsonPath}`);
       if (current.id !== runId) return current; // never authorize a foreign record
-      return { ...current, resumedAt: new Date().toISOString() };
+      return {
+        ...current,
+        relaunchAuthorization: {
+          agentId: scope.agentId,
+          launchJobId: scope.launchJobId,
+          authorizedAt: new Date().toISOString(),
+        },
+      };
     });
   } catch {
     // The launcher's own gate remains authoritative; authorization is best-effort.
