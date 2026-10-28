@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { readFileSync, writeFileSync, existsSync } from "fs";
+import { existsSync } from "fs";
 import { join } from "path";
 import { checkAuth } from "@/lib/auth/api-auth";
 import { pty } from "@/lib/pty/pty-client";
@@ -8,6 +8,7 @@ import config from "@/lib/config";
 import { Unauthorized, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { buildChildEnv } from "@/lib/runs/child-env";
+import { mutateExistingRunJson } from "@/lib/runs/run-json-mutation";
 
 export const dynamic = "force-dynamic";
 
@@ -66,11 +67,9 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     const runJsonPath = join(config.runsDir, runId, "run.json");
     if (existsSync(runJsonPath)) {
       try {
-        const run = JSON.parse(readFileSync(runJsonPath, "utf-8"));
-        run.agents = (run.agents || []).map((a: { id: string; session?: string; status?: string }) =>
-          a.id === agentId ? { ...a, session: sessionName, status: "running" } : a
-        );
-        writeFileSync(runJsonPath, JSON.stringify(run, null, 2));
+        mutateExistingRunJson<{ agents?: Array<{ id: string; session?: string; status?: string }> }>(runJsonPath, (run) => ({
+          ...run, agents: (run.agents || []).map((a) => a.id === agentId ? { ...a, session: sessionName, status: "running" } : a),
+        }));
       } catch {
         // non-fatal: poll will eventually catch up
       }

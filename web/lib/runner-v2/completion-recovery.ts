@@ -1,3 +1,4 @@
+import { clearIdleIncidentOnActivity } from "@/lib/runs/idle-incident";
 import { readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { findCompletionEvent } from "@/lib/runner-v2/completion";
@@ -164,6 +165,7 @@ export function recoverLateCompletionEvents(input: RecoverLateCompletionInput): 
 
     // The entire run recovery becomes durable in one rename. There is no
     // partially-adopted attempt/agent/status state for a later process to infer.
+    next = clearIdleIncidentOnActivity(current, next);
     writeRunJsonAtomic(input.runJsonPath, next);
     input.testHooks?.afterRunCommitted?.();
 

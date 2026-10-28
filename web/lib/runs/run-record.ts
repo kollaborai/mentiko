@@ -1,3 +1,4 @@
+import { clearIdleIncidentOnActivity } from "@/lib/runs/idle-incident";
 import {
   existsSync,
   lstatSync,
@@ -536,7 +537,7 @@ export function mutateRunRecordFile(
   return withRunJsonLock(runJsonPath, () => {
     if (!existsSync(runJsonPath)) throw new Error(`run.json not found: ${runJsonPath}`);
     const current = parseRunRecord(readFileSync(runJsonPath, "utf8"));
-    const next = update(current);
+    const next = clearIdleIncidentOnActivity(current, update(current));
     assertRunRecord(next);
     if (next.id !== current.id) {
       throw new RunRecordValidationError("normalized", [{

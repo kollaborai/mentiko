@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync } from "fs";
+import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { requirePermission } from "@/lib/auth/rbac-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
@@ -6,7 +6,8 @@ import { pty } from "@/lib/pty/pty-client";
 import { taskMergeMeta } from "@/lib/tasks/task-store";
 import { writeLog } from "@/lib/system/system-logger";
 import { checkRunAccess } from "@/lib/auth/run-acl";
-import { NotFound, BadRequest, Unauthorized } from "@/lib/api-errors";
+import { NotFound, BadRequest, Conflict, Unauthorized } from "@/lib/api-errors";
+import { commitRunJsonSnapshot } from "@/lib/runs/run-json-mutation";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
 import { isNonExecutionRun } from "@/lib/runs/run-provenance";
@@ -49,6 +50,7 @@ export const POST = withErrorHandling(async (
   }
 
   const run = JSON.parse(readFileSync(runJsonPath, "utf-8"));
+  const before = structuredClone(run);
 
   // remove agent + typed-attempt PTY sessions (safe even if already dead)
   const staleSessions = collectStaleRunSessionNames(run);
@@ -84,7 +86,7 @@ export const POST = withErrorHandling(async (
   }
 
   if (changed) {
-    writeFileSync(runJsonPath, JSON.stringify(run, null, 2));
+    if (!commitRunJsonSnapshot(runJsonPath, before, run)) throw new Conflict("Run changed while stopping; retry");
     const agentSummary = (run.agents || []).map((a: { id: string; status: string }) => `${a.id}:${a.status}`).join(", ");
     writeLog(namespaceId, orgId || "default", "warn", "stop-api",
       `run ${runId} stopped by user`, `agents: ${agentSummary}`);

@@ -24,6 +24,7 @@ import { hasInternalAuth } from "@/lib/auth/internal-api-auth";
 import { Unauthorized, NotFound, Conflict } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { withRunJsonLock, writeRunJsonAtomic } from "@/lib/runs/run-json-lock";
+import { clearIdleIncidentOnActivity } from "@/lib/runs/idle-incident";
 
 export const dynamic = "force-dynamic";
 
@@ -82,6 +83,7 @@ export const POST = withErrorHandling(async (
       throw new NotFound("Run", runId);
     }
     const run = JSON.parse(readFileSync(runJsonPath, "utf-8"));
+    const before = structuredClone(run);
 
     // reject heartbeats for stopped/completed runs
     // orphan heartbeat loops from dead chain-runners keep firing and
@@ -119,7 +121,7 @@ export const POST = withErrorHandling(async (
       if (safeMessage) run.blockedReason = safeMessage;
     }
 
-    writeRunJsonAtomic(runJsonPath, run);
+    writeRunJsonAtomic(runJsonPath, clearIdleIncidentOnActivity(before, run));
   });
 
   return apiSuccess({

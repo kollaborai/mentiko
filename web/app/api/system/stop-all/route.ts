@@ -8,6 +8,7 @@ import { checkAuth } from "@/lib/auth/api-auth";
 import { writeLog } from "@/lib/system/system-logger";
 import config from "@/lib/config";
 import { pty } from "@/lib/pty/pty-client";
+import { commitRunJsonSnapshot } from "@/lib/runs/run-json-mutation";
 
 export const dynamic = "force-dynamic";
 
@@ -40,6 +41,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
 
       try {
         const run = JSON.parse(readFileSync(runJsonPath, "utf-8"));
+        const before = structuredClone(run);
         if (run.status !== "running" && run.status !== "pending") continue;
 
         // kill all agent pty sessions
@@ -57,7 +59,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
         run.completed = new Date().toISOString();
         run.stop_reason = "emergency_stop";
         run.statusReason = { actor: "user", reason: "emergency stop-all" };
-        writeFileSync(runJsonPath, JSON.stringify(run, null, 2));
+        if (!commitRunJsonSnapshot(runJsonPath, before, run)) throw new Error("run changed while stopping; retry");
         stopped.push(dir);
       } catch (e) {
         errors.push(`${dir}: ${e instanceof Error ? e.message : String(e)}`);

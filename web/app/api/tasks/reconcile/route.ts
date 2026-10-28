@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { existsSync, readFileSync, readdirSync, writeFileSync } from "fs";
+import { existsSync, readFileSync, readdirSync } from "fs";
 import { randomUUID } from "node:crypto";
 import { join } from "path";
 import { checkAuth } from "@/lib/auth/api-auth";
@@ -17,6 +17,9 @@ import { Unauthorized, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { cleanTaskExecutionRunMetadata, isNonExecutionRun } from "@/lib/runs/run-provenance";
 import { allDeclaredAgentsComplete, latestAgentCompletion } from "@/lib/runs/run-completion";
+import { commitRunJsonSnapshot } from "@/lib/runs/run-json-mutation";
+import { hasReconcilerProtectedWork } from "@/lib/runs/reconciler-protected-work";
+import { RunJsonLockTimeoutError } from "@/lib/runs/run-json-lock";
 import { triggerAutoRunScan } from "@/lib/runs/auto-run-service";
 import { applyTypedExecutorPlan } from "@/lib/runner-v2/adapters";
 import {
@@ -350,6 +353,8 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     } else {
       try {
         const run = JSON.parse(readFileSync(runJsonPath, "utf-8"));
+        const before = structuredClone(run);
+        if (hasReconcilerProtectedWork(run)) continue;
         if (isNonExecutionRun(run)) {
           const safeId = validateTaskId(issue.id);
           const cleaned = cleanTaskExecutionRunMetadata(meta, run, runId);
@@ -380,7 +385,7 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
           if (allDeclaredAgentsComplete(run, runDir)) {
             run.status = "completed";
             run.completed = latestAgentCompletion(run) || run.completed || new Date().toISOString();
-            writeFileSync(runJsonPath, JSON.stringify(run, null, 2));
+            if (!commitRunJsonSnapshot(runJsonPath, before, run)) continue;
             newStatus = "completed";
             reason = "all declared agents are complete";
           }
@@ -409,12 +414,13 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
                 run.status = "stopped";
                 run.completed = run.completed || new Date().toISOString();
                 run.statusReason = { actor: "reconciler", reason };
-                writeFileSync(runJsonPath, JSON.stringify(run, null, 2));
+                if (!commitRunJsonSnapshot(runJsonPath, before, run)) continue;
               }
             }
           }
         }
-      } catch {
+      } catch (error) {
+        if (error instanceof RunJsonLockTimeoutError) continue;
         newStatus = "unknown";
         reason = "failed to read run.json";
       }

@@ -1,11 +1,12 @@
 import { NextRequest } from "next/server";
-import { readFileSync, writeFileSync, existsSync } from "fs";
+import { writeFileSync, existsSync } from "fs";
 import { join } from "path";
 import { checkRunAccess } from "@/lib/auth/run-acl";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { Unauthorized, NotFound, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
+import { mutateExistingRunJson } from "@/lib/runs/run-json-mutation";
 
 export const dynamic = "force-dynamic";
 
@@ -60,11 +61,10 @@ export const POST = withErrorHandling(async (
 
   // update run status
   try {
-    const runContent = readFileSync(runFile, "utf-8");
-    const run = JSON.parse(runContent);
-    run.status = body.action === "approve" ? "running" : "stopped";
-    run.completed = body.action === "reject" ? new Date().toISOString() : run.completed;
-    writeFileSync(runFile, JSON.stringify(run, null, 2));
+    mutateExistingRunJson<{ status: string; completed?: string }>(runFile, (run) => ({
+      ...run, status: body.action === "approve" ? "running" : "stopped",
+      completed: body.action === "reject" ? new Date().toISOString() : run.completed,
+    }));
   } catch {
     // run update is non-critical
   }

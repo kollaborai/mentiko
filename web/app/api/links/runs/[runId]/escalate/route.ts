@@ -1,16 +1,17 @@
 import { NextRequest } from "next/server";
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
+import { readFileSync, existsSync, mkdirSync } from "fs";
 import { execFileSync } from "child_process";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { requirePermission } from "@/lib/auth/rbac-auth";
 import { checkRunAccess } from "@/lib/auth/run-acl";
-import { BadRequest, NotFound, Unauthorized } from "@/lib/api-errors";
+import { BadRequest, Conflict, NotFound, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { findDefaultProfile } from "@/lib/agents/agent-profile-storage";
 import { buildChildEnv } from "@/lib/runs/child-env";
 import { resolveLinkRunPaths, validateLinkRunId } from "@/lib/links/link-run-runtime";
 import { hasInternalAuth } from "@/lib/auth/internal-api-auth";
 import { LINK_ESCALATION_FALLBACK_MODEL } from "@/lib/agents/agent-provider-catalog";
+import { commitRunJsonSnapshot } from "@/lib/runs/run-json-mutation";
 
 export const dynamic = "force-dynamic";
 
@@ -63,6 +64,7 @@ export const POST = withErrorHandling(async (
   }
 
   const run = JSON.parse(readFileSync(runPath, "utf-8"));
+  const before = structuredClone(run);
   if (run.type !== "link") {
     throw new BadRequest("Not a link run");
   }
@@ -85,7 +87,7 @@ export const POST = withErrorHandling(async (
   if (!run.escalations) run.escalations = [];
   run.escalations.push(escalation);
   run.status = "stalled";
-  writeFileSync(runPath, JSON.stringify(run, null, 2));
+  if (!commitRunJsonSnapshot(runPath, before, run)) throw new Conflict("Run changed while escalating; retry");
 
   // create escalation dir for reply file
   mkdirSync(escDir, { recursive: true });

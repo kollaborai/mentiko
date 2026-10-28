@@ -155,6 +155,7 @@ interface Run {
   /** free-text mirror of the terminal reason (C2: kept until the field merge) */
   status_message?: string;
   statusReason?: RunStatusReason;
+  runnerV2?: { idleIncident?: IdleIncident | null };
   agents: RunAgent[];
   sessions: string[];
   taskId?: string;
@@ -177,6 +178,12 @@ interface Run {
     haiku_summary?: string;
     human_reply?: string;
   }>;
+}
+
+interface IdleIncident {
+  status: "open" | "cleared";
+  reason?: string;
+  clearReason?: string;
 }
 
 interface StreamEvent {
@@ -662,6 +669,7 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
         status?: string;
         completed?: string;
         agents?: Array<{ id: string; status: string; session: string }>;
+        idleIncident?: IdleIncident | null;
       }>(raw);
       setRun((prev) => {
         if (!prev) return prev;
@@ -669,6 +677,7 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
           ...prev,
           status: data.status || prev.status,
           completed: data.completed || prev.completed,
+          runnerV2: { ...prev.runnerV2, idleIncident: data.idleIncident ?? null },
           agents: (prev.agents || []).map((agent) => {
             const live = (data.agents || []).find(
               (a: { id: string }) => a.id === agent.id,
@@ -1827,6 +1836,13 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
                   <span className="truncate" title={terminalEvidence.detail}>
                     {terminalEvidence.label}: {terminalEvidence.detail}
                   </span>
+                </div>
+              )}
+              {run.runnerV2?.idleIncident && (
+                <div className="mt-1 text-xs text-amber-600 dark:text-amber-400" role="status">
+                  {run.runnerV2.idleIncident.status === "open"
+                    ? `Run may be stalled: ${run.runnerV2.idleIncident.reason || "no active work observed"}`
+                    : `Watchdog incident cleared: ${run.runnerV2.idleIncident.clearReason || "activity observed"}`}
                 </div>
               )}
             </div>
