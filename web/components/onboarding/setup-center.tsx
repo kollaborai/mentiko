@@ -21,10 +21,10 @@ interface SetupState { setupVersion?: number; revision?: number; nextAction?: st
 interface Workspace { id: string; name: string; path?: string; execution?: { type?: string }; }
 
 const MILESTONES: { key: MilestoneStep; label: string; short: string; description: string }[] = [
-  { key: "provider", label: "Choose Your AI Tool", short: "Tool", description: "Pick the tool that will run your chain." },
-  { key: "workspace", label: "Connect Your Project", short: "Project", description: "Choose where your agents will work." },
-  { key: "readiness", label: "Check That Everything Works", short: "Check", description: "Run a safe check through the real runner." },
-  { key: "sampleRun", label: "Run Your First Chain", short: "Run", description: "Watch a small, read-only chain complete." },
+  { key: "provider", label: "Pick a Tool", short: "Tool", description: "CLI that runs your chain." },
+  { key: "workspace", label: "Connect a Project", short: "Project", description: "Where agents work." },
+  { key: "readiness", label: "Quick Check", short: "Check", description: "Verify the runner." },
+  { key: "sampleRun", label: "First Chain", short: "Run", description: "Small read-only sample." },
 ];
 
 // The server's nextAction vocabulary ("project", "sample") doesn't match the
@@ -76,28 +76,28 @@ function InputBarSideQuest({
   if (available === false) {
     return (
       <div className="mt-5 rounded-lg border border-dashed border-border/60 p-4 text-sm">
-        <p className="font-medium">Input Bar Is Not Available on This Install</p>
-        <p className="mt-1 text-xs text-foreground/50">Chain setup can continue without it.</p>
+        <p className="font-medium">Input bar unavailable here</p>
+        <p className="mt-1 text-xs text-foreground/50">Setup can continue without it.</p>
       </div>
     );
   }
 
   return (
     <div className="mt-5 rounded-lg border border-border/60 bg-card/20 p-4 text-sm">
-      <p className="font-medium">Set up the input bar</p>
-      <p className="mt-1 text-xs text-foreground/50">The input bar lets you ask Mentiko for help from any page.</p>
+      <p className="font-medium">Input bar (optional)</p>
+      <p className="mt-1 text-xs text-foreground/50">Ask Mentiko from any page.</p>
       {status === "needs_attention" && (
         <p className="mt-1.5 flex items-center gap-1.5 text-xs text-amber-300">
           <InfoCircleFilled className="h-3.5 w-3.5 shrink-0" />
-          Couldn’t connect last time — try again.
+          Last check failed — retry.
         </p>
       )}
       <div className="mt-3 flex gap-2">
         <BusyButton busy={busy} busyLabel="Checking…" onClick={onCheck} size="sm">
-          Set Up Input Bar
+          Set Up
         </BusyButton>
         <button type="button" onClick={() => setDismissed(true)} className="text-xs text-foreground/50 hover:text-foreground">
-          Skip for Now
+          Skip
         </button>
       </div>
     </div>
@@ -238,16 +238,16 @@ export function SetupCenter({
   const isWelcomeStep = step === "welcome";
   const headerTitle = isWelcomeStep
     ? isAllSet
-      ? "You’re all set."
+      ? "All set."
       : hasProgress
-        ? "Continue setting up your first chain."
-        : "Let’s get your first chain running."
-    : "Set Up Your First Chain";
+        ? "Continue setup."
+        : "Set up your first chain."
+    : "First Chain Setup";
   const headerDescription = isWelcomeStep
     ? isAllSet
-      ? "Setup is complete. Run it again or build your own chain."
-      : "Choose a tool, connect a project, and run a small chain."
-    : "Complete each milestone to run your first chain.";
+      ? "Done. Re-run the sample or build your own."
+      : "Tool → project → check → run."
+    : "Four quick steps.";
   const openChainBuilder = () => router.push("/chains?chain=onboarding-sample-v1");
   const checkInputBar = () => void runAction("input_bar_check", "input-bar", "/api/onboarding/input-bar/check", {});
 
@@ -277,7 +277,7 @@ export function SetupCenter({
         </header>
 
         {(step !== "welcome" || isAllSet) && (
-          <nav aria-label="Setup progress" className="mt-5 sm:mt-6">
+          <nav aria-label="Setup progress" className={cn(embedded ? "mt-3" : "mt-5 sm:mt-6")}>
             <ol className="flex items-center gap-2">
               {MILESTONES.map((m, i) => {
                 const complete = done(m.key, state);
@@ -303,14 +303,14 @@ export function SetupCenter({
                 );
               })}
             </ol>
-            <p className="mt-2 text-center text-[10px] text-foreground/40">{completedCount} of {MILESTONES.length} milestones complete</p>
+            <p className="mt-2 text-center text-[10px] text-foreground/40">{completedCount}/{MILESTONES.length} done</p>
           </nav>
         )}
 
-        <section aria-label="Setup actions" className="mt-4 min-w-0 rounded-lg border border-border/60 bg-card/20 p-4 sm:p-5">
+                <section aria-label="Setup actions" className={cn("mt-4 min-w-0", embedded ? "p-0" : "rounded-lg border border-border/60 bg-card/20 p-4 sm:p-5")}>
           {error && <div role="alert" className="mb-4 flex items-center justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs"><span>{error}</span><BusyButton busy={loading} busyLabel="Retrying…" size="sm" variant="outline" onClick={() => void refresh()}>Retry</BusyButton></div>}
           {message && <p role="status" className="mb-4 text-xs text-foreground/60">{message}</p>}
-          {loading && <p role="status" className="mb-4 text-xs text-foreground/45">Loading your setup progress…</p>}
+          {loading && <p role="status" className="mb-4 text-xs text-foreground/45">Loading…</p>}
 
           <motion.div key={step} tabIndex={-1} className="outline-none" initial={enter.initial} animate={enter.animate} transition={enter.transition}>
               {step === "welcome" && (
@@ -340,11 +340,11 @@ export function SetupCenter({
                       )}
                       <div className="mt-3 flex flex-wrap items-center justify-center gap-x-4 gap-y-2">
                         <Button onClick={handleGetStarted} className="gap-2">
-                          {hasProgress ? "Continue Setup" : "Get Started"}
+                          {hasProgress ? "Continue" : "Start"}
                           <ArrowRight2Filled className="h-4 w-4" />
                         </Button>
                         <button type="button" onClick={handleRequestClose} className="text-xs text-foreground/40 transition-colors hover:text-foreground/60">
-                          I’ll explore first
+                          Skip for now
                         </button>
                       </div>
                     </>
@@ -374,8 +374,8 @@ export function SetupCenter({
               )}
               {step === "readiness" && (
                 <div>
-                  <h2 className="text-base font-semibold">Check That Everything Works</h2>
-                  <p className="mt-1 text-xs text-foreground/50">We’ll run a safe check with your selected tool and project.</p>
+                  <h2 className="text-base font-semibold">Quick Check</h2>
+                  <p className="mt-1 text-xs text-foreground/50">Safe check with your tool and project.</p>
                   <div className="mt-3 space-y-1 rounded-md border border-border/60 p-3 text-xs">
                     <p>AI Tool: <strong>{selectedToolLabel || "Not selected"}</strong></p>
                     {selectedProfileLabel && <p>Profile: <strong>{selectedProfileLabel}</strong></p>}
@@ -401,7 +401,7 @@ export function SetupCenter({
               {step === "sampleRun" && (
                 state.sampleRun?.status === "completed" ? (
                   <div>
-                    <h2 className="text-base font-semibold">All set. Your first chain ran.</h2>
+                    <h2 className="text-base font-semibold">First chain complete.</h2>
                     <div className="mt-3 space-y-1 rounded-md border border-border/60 p-3 text-xs">
                       <p>Tool: <strong>{selectedToolLabel || "Not selected"}</strong></p>
                       {selectedProfileLabel && <p>Profile: <strong>{selectedProfileLabel}</strong></p>}
@@ -427,8 +427,8 @@ export function SetupCenter({
                   </div>
                 ) : (
                   <div>
-                    <h2 className="text-base font-semibold">Run Your First Chain</h2>
-                    <p className="mt-1 text-xs text-foreground/50">Read the project name and return one short sentence. This sample does not modify files.</p>
+                    <h2 className="text-base font-semibold">First Chain</h2>
+                    <p className="mt-1 text-xs text-foreground/50">Read-only sample: one short sentence about the project.</p>
                     <div className="mt-3 space-y-1 rounded-md border border-border/60 p-3 text-xs">
                       <p>Tool: <strong>{selectedToolLabel || "Not selected"}</strong></p>
                       {selectedProfileLabel && <p>Profile: <strong>{selectedProfileLabel}</strong></p>}

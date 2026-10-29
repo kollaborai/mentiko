@@ -15,7 +15,7 @@ import { BusyButton } from "@/components/onboarding/setup-footer";
 import { ClaudeAuth } from "@/components/onboarding/cli-auth/claude-auth";
 import { CodexAuth } from "@/components/onboarding/cli-auth/codex-auth";
 import { AntigravityAuth } from "@/components/onboarding/cli-auth/antigravity-auth";
-import { AiderAuth } from "@/components/onboarding/cli-auth/aider-auth";
+import { GrokAuth } from "@/components/onboarding/cli-auth/grok-auth";
 import { KollabAuth } from "@/components/onboarding/cli-auth/kollab-auth";
 import { cn } from "@/lib/utils";
 
@@ -45,6 +45,7 @@ interface AuthSaveConfig {
 const INITIAL_AUTH_METHOD: Record<string, "login" | "api-key"> = {
   claude: "api-key",
   codex: "login",
+  grok: "login",
   antigravity: "api-key",
 };
 
@@ -219,7 +220,7 @@ export function ProviderStep({
     const bundleProvider = getBundleProviderForTool(toolId);
     const tool = CLI_TOOLS.find((t) => t.id === toolId);
     if (!bundleProvider) {
-      // Spec's "no verifiable readiness path" case (currently true for Aider,
+      // Spec's "no verifiable readiness path" case (currently true for tools without a readiness-enabled bundle profile,
       // which has no profile bundle in the catalog).
       setUnverifiedNotice(
         `${tool?.name ?? toolId} can be configured, but Mentiko cannot prove it is ready here. Credentials were saved; choose another tool to unlock Check and Run, or continue exploring.`,
@@ -286,7 +287,7 @@ export function ProviderStep({
     if (!readBackConfirmed) {
       return (
         <div>
-          <h2 className="text-lg font-semibold">Choose Your AI Tool</h2>
+          <h2 className="text-lg font-semibold">Pick a Tool</h2>
           <div className="mt-5 rounded-lg border border-destructive/30 bg-destructive/5 p-4">
             <div className="flex items-start gap-3">
               <DangerFilled className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
@@ -316,7 +317,7 @@ export function ProviderStep({
 
     return (
       <div>
-        <h2 className="text-lg font-semibold">Choose Your AI Tool</h2>
+        <h2 className="text-lg font-semibold">Pick a Tool</h2>
         <div className="mt-5 rounded-lg border border-border/60 bg-card/20 p-4">
           <div className="flex items-start gap-3">
             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-foreground/5">
@@ -357,7 +358,7 @@ export function ProviderStep({
   if (providerState.status === "in_progress" && !changingTool && !activeToolId) {
     return (
       <div>
-        <h2 className="text-lg font-semibold">Choose Your AI Tool</h2>
+        <h2 className="text-lg font-semibold">Pick a Tool</h2>
         <div className="mt-5 rounded-lg border border-border/60 bg-card/20 p-4">
           <div className="flex items-start gap-3">
             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-foreground/5">
@@ -421,7 +422,7 @@ export function ProviderStep({
           <ProviderLogo id={tool.id} className={cn("h-8 w-8", tool.color)} />
           <div>
             <h2 className="text-lg font-semibold">Set Up {tool.name}</h2>
-            <p className="text-xs text-foreground/50">Mentiko will use {tool.name} to run the agents in your first chain.</p>
+            <p className="text-xs text-foreground/50">{tool.name} will run agents in your first chain.</p>
             {detectedInfo?.version && <p className="text-[10px] text-foreground/35">Detected version: {detectedInfo.version}</p>}
           </div>
         </div>
@@ -443,7 +444,7 @@ export function ProviderStep({
             {currentDefaultProfile && currentDefaultProfile.cli !== tool.cli ? (
               <div className="rounded-lg border border-border/60 p-4">
                 <p className="text-sm">
-                  Your current default is <span className="text-foreground/90">{currentDefaultProfile.name}</span>. Use {tool.name} for this setup?
+                  Current default: <span className="text-foreground/90">{currentDefaultProfile.name}</span>. Use {tool.name} for this setup?
                 </p>
                 <div className="mt-3 flex flex-wrap gap-2">
                   <button
@@ -476,7 +477,7 @@ export function ProviderStep({
                   onChange={(e) => setDefaultChoice(e.target.checked ? "use" : "keep")}
                   className="h-4 w-4 rounded border-border/60"
                 />
-                Use {tool.name} for My First Run
+                Use for first run
               </label>
             )}
 
@@ -486,8 +487,8 @@ export function ProviderStep({
               <CodexAuth {...sharedAdapterProps} onSave={handleSave} initialAuthMethod={INITIAL_AUTH_METHOD.codex} />
             ) : activeToolId === "antigravity" ? (
               <AntigravityAuth {...sharedAdapterProps} onSave={handleSave} initialAuthMethod={INITIAL_AUTH_METHOD.antigravity} />
-            ) : activeToolId === "aider" ? (
-              <AiderAuth {...sharedAdapterProps} onSave={handleSave} />
+            ) : activeToolId === "grok" ? (
+              <GrokAuth {...sharedAdapterProps} onSave={handleSave} initialAuthMethod={INITIAL_AUTH_METHOD.grok} />
             ) : activeToolId === "kollab" ? (
               <KollabAuth {...sharedAdapterProps} onSave={handleSave} />
             ) : null}
@@ -500,7 +501,7 @@ export function ProviderStep({
   // ── provider picker (Step 1 default view) ────────────────────────────
   return (
     <div>
-      <h2 className="text-base font-semibold">Choose Your AI Tool</h2>
+      <h2 className="text-base font-semibold">Pick a Tool</h2>
       <p className="mt-1 text-xs text-foreground/50">Select a tool for your first run. Found tools appear first.</p>
       <div className="mt-4 grid gap-2 sm:grid-cols-2 md:grid-cols-3">
         {sortedTools.map((tool) => {

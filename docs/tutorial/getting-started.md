@@ -13,7 +13,7 @@ before starting, make sure you have:
   - an ai cli tool (one of):
     - claude code (Claude CLI) - recommended for beginners
     - glm (github.com/kollaborai/glm)
-    - aider, cursor-cli, or any cli that accepts prompts
+    - grok, cursor-cli, or any cli that accepts prompts
 
 all session types (local, ssh, docker) use pty-manager. no tmux needed.
 

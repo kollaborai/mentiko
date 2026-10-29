@@ -16,7 +16,7 @@ import { CLI_TOOLS, getProviderColors, PROVIDER_CREDENTIALS } from "@/lib/agents
 import { ClaudeAuth } from "@/components/onboarding/cli-auth/claude-auth";
 import { CodexAuth } from "@/components/onboarding/cli-auth/codex-auth";
 import { AntigravityAuth } from "@/components/onboarding/cli-auth/antigravity-auth";
-import { AiderAuth } from "@/components/onboarding/cli-auth/aider-auth";
+import { GrokAuth } from "@/components/onboarding/cli-auth/grok-auth";
 import { KollabAuth } from "@/components/onboarding/cli-auth/kollab-auth";
 import { ProviderLogo } from "@/components/onboarding/provider-logo";
 
@@ -320,11 +320,11 @@ export function CliSetupStep({
                 onSave={(config) => handleAuthSave("antigravity", config)}
               />
             )}
-            {activeCustomTool === "aider" && (
-              <AiderAuth
-                key="aider"
+            {activeCustomTool === "grok" && (
+              <GrokAuth
+                key="grok"
                 onBack={authProps.onBack}
-                onSave={(config) => handleAuthSave("aider", config)}
+                onSave={(config) => handleAuthSave("grok", config)}
                 backLabel="back to tools"
               />
             )}

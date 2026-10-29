@@ -39,7 +39,7 @@ export function getSkillSources(projectRoot?: string): SkillSource[] {
     });
   }
 
-  // future: add codex, aider, etc.
+  // future: add codex, grok, etc.
   // {
   //   tool: "codex",
   //   label: "Codex",

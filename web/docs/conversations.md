@@ -6,7 +6,7 @@ AI session history across workspaces.
 
 ## Overview
 
-The Conversations section provides a complete history of all AI sessions (Claude, Codex, Kollabor, Aider) across your workspaces. View past conversations, read message exchanges, inspect tool calls, and steer active sessions in real-time.
+The Conversations section provides a complete history of all AI sessions (Claude, Codex, Kollabor, Grok) across your workspaces. View past conversations, read message exchanges, inspect tool calls, and steer active sessions in real-time.
 
 **Key capabilities:**
 - Browse conversation history by project directory
@@ -32,7 +32,7 @@ Conversations are sorted by:
 - Violet accent - Claude
 - Sky blue accent - Codex
 - Amber accent - Kollabor
-- Rose accent - Aider
+- Rose accent - Grok
 
 **Per-conversation details:**
 - Slug (custom title, double-click to rename)

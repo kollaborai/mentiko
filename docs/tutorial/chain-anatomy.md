@@ -69,7 +69,7 @@ the ai cli tool to invoke for agent execution.
 common values:
   - "claude" - claude code (recommended)
   - "glm" - github.com/kollaborai/glm
-  - "aider" - aider code editor
+  - "grok" - xAI Grok coding agent
   - "cursor-cli" - cursor cli
 
 env var override: MENTIKO_CLI

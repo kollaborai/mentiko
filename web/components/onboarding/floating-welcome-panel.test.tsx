@@ -35,8 +35,8 @@ describe("FloatingWelcomePanel", () => {
     expect(dialog).toHaveAttribute("aria-labelledby", "setup-center-heading");
 
     // SetupCenter's Step 0 copy (spec), not the legacy four-step wizard's.
-    expect(within(dialog).getByRole("heading", { name: /first chain running/ })).toBeInTheDocument();
-    expect(within(dialog).getByRole("button", { name: /Get Started/ })).toBeInTheDocument();
+    expect(within(dialog).getByRole("heading", { name: /Set up your first chain/i })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: /^Start$/ })).toBeInTheDocument();
   });
 
   it("moves focus into the dialog on open", async () => {

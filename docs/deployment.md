@@ -116,7 +116,7 @@ core:
   NODE_ENV=production
 
 agent behavior:
-  MENTIKO_CLI=claude         # default ai gateway (claude, glm, aider)
+  MENTIKO_CLI=claude         # default ai gateway (claude, glm, grok)
   DEFAULT_MAX_ROUNDS=50      # agent iteration limit
   MAX_CONCURRENT_AGENTS=10   # concurrency cap
 

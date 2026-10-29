@@ -147,8 +147,20 @@ export const GET = withErrorHandling(async (request: Request) => {
             // stable file token contract to inspect here.
             break;
           }
-          case "kollab":
-          case "aider": {
+          case "grok": {
+            // grok stores OAuth session in ~/.grok/auth.json; XAI_API_KEY is the headless fallback
+            const grokAuth = join(homedir(), ".grok", "auth.json");
+            if (existsSync(grokAuth)) {
+              const data = JSON.parse(readFileSync(grokAuth, "utf-8"));
+              authenticated = !!(data.access_token || data.token || data.tokens || data.XAI_API_KEY);
+            } else if (env.XAI_API_KEY) {
+              authenticated = true;
+            } else {
+              authenticated = false;
+            }
+            break;
+          }
+          case "kollab": {
             // auth comes from agent profiles + secrets vault, not env vars
             // leave as undefined (unknown) -- detected by profile config
             break;

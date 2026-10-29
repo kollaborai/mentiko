@@ -14,7 +14,7 @@ export default function ConversationsDocPage() {
     <div>
       <PageBanner
         title="Conversations"
-        subtitle="AI sessions with different agents (claude, codex, kollabor, aider). Each conversation has a message history with tool calls and responses."
+        subtitle="AI sessions with different agents (claude, codex, kollabor, grok). Each conversation has a message history with tool calls and responses."
         icon={MessageCircleFilled}
         sectionColor="#f59e0b"
         actions={[
@@ -34,7 +34,7 @@ export default function ConversationsDocPage() {
           <div><span className="text-foreground/70">claude</span> - Anthropic Claude (via claude CLI)</div>
           <div><span className="text-foreground/70">codex</span> - OpenAI Codex (via openai CLI)</div>
           <div><span className="text-foreground/70">kollabor</span> - Custom collaborative agent</div>
-          <div><span className="text-foreground/70">aider</span> - Aider code editor agent</div>
+          <div><span className="text-foreground/70">grok</span> - xAI Grok coding agent</div>
         </div>
       </section>
 

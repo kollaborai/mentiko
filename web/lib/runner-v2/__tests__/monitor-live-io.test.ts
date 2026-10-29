@@ -643,7 +643,7 @@ describe("selectTranscriptFromCapture — decoy-UUID resilience (durable-marker 
     const transcriptRoot = join(f.root, "transcripts");
     mkdirSync(transcriptRoot, { recursive: true });
     const instructionPath = join(f.runDir, "artifacts", "writer-instructions.md");
-    // Filename carries no uuid either -- e.g. a codex/aider-style session log,
+    // Filename carries no uuid either -- e.g. a codex/grok-style session log,
     // or a claude session with no status line configured to print the uuid.
     const transcriptPath = join(transcriptRoot, "session-log.jsonl");
     const attemptAt = new Date(Date.now() - 30_000).toISOString();

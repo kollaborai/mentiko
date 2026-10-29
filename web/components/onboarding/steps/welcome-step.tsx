@@ -17,17 +17,17 @@ const features = [
   {
     icon: FlashCircleFilled,
     title: "chain agents together",
-    description: "one agent reviews, another implements, another tests",
+    description: "review → implement → test",
   },
   {
     icon: TerminalIcon,
     title: "real agent sessions",
-    description: "each agent runs in its own terminal with full tool access",
+    description: "each agent gets its own terminal",
   },
   {
     icon: MagicStarFilled,
     title: "marketplace agents",
-    description: "pre-built agents for code review, writing, data, and more",
+    description: "ready-made agents for common tasks",
   },
 ];
 
@@ -43,11 +43,10 @@ export function WelcomeStep({ onNext }: WelcomeStepProps) {
     >
       <div>
         <h1 className="text-xl font-semibold mb-2">
-          Your AI agent orchestration platform
+          Agent orchestration
         </h1>
         <p className="text-sm text-foreground/50 max-w-md mx-auto">
-          Chain agents together in pipelines. Define workflows, connect agents,
-          and watch them collaborate to complete complex tasks.
+          Chain agents into pipelines and run them on your projects.
         </p>
       </div>
       <div className="space-y-3 text-left max-w-sm mx-auto">

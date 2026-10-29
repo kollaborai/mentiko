@@ -350,7 +350,7 @@ cli auth tools (phase 3 — check tools.ts to confirm shipped)
 detect_cli_status()
   tier A — read, no side effects
   returns: list of { name, found, version, authenticated }
-  CLIs checked: claude, codex, antigravity, aider, kollabor
+  CLIs checked: claude, codex, antigravity, grok, kollabor
   use: on session start for new users, when user mentions CLI setup
   use: proactively if no CLIs authenticated — offer to walk through setup
 

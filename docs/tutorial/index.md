@@ -71,7 +71,7 @@ before starting, ensure you have:
   required:
     - pty-manager (bin/p) for all session types (local, ssh, docker)
     - node.js 18+
-    - an ai cli (claude, glm, aider, etc)
+    - an ai cli (claude, glm, grok, etc)
 
   recommended:
     - basic terminal comfort

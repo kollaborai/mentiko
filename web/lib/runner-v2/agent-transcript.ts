@@ -313,7 +313,7 @@ export function selectTranscriptFromCapture(
   });
 
   // The screen UUID is one finder; the instruction pointer is another. Neither
-  // gates the other -- a CLI that never prints a session UUID (codex, aider,
+  // gates the other -- a CLI that never prints a session UUID (codex, grok,
   // kollab, an unconfigured claude) still resolves via findByInstructionPath
   // (findTranscriptJsonlByInstructionPath), scored through the SAME
   // scoreTranscriptIdentity funnel a uuid-found candidate goes through (uuid

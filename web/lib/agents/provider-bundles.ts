@@ -48,6 +48,11 @@ const ANTIGRAVITY_LOGO = `<svg viewBox="0 0 32 32" fill="none" xmlns="http://www
   <text x="16" y="20" font-family="monospace" font-size="7" font-weight="bold" fill="white" text-anchor="middle">AG</text>
 </svg>`;
 
+const GROK_LOGO = `<svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect x="4" y="4" width="24" height="24" rx="6" fill="#18181b" />
+  <text x="16" y="21" font-family="monospace" font-size="12" font-weight="bold" fill="#f4f4f5" text-anchor="middle">X</text>
+</svg>`;
+
 const CUSTOM_LOGO = `<svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
   <circle cx="16" cy="16" r="10" stroke="#6b7280" stroke-width="3" fill="none" />
   <circle cx="16" cy="16" r="4" fill="#6b7280" />
@@ -59,6 +64,7 @@ const LOGOS: Record<string, string> = {
   opencode: OPENCODE_LOGO,
   kollab: KOLLAB_LOGO,
   antigravity: ANTIGRAVITY_LOGO,
+  grok: GROK_LOGO,
   custom: CUSTOM_LOGO,
 };
 

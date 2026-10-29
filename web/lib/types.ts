@@ -314,6 +314,7 @@ export type AgentProfileProvider =
   | "opencode"
   | "kollab"
   | "antigravity"
+  | "grok"
   | "custom";
 
 export interface AgentProfileReadinessPattern {
