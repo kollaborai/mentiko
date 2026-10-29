@@ -62,5 +62,6 @@ export const GET = withErrorHandling(async (
     completed: run.completed || null,
     agents: annotatedAgents,
     runnerV2: projectAgentAttemptsForStatus(run.runnerV2),
+    idleIncident: run.runnerV2?.idleIncident ?? null,
   });
 });

@@ -1,4 +1,4 @@
-import { writeFileSync, existsSync, readFileSync, rmSync } from "fs";
+import { existsSync, readFileSync, rmSync } from "fs";
 import { join } from "path";
 import { taskMergeMeta } from "@/lib/tasks/task-store";
 import { writeLog } from "@/lib/system/system-logger";
@@ -10,6 +10,7 @@ import { Unauthorized, NotFound, BadRequest, Conflict } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
 import { isNonExecutionRun } from "@/lib/runs/run-provenance";
+import { commitRunJsonSnapshot } from "@/lib/runs/run-json-mutation";
 import { readRunRecordAt } from "@/lib/runs/run-record";
 import { sanitizeOutput } from "@/lib/sanitize-output";
 
@@ -124,6 +125,7 @@ export const PATCH = withErrorHandling(async (
   }
 
   const run = readRunRecordAt(runsDir, runId);
+  const before = structuredClone(run);
 
   if (run.status !== "running" && run.status !== "pending") {
     throw new Conflict("Run is not active");
@@ -147,7 +149,7 @@ export const PATCH = withErrorHandling(async (
     }
   }
 
-  writeFileSync(runJsonPath, JSON.stringify(run, null, 2));
+  if (!commitRunJsonSnapshot(runJsonPath, before, run)) throw new Conflict("Run changed while cancelling; retry");
   writeLog(namespaceId, orgId || "default", "warn", "run-api",
     `run ${runId} cancelled (deleted)`, `chain: ${run.chain || "unknown"}`);
 

@@ -8,6 +8,7 @@ import { randomBytes } from "crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "fs";
 import { join } from "path";
 import { withRunJsonLock, writeRunJsonAtomic } from "@/lib/runs/run-json-lock";
+import { clearIdleIncidentOnActivity } from "@/lib/runs/idle-incident";
 import { checkAuth } from "@/lib/auth/api-auth";
 import { enforceGuestWrites } from "@/lib/middleware";
 import {
@@ -2484,12 +2485,13 @@ function reapDeadRuns(snapshot: RunsSnapshot): ReapedDeadRun[] {
         const fresh = JSON.parse(readFileSync(p, "utf-8"));
         if (fresh.status !== "running" && fresh.status !== "pending") return; // raced to terminal
         if (now - runLastActivityMs(fresh, p) <= DEAD_RUN_STALE_MS) return; // became live under lock
+        const before = structuredClone(fresh);
         fresh.status = "failed";
         fresh.status_message = `reaped: no agent liveness for >${Math.round(DEAD_RUN_STALE_MS / 60000)}m (dead session); freed concurrency slot`;
         for (const a of (Array.isArray(fresh.agents) ? fresh.agents : [])) {
           if (!TERMINAL_AGENT_STATUSES.has(a.status)) a.status = "failed";
         }
-        writeRunJsonAtomic(p, fresh);
+        writeRunJsonAtomic(p, clearIdleIncidentOnActivity(before, fresh));
         terminalized = {
           runId: typeof fresh.id === "string" ? fresh.id : record.active.id,
           taskId: typeof fresh.taskId === "string" ? fresh.taskId : undefined,

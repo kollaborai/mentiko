@@ -17,6 +17,14 @@ jest.mock("fs", () => ({
   readdirSync: (...args: unknown[]) => mockReaddirSync(...args),
   writeFileSync: (...args: unknown[]) => mockWriteFileSync(...args),
 }));
+// This suite models the filesystem in memory; lock behavior is exercised with
+// real files in run-activity-routes.test.ts.
+jest.mock("@/lib/runs/run-json-mutation", () => ({
+  commitRunJsonSnapshot: (path: string, _before: unknown, next: unknown) => {
+    mockWriteFileSync(path, JSON.stringify(next, null, 2));
+    return true;
+  },
+}));
 
 jest.mock("path", () => jest.requireActual("path"));
 
@@ -885,6 +893,21 @@ describe("GET /api/tasks/reconcile", () => {
     expect(body.data.results).toEqual([]);
     expect(mockTaskUpdate).not.toHaveBeenCalled();
     expect(mockStartTaskOutcomeAudit).not.toHaveBeenCalled();
+  });
+
+  it("does not stop or retry a run with a queued typed launch", async () => {
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      id: "run-exec", taskId: "TASK-044", status: "running",
+      started: new Date(Date.now() - 900_000).toISOString(),
+      agents: [{ id: "fixer", status: "pending" }],
+      runnerV2: { launchJobs: { job: { status: "queued" } } },
+    }));
+    const res = await GET(makeRequest() as never);
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body.data.results).toEqual([]);
+    expect(mockTaskUpdate).not.toHaveBeenCalled();
+    expect(mockWriteFileSync).not.toHaveBeenCalled();
   });
 
   it("supersedes a completion-audit decision that conflicts with an active retry", async () => {

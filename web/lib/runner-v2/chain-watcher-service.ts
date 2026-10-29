@@ -255,6 +255,9 @@ export async function processChainWatcherEvent(
   }
 
   if (!isUnprocessedRunnerEvent(event)) return withoutFilesScanned(result);
+  // Diagnostics are historical observations, never automation triggers. They
+  // can outlive the incident and must not launch work after it has cleared.
+  if (event.event === "run-idle-diagnostic" && event.source === "watchdog") return withoutFilesScanned(result);
   const matching = triggers.filter((trigger) =>
     eventMatchesTrigger(event, trigger)
     && evaluateChainWatcherCondition(trigger.condition, event.data));

@@ -9,7 +9,7 @@
  * - reuses the same run ID and directory
  */
 
-import { readFileSync, writeFileSync, existsSync, openSync, closeSync, readdirSync } from "fs";
+import { readFileSync, existsSync, openSync, closeSync, readdirSync } from "fs";
 import { join } from "path";
 import { spawn } from "child_process";
 import config, { nsPath, orgPath } from "@/lib/config";
@@ -30,6 +30,7 @@ import { NotFound, Conflict, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { collectStaleRunSessionNames } from "@/lib/runs/stale-run-sessions";
 import { terminateRunProcess } from "@/lib/runs/run-process";
+import { commitRunJsonSnapshot } from "@/lib/runs/run-json-mutation";
 
 export const dynamic = "force-dynamic";
 
@@ -108,6 +109,7 @@ export const POST = withErrorHandling(async (
   }
 
   const run: RunJson = JSON.parse(readFileSync(runJsonPath, "utf-8"));
+  const before = structuredClone(run);
 
   // don't resume already running runs
   if (run.status === "running") {
@@ -197,7 +199,7 @@ export const POST = withErrorHandling(async (
   delete run.blockedAt;
   delete run.status_message;
 
-  writeFileSync(runJsonPath, JSON.stringify(run, null, 2));
+  if (!commitRunJsonSnapshot(runJsonPath, before, run)) throw new Conflict("Run changed while resuming; retry");
 
   // resolve agent profile for env vars
   let profileEnv: Record<string, string> = {};

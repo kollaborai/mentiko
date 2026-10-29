@@ -99,6 +99,72 @@ describe("typed runner watchdog", () => {
     )).toMatchObject({ outcome: "alive" });
   });
 
+  it("flags an old completed-agent idle run once without terminalizing it", async () => {
+    const root = tempRoot();
+    const run = runRecord(now, { agents: [
+      { id: "writer", name: "Writer", status: "complete", session: "", completed: new Date(now.getTime() - 600_000).toISOString() },
+      { id: "reviewer", name: "Reviewer", status: "complete", session: "", completed: new Date(now.getTime() - 360_000).toISOString() },
+    ] });
+    const runPath = writeRun(root, run);
+    const options = { runsDir: join(root, "runs"), eventsDir: join(root, "events"),
+      stateDir: join(root, "state"), hooksDir: join(root, "hooks"), now, reapOrphans: false,
+      dependencies: { transport: new FakeTransport(), dispatchHooks: () => {} } };
+    const first = await runTypedWatchdogScan(options);
+    const second = await runTypedWatchdogScan(options);
+    expect(first.errors).toEqual([]);
+    expect(first.stalled).toEqual([run.id]);
+    expect(second.stalled).toEqual([run.id]);
+    expect(JSON.parse(readFileSync(runPath, "utf8")).status).toBe("running");
+    expect(readdirSync(join(root, "events"))).toHaveLength(1);
+    const event = parseRunnerEvent(readFileSync(first.events[0], "utf8"));
+    expect(event).toMatchObject({ event: "run-idle-diagnostic", runId: run.id });
+    expect(JSON.parse(event.data).reason).toContain("no active agents");
+  });
+
+  it("flags the issue 21 two-completed-agent run shape", async () => {
+    const root = tempRoot();
+    const run = runRecord(now, {
+      id: "run-1793073754169-85d6b7a6",
+      agents: [
+        { id: "step-one", name: "Step One", status: "complete", session: "", completed: new Date(now.getTime() - 600_000).toISOString() },
+        { id: "step-two", name: "Step Two", status: "complete", session: "", completed: new Date(now.getTime() - 360_000).toISOString() },
+      ],
+      runnerV2: { pendingHandoffs: [] },
+    });
+    const path = writeRun(root, run);
+    const result = await runTypedWatchdogScan({ runsDir: join(root, "runs"), eventsDir: join(root, "events"),
+      stateDir: join(root, "state"), now, reapOrphans: false,
+      dependencies: { transport: new FakeTransport(), dispatchHooks: () => {} } });
+    expect(result.errors).toEqual([]);
+    expect(result.stalled).toEqual([run.id]);
+    expect(JSON.parse(readFileSync(path, "utf8")).status).toBe("running");
+  });
+
+  it("does not flag recent completion or live work for completed agents", async () => {
+    const old = new Date(now.getTime() - 600_000).toISOString();
+    const recent = new Date(now.getTime() - 60_000).toISOString();
+    const cases: Partial<RunRecord>[] = [
+      { agents: [{ id: "a", name: "A", status: "complete", session: "", completed: recent }] },
+      { agents: [{ id: "a", name: "A", status: "complete", session: "" }] },
+      { agents: [{ id: "a", name: "A", status: "complete", session: "", completed: old }], runnerV2: { launchJobs: { job: { version: 1, id: "job", occurrenceId: "occ", runId: "run-1", runDir: "/tmp/run", chainPath: "/tmp/chain", targets: [{ agentId: "a" }], environment: {}, status: "queued", attemptCount: 0, createdAt: old, updatedAt: recent } } } },
+      { agents: [{ id: "a", name: "A", status: "complete", session: "", completed: old }], runnerV2: { pendingHandoffs: [{ pid: 4321, targetAgentIds: ["a"], startedAt: recent }] } },
+      { agents: [{ id: "a", name: "A", status: "complete", session: "", completed: old }], runnerV2: { attempts: [{ id: "attempt-a", runId: "run-1", agentId: "a", phase: "instructions_submitted", instructionLedger: [], recoveryDecisionCount: 0, createdAt: recent, updatedAt: recent, transitions: [] }] } },
+      { agents: [{ id: "a", name: "A", status: "complete", completed: old, session: "a-live" }] },
+      { agents: [{ id: "a", name: "A", status: "complete", completed: old, session: "" }], sessions: ["a-live"] },
+      { agents: [{ id: "a", name: "A", status: "complete", completed: old, session: "" }], relaunchAuthorization: { agentId: "a", authorizedAt: recent } },
+    ];
+    for (const entry of cases) {
+      const root = tempRoot();
+      const run = runRecord(now, entry);
+      writeRun(root, run);
+      const result = await runTypedWatchdogScan({ runsDir: join(root, "runs"), eventsDir: join(root, "events"),
+        stateDir: join(root, "state"), now, reapOrphans: false,
+        dependencies: { transport: new FakeTransport([{ name: "a-live", alive: true }]), dispatchHooks: () => {} } });
+      expect(result.errors).toEqual([]);
+      expect(result.stalled).toEqual([]);
+    }
+  });
+
   it("applies startup grace to real millisecond run ids with suffixes", () => {
     const run = runRecord(now, {
       id: `run-${now.getTime() - 5_000}-bb990ff5`,
@@ -185,8 +251,8 @@ describe("typed runner watchdog", () => {
           id: "attempt-writer",
           runId: `run-${now.getTime() - 600_000}-fixture`,
           agentId: "writer",
-          phase: "instructions_submitted",
-          observedPhase: "instructions_submitted",
+          phase: "stuck",
+          observedPhase: "stuck",
           desiredPhase: "completed",
           capacitySlotAcquiredAt: new Date(now.getTime() - 300_000).toISOString(),
           instructionLedger: [],

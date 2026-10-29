@@ -9,7 +9,7 @@
  * from crashes, killed processes, or race conditions.
  */
 
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "fs";
 import { isAbsolute, join } from "path";
 import config from "../config";
 import { writeLog } from "../system/system-logger";
@@ -20,6 +20,8 @@ import { cleanTaskExecutionRunMetadata, isNonExecutionRun } from "./run-provenan
 import { hasLivePendingHandoff } from "../runner-v2/handoff-liveness";
 import { parseRunnerEvent } from "../runner-v2/events";
 import type { RunStatusReason } from "./run-record";
+import { commitRunJsonSnapshot } from "./run-json-mutation";
+import { hasReconcilerProtectedWork } from "./reconciler-protected-work";
 
 interface ReconcilerContext {
   namespaceId: string;
@@ -411,9 +413,14 @@ export async function reconcileOrphanedRuns(options: ReconcileOptions = {}): Pro
       continue;
     }
 
+    const before = structuredClone(run);
+    // Do not reduce lifecycle state while durable typed work still has an owner
+    // or an unknown ownership state, even if the daemon snapshot is empty.
+    if (hasReconcilerProtectedWork(run)) continue;
     const agents = run.agents || [];
     const runId = entry.name;
     let changed = false;
+    let newlyOrphaned = false;
     const runDir = join(runsDir, entry.name);
 
     if (repairMisclassifiedNonExecutionRunTask(context, run, runId)) {
@@ -490,7 +497,7 @@ export async function reconcileOrphanedRuns(options: ReconcileOptions = {}): Pro
         }
 
         // no live sessions → orphaned run
-        orphaned++;
+        newlyOrphaned = true;
         run.status = "stopped";
         run.completed = run.completed || new Date().toISOString();
         run.statusReason = { actor: "reaper", reason: "no live agent session found after startup/handoff grace windows" };
@@ -520,7 +527,8 @@ export async function reconcileOrphanedRuns(options: ReconcileOptions = {}): Pro
 
     if (changed) {
       try {
-        writeFileSync(runFile, JSON.stringify(run, null, 2));
+        if (!commitRunJsonSnapshot(runFile, before, run)) continue;
+        if (newlyOrphaned) orphaned++;
         if (!cleaned.includes(runId)) cleaned.push(runId);
         reconcilerLog(context, `cleaned: ${runId} (status=${run.status})`, "warn");
 

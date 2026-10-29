@@ -4,8 +4,9 @@ import { dirname, join } from "path";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { requirePermission } from "@/lib/auth/rbac-auth";
 import { checkRunAccess } from "@/lib/auth/run-acl";
-import { BadRequest, NotFound, Unauthorized } from "@/lib/api-errors";
+import { BadRequest, Conflict, NotFound, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
+import { commitRunJsonSnapshot } from "@/lib/runs/run-json-mutation";
 import {
   normalizePeerSessionId,
   resolveLinkRunPaths,
@@ -47,6 +48,7 @@ export const POST = withErrorHandling(async (
   }
 
   const run = JSON.parse(readFileSync(runPath, "utf-8"));
+  const before = structuredClone(run);
   if (run.type !== "link") {
     throw new BadRequest("Not a link run");
   }
@@ -69,7 +71,7 @@ export const POST = withErrorHandling(async (
     last.replied_at = new Date().toISOString();
   }
   run.status = "running";
-  writeFileSync(runPath, JSON.stringify(run, null, 2));
+  if (!commitRunJsonSnapshot(runPath, before, run)) throw new Conflict("Run changed while replying; retry");
 
   return apiSuccess({ ok: true });
 });

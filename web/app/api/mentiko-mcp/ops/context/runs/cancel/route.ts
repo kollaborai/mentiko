@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireOpsAuth, requireOpsPermission } from "@/lib/ai-engine/mentiko-mcp-ops-auth";
-import { existsSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { taskMergeMeta } from "@/lib/tasks/task-store";
 import { writeLog } from "@/lib/system/system-logger";
@@ -9,6 +9,7 @@ import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
 import { checkRunAccessForUser, normalizeRunId } from "@/lib/auth/run-acl";
 import { isNonExecutionRun } from "@/lib/runs/run-provenance";
 import type { RunStatusReason } from "@/lib/runs/run-record";
+import { commitRunJsonSnapshot } from "@/lib/runs/run-json-mutation";
 
 export const dynamic = "force-dynamic";
 
@@ -56,6 +57,7 @@ export async function POST(req: Request) {
   }
 
   const run = JSON.parse(readFileSync(metaPath, "utf-8")) as RunObject;
+  const before = structuredClone(run);
   if (run.status !== "running" && run.status !== "pending") {
     return new NextResponse("Run is not active", { status: 409 });
   }
@@ -76,7 +78,7 @@ export async function POST(req: Request) {
     }
   }
 
-  writeFileSync(metaPath, JSON.stringify(run, null, 2));
+  if (!commitRunJsonSnapshot(metaPath, before, run)) return new NextResponse("Run changed while cancelling; retry", { status: 409 });
   writeLog(ctx.namespaceId, ctx.orgId, "warn", "mcp-ops", `run ${safeRunId} cancelled`, `chain: ${run.chain || "unknown"}`);
 
   if (run.taskId && run.id && !isNonExecutionRun(run)) {
