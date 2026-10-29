@@ -16,10 +16,15 @@ import {
 const args = new Set(process.argv.slice(2));
 const preflight = args.has("--preflight");
 
-function run(command: string, commandArgs: string[]): CommandResult {
+// Addons built under one Node ABI fail to load under another (e.g. after nvm's
+// lts/* moves to a new major), which breaks auth and every sqlite-backed route.
+const SQLITE_ADDONS = ["better-sqlite3", "better-sqlite3-multiple-ciphers"];
+const SQLITE_LOAD_SCRIPT = `try { for (const m of ${JSON.stringify(SQLITE_ADDONS)}) new (require(m))(":memory:").close(); } catch (e) { console.error(e.message.replace(/\\s+/g, " ")); process.exit(1); }`;
+
+function run(command: string, commandArgs: string[], timeout = 10_000): CommandResult {
   const result = spawnSync(command, commandArgs, {
     encoding: "utf8",
-    timeout: 10_000,
+    timeout,
   });
 
   return {
@@ -66,6 +71,18 @@ function checkPtyManager(): DevCheck {
     remediation:
       "Run npm run setup, build ../pty-mgr with npm run build, or set MENTIKO_PTY_MGR_BIN to a working binary.",
   };
+}
+
+function checkSqliteAddons(): DevCheck {
+  const names = SQLITE_ADDONS.join(" ");
+  return checkCommandResult({
+    id: "sqlite-addons",
+    label: "SQLite native addons",
+    passMessage: `${SQLITE_ADDONS.join(" and ")} load under Node ${process.version}.`,
+    failMessage: "SQLite native addons do not load",
+    remediation: `Run npm rebuild ${names}. On npm 12+, approve them first with npm install-scripts approve ${names}.`,
+    result: run(process.execPath, ["-e", SQLITE_LOAD_SCRIPT]),
+  });
 }
 
 function readEnvLocal(): Record<string, string> {
@@ -116,8 +133,16 @@ async function checkEngineHealth(): Promise<DevCheck> {
 }
 
 async function main() {
+  let sqliteAddons = checkSqliteAddons();
+  if (sqliteAddons.status === "fail" && preflight) {
+    process.stdout.write(`Rebuilding ${SQLITE_ADDONS.join(", ")} for Node ${process.version}...\n`);
+    run("npm", ["rebuild", ...SQLITE_ADDONS], 300_000);
+    sqliteAddons = checkSqliteAddons();
+  }
+
   const checks: DevCheck[] = [
     checkNodeVersion(process.version),
+    sqliteAddons,
     checkCommandResult({
       id: "python",
       label: "Python",
