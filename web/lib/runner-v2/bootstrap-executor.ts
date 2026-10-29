@@ -635,21 +635,22 @@ function assertBootstrapLaunchable(
   // A resume route authorizes one fresh occurrence by persisting resumedAt on
   // the run before relaunch. This is durable route state, unlike an environment
   // occurrence id (which is only a caller claim). authorizeTypedRelaunch writes
-  // a separate occurrence-scoped relaunchAuthorization (agent id + launch job
-  // id) for retry and routed-revisit relaunches, so a replayed or duplicate
-  // launch job cannot admit a completed agent, and relaunches do not extend
-  // the watchdog/reconciler resumedAt grace windows. createAgentAttempt then
-  // allocates the next attempt id and preserves the terminal history; the new
-  // attempt's updatedAt is newer than the authorization, so each authorization
-  // admits exactly one attempt.
+  // a separate occurrence-scoped entry in the per-agent relaunchAuthorizations
+  // map (agent id key + launch job id) for retry and routed-revisit relaunches,
+  // so a replayed or duplicate launch job cannot admit a completed agent, one
+  // agent's authorization cannot admit another's relaunch, and relaunches do
+  // not extend the watchdog/reconciler resumedAt grace windows. Once
+  // createAgentAttempt allocates the next attempt, that attempt's updatedAt is
+  // newer than the authorization, so the same entry admits no further attempt;
+  // if bootstrap dies before createAgentAttempt the entry simply stays live and
+  // a later bootstrap of the still-stuck agent is admitted — intended.
   const attemptUpdatedAt = Date.parse(latestAttempt.updatedAt);
   const resumedAt = typeof run.resumedAt === "string" ? Date.parse(run.resumedAt) : Number.NaN;
   if (Number.isFinite(resumedAt) && Number.isFinite(attemptUpdatedAt) && resumedAt > attemptUpdatedAt) return;
-  const relaunch = run.relaunchAuthorization;
+  const relaunch = run.relaunchAuthorizations?.[agentId];
   if (
     relaunch
     && typeof relaunch === "object"
-    && relaunch.agentId === agentId
     && relaunch.launchJobId === launchJobId
     && Date.parse(typeof relaunch.authorizedAt === "string" ? relaunch.authorizedAt : "") > attemptUpdatedAt
   ) return;

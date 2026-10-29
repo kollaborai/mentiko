@@ -138,17 +138,15 @@ describe("typed error handling", () => {
       const authorized = JSON.parse(readFileSync(runJsonPath, "utf8"));
       expect(authorized.id).toBe("run-auth");
       expect(authorized.parent_run_id).toBe("run-parent");
-      expect(authorized.relaunchAuthorization).toEqual({
-        agentId: "writer",
-        launchJobId: "job-revisit",
-        authorizedAt: expect.any(String),
+      expect(authorized.relaunchAuthorizations).toEqual({
+        writer: { launchJobId: "job-revisit", authorizedAt: expect.any(String) },
       });
       expect(authorized.resumedAt).toBeUndefined(); // must not touch the resume-route/grace field
 
       authorizeTypedRelaunch(runJsonPath, "run-foreign", { agentId: "writer" });
       const foreign = JSON.parse(readFileSync(runJsonPath, "utf8"));
       expect(foreign.id).toBe("run-auth");
-      expect(foreign.relaunchAuthorization).toEqual(authorized.relaunchAuthorization); // foreign id must not re-authorize or mutate
+      expect(foreign.relaunchAuthorizations).toEqual(authorized.relaunchAuthorizations); // foreign id must not re-authorize or mutate
 
       // best-effort: a missing record never throws
       expect(() => authorizeTypedRelaunch(join(runRoot, "absent.json"), "run-auth", { agentId: "writer" })).not.toThrow();

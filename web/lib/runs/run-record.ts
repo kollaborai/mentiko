@@ -71,11 +71,11 @@ export interface RunAgentRecord {
   [key: string]: unknown;
 }
 
-/** One-shot direct-relaunch admission written by authorizeTypedRelaunch.
- * Distinct from resumedAt (the resume route), which the watchdog and
- * reconciler also read as a stall-detection grace window. */
+/** One-shot direct-relaunch admission written by authorizeTypedRelaunch, keyed
+ * by agent id so concurrent retry and routed-revisit authorizations in one run
+ * never overwrite each other. Distinct from resumedAt (the resume route), which
+ * the watchdog and reconciler also read as a stall-detection grace window. */
 export interface TypedRelaunchAuthorization {
-  agentId: string;
   authorizedAt: string;
   launchJobId?: string;
 }
@@ -100,7 +100,7 @@ export interface RunRecord {
   metadata?: Record<string, unknown>;
   type?: string;
   linkId?: string;
-  relaunchAuthorization?: TypedRelaunchAuthorization;
+  relaunchAuthorizations?: Record<string, TypedRelaunchAuthorization>;
   [key: string]: unknown;
 }
 
