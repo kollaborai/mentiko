@@ -73,6 +73,12 @@ export interface ProcessConfig {
   // it untracked, and tries to spawn another next.js on the next
   // event tick → EADDRINUSE on :3000.
   daemonize?: boolean;
+  // set true (with an http readiness url) for a service another tool may
+  // already be running on the same port, like the kollabor engine behind
+  // `kollab --web-ui`. when that url already answers, the manager uses the
+  // running service as is: it does not spawn or supervise one, never kills
+  // it, and leaves its port alone during dev housekeeping.
+  adoptExisting?: boolean;
 }
 
 // --- top-level processes.json ---
