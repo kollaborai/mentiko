@@ -49,10 +49,17 @@ try {
     { phase: "plan", runId: "run-1", option: "opt-a", ws: "/ws/mentiko" },
   );
 
-  // an explicit flag still wins over the run record
+  // an explicit flag still wins, and a different decision borrows nothing from this run
   const explicit = await runCli(["--decision", "dec-explicit", "--phase", "plan", "--run", "run-1"]);
   assert.equal(explicit.code, 0, explicit.stderr);
   assert.equal(requests[1].url, "/api/decisions/dec-explicit/import");
+  assert.equal(requests[1].body.selectedOptionId, undefined);
+  assert.equal(requests[1].body.workspacePath, undefined);
+
+  // a phase that disagrees with the run record does not resolve the run's decision
+  const mismatch = await runCli(["--phase", "options", "--run", "run-1"]);
+  assert.equal(mismatch.code, 2);
+  assert.equal(requests.length, 2);
   console.log("mentiko decision import: run.json fallback ok");
 } finally {
   server.close();
