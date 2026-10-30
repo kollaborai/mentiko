@@ -197,7 +197,9 @@ function buildCodexSetup(logPath?: string): string {
     String.raw`MENTIKO_CODEX_PROJECT="$(pwd -P)"`,
     String.raw`MENTIKO_CODEX_PROJECT_KEY="$(printf '%s' "$MENTIKO_CODEX_PROJECT" | sed 's/\\/\\\\/g; s/"/\\"/g')"`,
     `printf 'check_for_update_on_startup = false\\n[projects."%s"]\\ntrust_level = "trusted"\\n' "$MENTIKO_CODEX_PROJECT_KEY" > "$CODEX_HOME/config.toml"`,
-    sessions ? `{ mkdir -p ${sessions} && ln -s ${sessions} "$CODEX_HOME/sessions"; } 2>/dev/null || true` : "",
+    // Never block the launch on the link, but say so: without it AGENT_COMPLETE
+    // detection falls back to the declared event file only.
+    sessions ? `{ mkdir -p ${sessions} && ln -s ${sessions} "$CODEX_HOME/sessions"; } 2>/dev/null || echo "mentiko: could not link Codex sessions to the profile log_path; AGENT_COMPLETE needs the completion event" >&2` : "",
     `trap 'rm -rf "$CODEX_HOME"' EXIT`,
   ].filter(Boolean).join("; ");
 }
