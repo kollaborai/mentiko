@@ -135,6 +135,27 @@ describe("agent transcript typed owner", () => {
     }
   });
 
+  it("reads Codex rollouts, which keep role and cwd on the record payload", () => {
+    const root = mkdtempSync(join(tmpdir(), "mentiko-agent-transcript-"));
+    const worktree = join(root, "runs", "run-1", ".internal", "workspace-isolation", "worktrees", "abc");
+    const path = join(root, "rollout.jsonl");
+    const line = (type: string, payload: object) => JSON.stringify({ timestamp: "2026-10-30T01:27:54.000Z", type, payload });
+    const instructionPath = "/runs/run-1/artifacts/writer-instructions.md";
+    try {
+      writeFileSync(path, [
+        line("session_meta", { id: REAL, cwd: worktree }),
+        line("response_item", { type: "message", role: "user", content: [{ type: "input_text", text: `read ${instructionPath}, then AGENT_COMPLETE` }] }),
+        line("response_item", { type: "message", role: "assistant", content: [{ type: "output_text", text: "done\n\nAGENT_COMPLETE" }] }),
+      ].join("\n"));
+      expect(agentCompleteMarkerDurable(path)).toBe(true);
+      const identity = { attemptStartedAt: "2026-10-30T01:24:28.000Z", instructionPath, now: new Date("2026-10-30T01:28:00.000Z") };
+      expect(scoreTranscriptIdentity(path, undefined, { ...identity, workspacePath: worktree })).not.toBeNull();
+      expect(scoreTranscriptIdentity(path, undefined, { ...identity, workspacePath: join(root, "workspaces", "mentiko") })).toBeNull();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("rejects matching directories and symlinks as transcript sources", () => {
     const root = mkdtempSync(join(tmpdir(), "mentiko-agent-transcript-"));
     const directoryPath = join(root, `${REAL}.jsonl`);

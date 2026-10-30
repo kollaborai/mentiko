@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { buildAgentProfileCommand, resolveAgentProfile } from "@/lib/runner-v2/agent-profile";
@@ -196,7 +197,31 @@ describe("runner-v2 agent profile contract", () => {
       expect(command).toContain("trust_level = \"trusted\"");
       expect(command).toContain("trap 'rm -rf \"$CODEX_HOME\"' EXIT");
       expect(command).not.toContain("--mcp-config");
+      // no log_path: nothing to link, so Codex keeps its transcript in the temp home
+      expect(command).not.toContain("$CODEX_HOME/sessions");
     }
+  });
+
+  it("links the disposable CODEX_HOME's sessions dir to the profile log_path so the monitor can read the transcript", () => {
+    const root = tempDir();
+    const home = join(root, "home");
+    const profilePath = join(root, "codex-logged.json");
+    writeJson(profilePath, { id: "codex-logged", name: "Codex", cli: "codex", log_path: "~/.codex/sessions/" });
+
+    const command = buildAgentProfileCommand({ profilePath, interactive: true, namespaceId: "default", orgId: "default" });
+    expect(command).toContain(`ln -s "$HOME"'/.codex/sessions/' "$CODEX_HOME/sessions"`);
+
+    // run just the Codex setup in a real shell: the link resolves under $HOME,
+    // and the exit trap's cleanup removes the temp home but never the transcripts
+    const setup = command.slice(command.indexOf("MENTIKO_CODEX_AUTH_HOME="), command.indexOf("; 'codex'"));
+    const out = execFileSync("bash", ["-c", `${setup}; mkdir -p "$CODEX_HOME/sessions/2026"; echo marker > "$CODEX_HOME/sessions/2026/rollout.jsonl"; echo "$CODEX_HOME"`], {
+      cwd: root,
+      // empty CODEX_HOME so the auth lookup falls back to the temp $HOME, never the caller's
+      env: { ...process.env, HOME: home, TMPDIR: root, CODEX_HOME: "" },
+      encoding: "utf8",
+    });
+    expect(existsSync(out.trim())).toBe(false);
+    expect(readFileSync(join(home, ".codex", "sessions", "2026", "rollout.jsonl"), "utf8")).toBe("marker\n");
   });
 
   it("keeps persisted legacy Codex profiles runnable with the canonical permission flag", () => {
