@@ -61,7 +61,15 @@ export function assistantTexts(record: unknown): string[] {
       }
     }
   }
-  if ((r.type === "message" || r.type === "response_item") && r.role === "assistant") {
+  // Codex rollouts wrap the item, so the role sits on the payload:
+  // {"type":"response_item","payload":{"type":"message","role":"assistant","content":[...]}}.
+  const payloadRole = r.payload && typeof r.payload === "object"
+    ? (r.payload as { role?: unknown }).role
+    : undefined;
+  if (
+    (r.type === "message" || r.type === "response_item")
+    && (r.role === "assistant" || (r.role === undefined && payloadRole === "assistant"))
+  ) {
     // Match the legacy jq `.content // .payload.content // []` semantics:
     // fallback to payload only when content is absent/null. A malformed but
     // present content value must not be bypassed into a false completion latch.
@@ -217,6 +225,9 @@ export function scoreTranscriptIdentity(
     try {
       const record = JSON.parse(line) as Record<string, unknown>;
       if (typeof record.cwd === "string") cwds.add(record.cwd);
+      // Codex records cwd on its session_meta / turn_context payloads.
+      const payload = record.payload as Record<string, unknown> | null | undefined;
+      if (payload && typeof payload === "object" && typeof payload.cwd === "string") cwds.add(payload.cwd);
       for (const key of ["sessionId", "session_id"] as const) {
         if (typeof record[key] === "string") sessionIds.add(record[key].toLowerCase());
       }
