@@ -6,7 +6,7 @@
 //   The preview proxy only ever connects to 127.0.0.1:<port>, and only to
 //   ports on an explicit allowlist. This is deliberately NOT a general
 //   localhost proxy — an open one would be an SSRF hole into internal
-//   services (kollabor-engine on 7433, the platform itself on 3000/3099, the
+//   services (kollabor-engine on 7443, the platform itself on 3000/3099, the
 //   PTY daemon, etc.). The route layer is responsible for hard-pinning the
 //   host to loopback; this module owns the port policy and URL rewriting.
 //
@@ -21,8 +21,8 @@
 export const PREVIEW_BASE_PATH = "/api/preview";
 
 // Ports we must never expose, even if an operator widens the range:
-//   3000  platform app      3099  platform secondary      7433  kollabor-engine
-const RESERVED_PORTS = new Set<number>([3000, 3099, 7433]);
+//   3000  platform app      3099  platform secondary      7443  kollabor-engine
+const RESERVED_PORTS = new Set<number>([3000, 3099, 7443]);
 
 // Typical dev-server range. Override with MENTIKO_PREVIEW_PORTS, e.g.
 // "3001-3010,5173,8080". Reserved ports are always removed afterwards.

@@ -163,19 +163,21 @@ function formatArgsPreview(args: Record<string, any>): string {
 }
 
 // Persistent trust flag: $MENTIKO_MCP_TRUST_FILE (or ~/.kollab/mcp/trust) is
-// the file-backed source of truth for MENTIKO_MCP_TRUST. Written once by the
-// user (or the app) with a "1"; survives bridge restarts, app relaunches and
-// reboots, unlike session-scoped env vars. Read on every gate decision so a
-// bridge spawned without the env still honors persisted trust.
+// the file-backed source of truth for MENTIKO_MCP_TRUST. Default is trusted:
+// only an explicit "0" (env or file) turns it off. Survives bridge restarts,
+// app relaunches and reboots, unlike session-scoped env vars. Read on every
+// gate decision so a bridge spawned without the env still honors it.
 function isMcpTrustEnabled(): boolean {
-  if (process.env.MENTIKO_MCP_TRUST === "1") return true;
+  const env = process.env.MENTIKO_MCP_TRUST?.trim();
+  if (env === "1") return true;
+  if (env === "0") return false;
   try {
     const trustPath =
       process.env.MENTIKO_MCP_TRUST_FILE ||
-      join(homedir(), ".kollab", "mcp", "trust");
-    return readFileSync(trustPath, "utf8").trim() === "1";
+      join(process.env.KOLLAB_CONFIG_DIR?.trim() || join(homedir(), ".kollab"), "mcp", "trust");
+    return readFileSync(trustPath, "utf8").trim() !== "0";
   } catch {
-    return false;
+    return true;
   }
 }
 

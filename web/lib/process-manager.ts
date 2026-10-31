@@ -467,7 +467,7 @@ function pmSocketPath(): string {
 // If a previous process-manager is still running, send it a shutdown over IPC
 // and wait for it to release the socket. Without this, two PMs coexist and
 // both keep their kollabor-engine/worker/etc subprocesses alive — leading to
-// EADDRINUSE crash loops on ports 7433, 3099, etc.
+// EADDRINUSE crash loops on ports 7443, 3099, etc.
 async function shutdownPriorPm(): Promise<void> {
   const sockPath = pmSocketPath();
   if (!fs.existsSync(sockPath)) return;
@@ -774,6 +774,13 @@ async function housekeep() {
   if (!process.env.MENTIKO_ORG_ID) {
     process.env.MENTIKO_ORG_ID = process.env.ORG_ID || 'default';
   }
+  // dev: give mentiko's engine its own kollab config dir, so its token, MCP
+  // settings and profiles never overwrite a standalone kollab on this machine.
+  // Production (one engine per tenant) keeps ~/.kollab.
+  if (isDev && !process.env.KOLLAB_CONFIG_DIR) {
+    process.env.KOLLAB_CONFIG_DIR = path.join(os.homedir(), '.mentiko', 'kollab');
+  }
+  if (process.env.KOLLAB_CONFIG_DIR) log(`kollab config dir: ${process.env.KOLLAB_CONFIG_DIR}`);
   try {
     // Prefer the bundled binary in prod, repo shim in dev
     const mcpBin = fs.existsSync('/opt/mentiko/bin/mentiko-mcp')
@@ -787,14 +794,14 @@ async function housekeep() {
 
   // dev mode: if another process-manager is already running, ask it to shut
   // down before we start. Without this, two PMs run side-by-side, each with
-  // their own kollabor-engine/worker children, fighting over 7433 etc.
+  // their own kollabor-engine/worker children, fighting over 7443 etc.
   if (isDev) {
     try { await shutdownPriorPm(); } catch (e: unknown) { logErr(`prior-pm shutdown failed: ${errorMessage(e)}`); }
   }
 
   // dev mode: kill stale processes on ports we need, then wait for ports to free
   if (isDev) {
-    for (const port of [Number(webPort), 3099, 7433].filter((p) => Number.isFinite(p))) {
+    for (const port of [Number(webPort), 3099, 7443].filter((p) => Number.isFinite(p))) {
       try {
         const pids = execSync(`lsof -ti :${port} 2>/dev/null`, { encoding: 'utf-8' }).trim();
         if (!pids) continue;

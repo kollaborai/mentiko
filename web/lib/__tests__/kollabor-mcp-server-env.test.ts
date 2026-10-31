@@ -17,7 +17,7 @@ describe("getKollabMentikoMcpServerEnv", () => {
     const env = getKollabMentikoMcpServerEnv();
 
     expect(env.MENTIKO_WEB_URL).toBe("http://127.0.0.1:3001");
-    expect(env.KOLLABOR_ENGINE_URL).toBe("http://127.0.0.1:7433");
+    expect(env.KOLLABOR_ENGINE_URL).toBe("http://127.0.0.1:7443");
     expect(env.MENTIKO_MCP_TOOL_SCOPE).toBe("bar");
     expect(env.MENTIKO_INBOX_KEY).toBe("secret-key");
     expect(env.MENTIKO_NAMESPACE_ID).toBe("ns1");
@@ -28,6 +28,19 @@ describe("getKollabMentikoMcpServerEnv", () => {
     delete process.env.MENTIKO_INBOX_KEY;
     const env = getKollabMentikoMcpServerEnv();
     expect(env.MENTIKO_INBOX_KEY).toBeUndefined();
+  });
+
+  it("defaults MCP trust on and lets an explicit 0 turn it off", () => {
+    // throwaway trust file: an explicit flag persists, never touch the real one
+    const trustFile = require("node:path").join(
+      require("node:fs").mkdtempSync(require("node:path").join(require("node:os").tmpdir(), "mcp-trust-")),
+      "trust",
+    );
+    process.env.MENTIKO_MCP_TRUST_FILE = trustFile;
+    delete process.env.MENTIKO_MCP_TRUST;
+    expect(getKollabMentikoMcpServerEnv().MENTIKO_MCP_TRUST).toBe("1");
+    expect(getKollabMentikoMcpServerEnv({ mcpTrust: "0" }).MENTIKO_MCP_TRUST).toBe("0");
+    expect(require("node:fs").readFileSync(trustFile, "utf8")).toBe("0\n");
   });
 });
 

@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { kollabConfigDir } from "./kollab-config-dir";
 import { dirname, join } from "node:path";
 
 /**
@@ -27,18 +27,13 @@ export interface KollabMcpServerEnvParams {
  */
 function persistMcpTrustFlag(enabled: boolean): void {
   try {
-    const trustPath = join(
-      homedir(),
-      ".kollab",
-      "mcp",
-      "trust",
-    );
+    // same override the bridge reads (lib/mentiko-mcp/server.ts isMcpTrustEnabled)
+    const trustPath =
+      process.env.MENTIKO_MCP_TRUST_FILE ||
+      join(kollabConfigDir(), "mcp", "trust");
     mkdirSync(dirname(trustPath), { recursive: true });
-    if (enabled) {
-      writeFileSync(trustPath, "1\n", "utf8");
-    } else if (existsSync(trustPath)) {
-      writeFileSync(trustPath, "0\n", "utf8");
-    }
+    // missing file = trusted, so "off" must always be written
+    writeFileSync(trustPath, enabled ? "1\n" : "0\n", "utf8");
   } catch {
     // best-effort persistence; env var still works for this process
   }
@@ -65,23 +60,23 @@ export function getKollabMentikoMcpServerEnv(
     KOLLABOR_ENGINE_URL:
       params?.kollaborEngineUrl?.trim() ||
       (process.env.KOLLABOR_ENGINE_URL && process.env.KOLLABOR_ENGINE_URL.trim()) ||
-      "http://127.0.0.1:7433",
+      "http://127.0.0.1:7443",
   };
 
-  // Trust flag: forward MENTIKO_MCP_TRUST to the bridge when the host (or a
-  // workspace setting) opts in — tier-B tools skip portal per-call approval
-  // (see lib/mentiko-mcp/server.ts checkPermission). Also persists to the
-  // file-backed setting (~/.kollab/mcp/trust) so trust survives bridge
-  // restarts and reboots even when spawned without this env. Default: unset
-  // = gated. Set MENTIKO_MCP_TRUST=0 to explicitly disable + unpersist.
+  // Trust flag: forward MENTIKO_MCP_TRUST to the bridge — tier-B tools skip
+  // portal per-call approval (see lib/mentiko-mcp/server.ts checkPermission);
+  // tier-C stays gated. Default: unset = trusted. An explicit "1"/"0" also
+  // persists to ~/.kollab/mcp/trust so it survives bridge restarts and
+  // reboots. Set MENTIKO_MCP_TRUST=0 to turn trust off.
   const trust =
     params?.mcpTrust?.trim() ||
     (process.env.MENTIKO_MCP_TRUST && process.env.MENTIKO_MCP_TRUST.trim());
-  if (trust === "1") {
-    env.MENTIKO_MCP_TRUST = "1";
-    persistMcpTrustFlag(true);
-  } else if (trust === "0") {
+  if (trust === "0") {
+    env.MENTIKO_MCP_TRUST = "0";
     persistMcpTrustFlag(false);
+  } else {
+    env.MENTIKO_MCP_TRUST = "1";
+    if (trust === "1") persistMcpTrustFlag(true);
   }
 
   const inbox = params?.inboxKey?.trim() || process.env.MENTIKO_INBOX_KEY?.trim();

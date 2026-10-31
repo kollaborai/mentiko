@@ -16,7 +16,7 @@ import { join } from "path";
 import { readSidecarForAuth, writeSidecar, readPending, clearPending } from "./session-store.js";
 
 const WEB_URL     = process.env.MENTIKO_WEB_URL || `http://127.0.0.1:${process.env.WEB_PORT || process.env.PORT || 3000}`;
-const ENGINE_URL  = process.env.KOLLABOR_ENGINE_URL || "http://127.0.0.1:7433";
+const ENGINE_URL  = process.env.KOLLABOR_ENGINE_URL || "http://127.0.0.1:7443";
 const SESSION_ID  = process.env.MENTIKO_SESSION_ID || "";
 const FETCH_TIMEOUT_MS = 15000;
 
@@ -28,7 +28,7 @@ let currentToken: string = process.env.MENTIKO_SESSION_TOKEN || readSidecarForAu
 
 function getEngineToken(): string {
   try {
-    return readFileSync(join(homedir(), ".kollab", "engine.token"), "utf8").trim();
+    return readFileSync(join(process.env.KOLLAB_CONFIG_DIR?.trim() || join(homedir(), ".kollab"), "engine.token"), "utf8").trim();
   } catch {
     return "";
   }
