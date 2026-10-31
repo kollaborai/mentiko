@@ -9,11 +9,12 @@
  */
 
 import { createHmac } from "node:crypto";
+import { kollabConfigDir } from "../kollab-config-dir";
 import { MENTIKO_GATEWAY_PROFILE } from "./agent-provider-catalog";
 
 const INTERNAL_AUTH_CONTEXT = "ai-gateway-local-proxy";
 const INTERNAL_AUTH_INFO = `mentiko-internal-api:${INTERNAL_AUTH_CONTEXT}`;
-const ENGINE_BASE_URL = "http://127.0.0.1:7433";
+const ENGINE_BASE_URL = "http://127.0.0.1:7443";
 export const ENGINE_WAIT_MS = 90_000;
 export const ENGINE_POLL_INTERVAL_MS = 1_000;
 const PROFILE_NAME = MENTIKO_GATEWAY_PROFILE.name;
@@ -110,8 +111,7 @@ async function readEngineToken(): Promise<string | null> {
   try {
     const { readFile } = await import("node:fs/promises");
     const { join } = await import("node:path");
-    const { homedir } = await import("node:os");
-    const path = join(homedir(), ".kollab", "engine.token");
+    const path = join(kollabConfigDir(), "engine.token");
     const raw = await readFile(path, "utf8");
     const token = raw.trim();
     return token || null;
@@ -206,9 +206,8 @@ type KollabConfig = {
 async function writeActiveProfile(): Promise<void> {
   const { readFile, writeFile, mkdir } = await import("node:fs/promises");
   const { join, dirname } = await import("node:path");
-  const { homedir } = await import("node:os");
 
-  const configPath = join(homedir(), ".kollab", "config.json");
+  const configPath = join(kollabConfigDir(), "config.json");
   let config: KollabConfig = {};
   try {
     const raw = await readFile(configPath, "utf8");

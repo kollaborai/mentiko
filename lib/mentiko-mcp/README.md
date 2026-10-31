@@ -37,7 +37,7 @@ Mentiko uses two auth channels:
 - `MENTIKO_INBOX_KEY`: required for UI effects, notifications, confirmation
   prompts, and browser dispatch/reply flows.
 - `KOLLABOR_ENGINE_URL`: optional token-refresh endpoint. Defaults to
-  `http://127.0.0.1:7433`.
+  `http://127.0.0.1:7443`.
 - `MENTIKO_MCP_TOOL_SCOPE`: optional. Set to `bar` to expose only the tool set
   used by the Mentiko floating bar.
 

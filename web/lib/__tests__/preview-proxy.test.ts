@@ -25,7 +25,7 @@ describe("preview proxy — port allowlist (SSRF guard)", () => {
     delete process.env.MENTIKO_PREVIEW_PORTS;
     expect(isAllowedPreviewPort(3000)).toBe(false); // platform app
     expect(isAllowedPreviewPort(3099)).toBe(false); // platform secondary
-    expect(isAllowedPreviewPort(7433)).toBe(false); // kollabor-engine
+    expect(isAllowedPreviewPort(7443)).toBe(false); // kollabor-engine
   });
 
   it("rejects out-of-range, privileged, and invalid ports", () => {

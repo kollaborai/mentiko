@@ -83,7 +83,7 @@ async function checkEngineHealth(): Promise<DevCheck> {
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 1500);
-    const response = await fetch("http://127.0.0.1:7433/health", {
+    const response = await fetch("http://127.0.0.1:7443/health", {
       signal: controller.signal,
     });
     clearTimeout(timeout);
@@ -93,7 +93,7 @@ async function checkEngineHealth(): Promise<DevCheck> {
         id: "kollabor-engine-health",
         label: "Kollabor engine runtime",
         status: "pass",
-        message: "Engine is responding on 127.0.0.1:7433.",
+        message: "Engine is responding on 127.0.0.1:7443.",
       };
     }
 
@@ -109,7 +109,7 @@ async function checkEngineHealth(): Promise<DevCheck> {
       id: "kollabor-engine-health",
       label: "Kollabor engine runtime",
       status: "warn",
-      message: "Engine is not currently listening on 127.0.0.1:7433.",
+      message: "Engine is not currently listening on 127.0.0.1:7443.",
       remediation: "Run npm run dev to start the full local stack.",
     };
   }

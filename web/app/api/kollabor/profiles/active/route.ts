@@ -1,5 +1,5 @@
 import { readFile, writeFile } from "fs/promises";
-import { homedir } from "os";
+import { kollabConfigDir } from "@/lib/kollab-config-dir";
 import { join } from "path";
 import { NextRequest, NextResponse } from "next/server";
 import { checkAuth } from "@/lib/auth/api-auth";
@@ -13,9 +13,9 @@ export const dynamic = "force-dynamic";
 // to true on success so a failed attempt can be retried by a later GET.
 let lazyRetryAttempted = false;
 
-const CONFIG_PATH = join(homedir(), ".kollab", "config.json");
-const TOKEN_PATH = join(homedir(), ".kollab", "engine.token");
-const ENGINE_BASE_URL = process.env.KOLLABOR_ENGINE_URL || "http://127.0.0.1:7433";
+const CONFIG_PATH = join(kollabConfigDir(), "config.json");
+const TOKEN_PATH = join(kollabConfigDir(), "engine.token");
+const ENGINE_BASE_URL = process.env.KOLLABOR_ENGINE_URL || "http://127.0.0.1:7443";
 
 type KollabConfig = {
   kollabor?: {

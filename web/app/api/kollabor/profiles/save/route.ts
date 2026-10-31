@@ -1,5 +1,5 @@
 import { readFile } from "fs/promises";
-import { homedir } from "os";
+import { kollabConfigDir } from "@/lib/kollab-config-dir";
 import { join } from "path";
 import { NextRequest, NextResponse } from "next/server";
 import { checkAuth } from "@/lib/auth/api-auth";
@@ -8,8 +8,8 @@ import { getSecretByName } from "@/lib/secrets/secrets-store";
 
 export const dynamic = "force-dynamic";
 
-const ENGINE_BASE_URL = process.env.KOLLABOR_ENGINE_URL || "http://127.0.0.1:7433";
-const TOKEN_PATH = join(homedir(), ".kollab", "engine.token");
+const ENGINE_BASE_URL = process.env.KOLLABOR_ENGINE_URL || "http://127.0.0.1:7443";
+const TOKEN_PATH = join(kollabConfigDir(), "engine.token");
 
 async function readEngineToken(): Promise<string> {
   const token = (await readFile(TOKEN_PATH, "utf8")).trim();

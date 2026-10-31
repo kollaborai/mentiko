@@ -95,6 +95,7 @@ This does NOT cover external provisioning or hosting services, which have their 
 |----------|---------|----------|-------------|
 | `NODE_ENV` | - | Yes (implicit) | `development`, `production`, or `test` |
 | `PORT` | `3000` | No | Next.js listen port |
+| `KOLLABOR_ENGINE_URL` | `http://127.0.0.1:7443` | No | Base URL of the Kollabor engine that Mentiko's own dev/prod process set uses (`processes.dev.json` / `processes.json` start it on port 7443). Set this only to point at a different engine. A standalone Kollab engine on 7433 is left alone. |
 | `CLI_BIN` | `claude` | No | CLI binary name for agent execution |
 | `SESSION_PREFIX` | `mentiko` | No | Prefix for PTY session names |
 | `DEFAULT_MAX_ROUNDS` | `50` | No | Max agent iterations per chain |

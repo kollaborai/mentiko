@@ -21,6 +21,8 @@ auditability, and making interrupted orchestration runs recover cleanly.
 - Added Redis-backed asynchronous audit logging so operators can capture security and activity events without blocking request paths.
 
 ### Changed
+- Moved the default Kollabor engine port from 7433 to 7443 so Mentiko's own engine no longer collides with a standalone Kollab engine, and dev startup no longer kills whatever listens on 7433. Setups that export `KOLLABOR_ENGINE_URL` with port 7433, or run the engine on 7433 themselves, must update it to 7443 (or keep the explicit override).
+- Mentiko agent MCP trust now defaults to on: unless `MENTIKO_MCP_TRUST=0` (or `~/.kollab/mcp/trust` contains `0`), medium-risk MCP tools run without a per-call approval prompt. High-risk tools (deletes, runs, secrets) still ask every time.
 - Improved auto-run ordering, continuation, resume behavior, and handoff completion so interrupted or stale runs are reconciled instead of duplicated.
 - Replaced the Kollabor WebSocket bridge path with the engine client and MCP HTTP bridge, improving Docker/runtime integration.
 - Added an authenticated `/settings/mentiko-agent` floating-bar preference. The setting is scoped to the active browser identity, synchronizes with embedded settings panels, keeps the deployment flag authoritative, and shows explicit save/shutdown recovery state. Existing external UI-control grants are suspended locally while the bar is off and are not revoked.
