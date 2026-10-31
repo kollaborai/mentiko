@@ -283,6 +283,7 @@ describe("recoverLateCompletionEvents", () => {
   it("adopts a real event racing the marker failure exactly once and exposes one downstream delivery", () => {
     const file = runPath();
     seedMissingEventMarkerFailure(file);
+    updateRunJson(file, (run) => ({ ...run!, runnerV2: { ...(run!.runnerV2 as object), idleIncident: { id: "old-incident", status: "open" } } }));
     const event = writeLateEvent(file);
 
     const first = recoverLateCompletionEvents({
@@ -301,6 +302,7 @@ describe("recoverLateCompletionEvents", () => {
     });
 
     expect(first.recovered).toHaveLength(1);
+    expect((readRunJson(file).runnerV2 as { idleIncident: { status: string } }).idleIncident.status).toBe("cleared");
     expect(first.deliveries).toHaveLength(1);
     expect(second.recovered).toHaveLength(0);
     expect(second.deliveries).toHaveLength(1);
