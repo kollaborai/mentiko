@@ -29,8 +29,6 @@ export const MANAGED_PROCESS_ENV_WHITELIST = [
   "MENTIKO_DEFAULT_NAMESPACE_ID", "MENTIKO_DEFAULT_ORG_ID",
   // optional override for the platform's server-side engine proxy
   "KOLLABOR_ENGINE_URL",
-  // kollab config dir for mentiko's engine + its token/settings readers (dev default: ~/.mentiko/kollab)
-  "KOLLAB_CONFIG_DIR",
   // optional override for local/bundled PTY manager binary selection
   "PTY_MGR_BIN", "MENTIKO_PTY_MGR_BIN", "PTY_DAEMON",
   // internal service auth -- used by engine->web refresh-token calls
@@ -53,6 +51,10 @@ export const MANAGED_PROCESS_ENV_WHITELIST = [
 ] as const;
 
 export const PLATFORM_PROCESS_ENV_WHITELIST = [
+  // kollab config dir the engine uses (dev default ~/.mentiko/kollab): the web
+  // reads its token/settings there. Engine gets it via processes.dev.json.
+  // Not in the shared list, so pty-mgr/worker-launched kollab agents keep ~/.kollab.
+  "KOLLAB_CONFIG_DIR",
   // hosted included-AI gateway config. next.js signs upstream gateway requests;
   // agents only receive a separate local proxy token from route launch env.
   "MENTIKO_AI_GATEWAY_ENABLED",

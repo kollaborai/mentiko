@@ -204,9 +204,9 @@ async function checkPermission(
     return { allowed: true, approvedAlwaysGranted: false };
   }
 
-  // Trust short-circuit: enabled via MENTIKO_MCP_TRUST=1 (env override, set
-  // by the app's MCP env launcher, see web/lib/kollabor-mcp-server-env.ts) or
-  // the persistent file-backed setting (see isMcpTrustEnabled). Tier-B tools
+  // Trust short-circuit: on by default; off only via MENTIKO_MCP_TRUST=0 or a
+  // "0" in the file-backed setting (see isMcpTrustEnabled and
+  // web/lib/kollabor-mcp-server-env.ts). Tier-B tools
   // (medium risk) proceed without per-call portal approval; tier-C (high
   // risk: deletes, runs, secrets) stays gated.
   if (isMcpTrustEnabled() && isB) {

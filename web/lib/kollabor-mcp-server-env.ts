@@ -66,7 +66,7 @@ export function getKollabMentikoMcpServerEnv(
   // Trust flag: forward MENTIKO_MCP_TRUST to the bridge — tier-B tools skip
   // portal per-call approval (see lib/mentiko-mcp/server.ts checkPermission);
   // tier-C stays gated. Default: unset = trusted. An explicit "1"/"0" also
-  // persists to ~/.kollab/mcp/trust so it survives bridge restarts and
+  // persists to <kollab config dir>/mcp/trust so it survives bridge restarts and
   // reboots. Set MENTIKO_MCP_TRUST=0 to turn trust off.
   const trust =
     params?.mcpTrust?.trim() ||

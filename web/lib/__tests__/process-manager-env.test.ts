@@ -35,6 +35,18 @@ describe("process manager environment", () => {
     expect(pty.args).toEqual(["daemon", "@$PTY_DAEMON"]);
   });
 
+  it("hands KOLLAB_CONFIG_DIR only to the web app and the engine", () => {
+    const src = { KOLLAB_CONFIG_DIR: "/tmp/mentiko-kollab", PATH: "/bin" };
+    const dev = JSON.parse(readFileSync(join(__dirname, "..", "..", "processes.dev.json"), "utf8"));
+    const procs: Array<{ name: string; env?: Record<string, string> }> = dev.processes ?? dev;
+    const envFor = (name: string) =>
+      buildManagedProcessEnv(procs.find((p) => p.name === name)!, src).KOLLAB_CONFIG_DIR;
+    expect(envFor("platform")).toBe("/tmp/mentiko-kollab");
+    expect(envFor("kollabor-engine")).toBe("/tmp/mentiko-kollab");
+    expect(envFor("pty-mgr")).toBeUndefined();
+    expect(envFor("worker")).toBeUndefined();
+  });
+
   it("passes pty manager override variables to managed child processes", () => {
     expect(MANAGED_PROCESS_ENV_WHITELIST).toContain("PTY_MGR_BIN");
     expect(MANAGED_PROCESS_ENV_WHITELIST).toContain("MENTIKO_PTY_MGR_BIN");
