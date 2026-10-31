@@ -2,7 +2,7 @@
 // runs as PID 2 under tini. spawns and manages all platform processes.
 // zero external dependencies. node built-ins only.
 
-import { spawn, execSync, type ChildProcess } from 'child_process';
+import { spawn, execSync, execFileSync, type ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as net from 'net';
@@ -464,6 +464,21 @@ function pmSocketPath(): string {
   return path.join(os.homedir(), '.mentiko-pm', 'pm.sock');
 }
 
+// Asks the engine's python (same `python` processes.dev.json runs) where it
+// would put its config dir with KOLLAB_CONFIG_DIR=dir. Any failure = no.
+function kollabEngineHonorsConfigDir(dir: string): boolean {
+  try {
+    const out = execFileSync(
+      'python',
+      ['-c', 'from kollabor_config.config_utils import get_config_directory as g; print(g())'],
+      { encoding: 'utf-8', env: { ...process.env, KOLLAB_CONFIG_DIR: dir }, timeout: 10000 },
+    ).trim();
+    return path.resolve(out) === path.resolve(dir);
+  } catch {
+    return false;
+  }
+}
+
 // If a previous process-manager is still running, send it a shutdown over IPC
 // and wait for it to release the socket. Without this, two PMs coexist and
 // both keep their kollabor-engine/worker/etc subprocesses alive — leading to
@@ -777,8 +792,15 @@ async function housekeep() {
   // dev: give mentiko's engine its own kollab config dir, so its token, MCP
   // settings and profiles never overwrite a standalone kollab on this machine.
   // Production (one engine per tenant) keeps ~/.kollab.
+  // Only when the installed engine honors KOLLAB_CONFIG_DIR: an older engine
+  // would keep writing ~/.kollab while mentiko read the private dir.
   if (isDev && !process.env.KOLLAB_CONFIG_DIR) {
-    process.env.KOLLAB_CONFIG_DIR = path.join(os.homedir(), '.mentiko', 'kollab');
+    const devDir = path.join(os.homedir(), '.mentiko', 'kollab');
+    if (kollabEngineHonorsConfigDir(devDir)) {
+      process.env.KOLLAB_CONFIG_DIR = devDir;
+    } else {
+      log('kollab engine ignores KOLLAB_CONFIG_DIR (needs a newer kollab); sharing ~/.kollab with any standalone kollab');
+    }
   }
   if (process.env.KOLLAB_CONFIG_DIR) log(`kollab config dir: ${process.env.KOLLAB_CONFIG_DIR}`);
   try {
