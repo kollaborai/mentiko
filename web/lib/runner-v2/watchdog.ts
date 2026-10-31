@@ -198,7 +198,8 @@ export async function runTypedWatchdogScan(
       now,
       dependencies.processAlive,
     );
-    if ((firstAssessment.outcome === "skip" && firstAssessment.reason === "no-active-agents")
+    if ((firstAssessment.outcome === "alive" && firstAssessment.reason === "live-session-or-grace")
+      || (firstAssessment.outcome === "skip" && firstAssessment.reason === "no-active-agents")
       || (firstAssessment.outcome === "stalled" && hasProtectedWork(scopedRun.run, initialSessionMap))) {
       try {
         await reconcileIdleIncident(scopedRun.runJsonPath, initialSessionMap, {
@@ -454,23 +455,46 @@ function assessCompletedIdleRun(
   now: Date,
   isProcessAlive: (pid: number) => boolean,
 ): { assessment: Extract<WatchdogRunAssessment, { outcome: "stalled" }>; completionMs: number } | undefined {
-  const base = assessRunForWatchdog(run, sessions, now, isProcessAlive);
+  const agents = Array.isArray(run.agents) ? run.agents : [];
+  const terminalStatuses = new Set(["complete", "failed", "stopped", "cancelled", "error", "blocked"]);
+  // Only an old terminal agent's own PTY is ignored for this warning.
+  // Ambiguous ownership, monitors and completion handlers stay protected.
+  const ignorableSessions = new Set<string>();
+  for (const agent of agents) {
+    const name = stringValue(agent.session);
+    const completed = timestampMs(agent.completed);
+    if (!name || name.startsWith("monitor-") || name.startsWith("complete-")
+      || !terminalStatuses.has(agent.status) || completed === undefined
+      || now.getTime() - completed < RECENT_COMPLETION_HANDOFF_GRACE_MS) continue;
+    if (agents.some((other) => {
+      if (other === agent || other.session !== name) return false;
+      const otherCompleted = timestampMs(other.completed);
+      return !terminalStatuses.has(other.status) || otherCompleted === undefined
+        || now.getTime() - otherCompleted < RECENT_COMPLETION_HANDOFF_GRACE_MS;
+    })) continue;
+    ignorableSessions.add(name);
+  }
+  const warningSessions = new Map(sessions);
+  for (const name of ignorableSessions) warningSessions.delete(name);
+  const state = objectValue(run.runnerV2);
+  if ([...ignorableSessions].some((name) => sessions.get(name)?.alive)
+    && (hasReconcilerProtectedWork(run as unknown as Record<string, unknown>)
+      || Object.values(objectValue(state.launchJobs)).some((job) => objectValue(job).status !== "completed"))) return undefined;
+  const base = assessRunForWatchdog(run, warningSessions, now, isProcessAlive);
   if (base.outcome === "alive" || (base.outcome === "skip" && base.reason !== "no-active-agents")) return undefined;
   if (base.outcome === "stalled" && !hasProtectedWork(run, sessions)) return undefined;
   // Session registration and relaunch authorization can precede an agent's
   // status change. Do not diagnose quiescence while either may own work.
   if (Array.isArray(run.sessions) && run.sessions.some((name) => (
-    typeof name !== "string" || sessions.get(name)?.alive || sessions.get(`monitor-${name}`)?.alive
+    typeof name !== "string" || (!ignorableSessions.has(name) && sessions.get(name)?.alive)
+    || sessions.get(`monitor-${name}`)?.alive
     || hasLiveCompletionHandler(sessions, name)
   ))) return undefined;
-  const agents = Array.isArray(run.agents) ? run.agents : [];
-  const terminalStatuses = new Set(["complete", "failed", "stopped", "cancelled", "error", "blocked"]);
   if (base.outcome === "skip" && agents.some((agent) => !terminalStatuses.has(agent.status) || timestampMs(agent.completed) === undefined)) return undefined;
   // For an empty agent list, the run start is the only known age evidence.
   const completionMs = base.outcome === "stalled" ? timestampMs(run.started) : agents.length ? latestAgentCompletionMs(agents) : timestampMs(run.started);
   if (completionMs === undefined) return undefined;
   if (now.getTime() - completionMs < RECENT_COMPLETION_HANDOFF_GRACE_MS) return undefined;
-  const state = objectValue(run.runnerV2);
   const oldEnough = (value: unknown) => {
     const timestamp = timestampMs(value) ?? completionMs;
     return now.getTime() - timestamp >= RECENT_COMPLETION_HANDOFF_GRACE_MS;
