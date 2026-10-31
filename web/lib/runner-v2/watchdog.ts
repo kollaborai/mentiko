@@ -8,7 +8,7 @@ import {
 } from "fs";
 import { join } from "path";
 import { spawn } from "child_process";
-import { createHash } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import config from "@/lib/config";
 import { hasLivePendingHandoff, processIsAlive } from "@/lib/runner-v2/handoff-liveness";
 import { emitRunnerEvent } from "@/lib/runner-v2/event-emitter";
@@ -19,6 +19,7 @@ import type { AdapterOperation } from "@/lib/runner-v2/adapters";
 import { enqueueExternalEffectsOnce } from "@/lib/runner-v2/external-effects";
 import { withExclusiveFileClaim } from "@/lib/runner-v2/file-claim";
 import { shouldRecordTaskExecutionMetadata } from "@/lib/runs/run-provenance";
+import { attemptMayOwnWork, hasPendingRelaunchAuthorizations, hasReconcilerProtectedWork } from "@/lib/runs/reconciler-protected-work";
 import {
   isTerminalAgentAttemptPhase,
   readRunnerV2AttemptState,
@@ -185,7 +186,11 @@ export async function runTypedWatchdogScan(
   const finalizedRunIds = new Set<string>();
   const deferredRunIds = new Set<string>();
   for (const scopedRun of readScopedRuns(runsDir, result.errors)) {
-    if (scopedRun.run.status !== "running") continue;
+    if (scopedRun.run.status !== "running") {
+      const marker = idleMarker(scopedRun.run);
+      if (marker.status === "open" && typeof marker.id === "string") clearIdleIncident(scopedRun.runJsonPath, now, "run is no longer running", marker.id);
+      continue;
+    }
     result.scanned += 1;
     const firstAssessment = assessRunForWatchdog(
       scopedRun.run,
@@ -193,6 +198,19 @@ export async function runTypedWatchdogScan(
       now,
       dependencies.processAlive,
     );
+    if ((firstAssessment.outcome === "skip" && firstAssessment.reason === "no-active-agents")
+      || (firstAssessment.outcome === "stalled" && hasProtectedWork(scopedRun.run, initialSessionMap))) {
+      try {
+        await reconcileIdleIncident(scopedRun.runJsonPath, initialSessionMap, {
+          ...options, eventsDir, stateDir, namespaceId, orgId, now, dependencies, result,
+        });
+      } catch (error) {
+        result.errors.push(`idle stall check failed for ${scopedRun.run.id}: ${errorMessage(error)}`);
+      }
+      continue;
+    }
+    const marker = idleMarker(scopedRun.run);
+    if (marker.status === "open" && typeof marker.id === "string") clearIdleIncident(scopedRun.runJsonPath, now, "activity or grace observed", marker.id);
     if (firstAssessment.outcome !== "stalled") continue;
 
     // A launch or completion handoff can race the scan. Query the daemon again
@@ -230,11 +248,12 @@ export async function runTypedWatchdogScan(
       continue;
     }
     const postMutationRun = readRunJson(scopedRun.runJsonPath);
-    if (hasLiveRunSession(postMutationRun, postMutationSessions)) {
+    if (hasLiveRunSession(postMutationRun, postMutationSessions)
+      || hasProtectedWork(postMutationRun, sessionMap(postMutationSessions))) {
       deferredRunIds.add(terminalized.run.id);
       if (!rollbackWatchdogTerminalization(scopedRun.runJsonPath, terminalized, true)) {
         result.errors.push(
-          `skipped ${terminalized.run.id}: live PTY appeared and watchdog transition changed before rollback`,
+          `skipped ${terminalized.run.id}: activity appeared and watchdog transition changed before rollback`,
         );
       }
       continue;
@@ -382,6 +401,8 @@ export function assessRunForWatchdog(
 
     if (ACTIVE_AGENT_STATUSES.has(status)) {
       anyActive = true;
+      const heartbeat = timestampMs(agent.lastHeartbeat);
+      if (heartbeat !== undefined && nowMs - heartbeat < SESSIONLESS_AGENT_GRACE_MS) anyAlive = true;
       const agentAgeMs = ageMs(nowMs, timestampMs(agent.started) ?? runStartedMs(run));
       if (sessionName) {
         const knownSession = sessions.get(sessionName);
@@ -414,8 +435,8 @@ export function assessRunForWatchdog(
     }
   }
 
-  if (!anyActive) return { outcome: "skip", reason: "no-active-agents" };
   if (anyAlive) return { outcome: "alive", reason: "live-session-or-grace" };
+  if (!anyActive) return { outcome: "skip", reason: "no-active-agents" };
   return {
     outcome: "stalled",
     runId: run.id,
@@ -424,6 +445,164 @@ export function assessRunForWatchdog(
     pendingAgents,
     reason: "no live agent or monitor session after watchdog grace windows",
   };
+}
+
+/** Report old quiescent or unresolved work without changing its lifecycle. */
+function assessCompletedIdleRun(
+  run: RunRecord,
+  sessions: ReadonlyMap<string, WatchdogSession>,
+  now: Date,
+  isProcessAlive: (pid: number) => boolean,
+): { assessment: Extract<WatchdogRunAssessment, { outcome: "stalled" }>; completionMs: number } | undefined {
+  const base = assessRunForWatchdog(run, sessions, now, isProcessAlive);
+  if (base.outcome === "alive" || (base.outcome === "skip" && base.reason !== "no-active-agents")) return undefined;
+  if (base.outcome === "stalled" && !hasProtectedWork(run, sessions)) return undefined;
+  // Session registration and relaunch authorization can precede an agent's
+  // status change. Do not diagnose quiescence while either may own work.
+  if (Array.isArray(run.sessions) && run.sessions.some((name) => (
+    typeof name !== "string" || sessions.get(name)?.alive || sessions.get(`monitor-${name}`)?.alive
+    || hasLiveCompletionHandler(sessions, name)
+  ))) return undefined;
+  const agents = Array.isArray(run.agents) ? run.agents : [];
+  const terminalStatuses = new Set(["complete", "failed", "stopped", "cancelled", "error", "blocked"]);
+  if (base.outcome === "skip" && agents.some((agent) => !terminalStatuses.has(agent.status) || timestampMs(agent.completed) === undefined)) return undefined;
+  // For an empty agent list, the run start is the only known age evidence.
+  const completionMs = base.outcome === "stalled" ? timestampMs(run.started) : agents.length ? latestAgentCompletionMs(agents) : timestampMs(run.started);
+  if (completionMs === undefined) return undefined;
+  if (now.getTime() - completionMs < RECENT_COMPLETION_HANDOFF_GRACE_MS) return undefined;
+  const state = objectValue(run.runnerV2);
+  const oldEnough = (value: unknown) => {
+    const timestamp = timestampMs(value) ?? completionMs;
+    return now.getTime() - timestamp >= RECENT_COMPLETION_HANDOFF_GRACE_MS;
+  };
+  let recoveryProblem = "";
+  if (run.relaunchAuthorization && hasPendingRelaunchAuthorizations({ ...run, relaunchAuthorizations: undefined })) {
+    if (!oldEnough(objectValue(run.relaunchAuthorization).authorizedAt)) return undefined;
+    recoveryProblem = "relaunch authorization may be pending or historical; owner is unknown";
+  }
+  const authorizations = (run as unknown as Record<string, unknown>).relaunchAuthorizations;
+  if (hasPendingRelaunchAuthorizations(run as unknown as Record<string, unknown>)
+    && authorizations && typeof authorizations === "object" && !Array.isArray(authorizations)) {
+    for (const value of Object.values(authorizations)) {
+      if (!oldEnough(objectValue(value).authorizedAt)) return undefined;
+      recoveryProblem = "per-agent relaunch authorization may be pending or historical; owner is unknown";
+    }
+  }
+  if (Array.isArray(state.pendingHandoffs)) for (const value of state.pendingHandoffs) {
+    const handoff = objectValue(value);
+    if (!oldEnough(handoff.heartbeatAt || handoff.startedAt)) return undefined;
+    const pid = Number(handoff.pid);
+    recoveryProblem = `pending handoff is stale; owner ${Number.isInteger(pid) && pid > 0 ? (isProcessAlive(pid) ? "process is alive" : "process is absent") : "is unknown"}`;
+  }
+  const jobs = objectValue(state.launchJobs);
+  for (const value of Object.values(jobs)) {
+    const job = objectValue(value);
+    if (job.status === "completed") continue;
+    const changed = timestampMs(job.updatedAt);
+    if (changed === undefined || now.getTime() - changed < RECENT_COMPLETION_HANDOFF_GRACE_MS) return undefined;
+    if (job.status === "blocked") recoveryProblem = "a launch job is blocked";
+    else if (job.status === "queued") recoveryProblem = "a launch job remains queued beyond the grace window";
+    else if (job.status === "leased") {
+      const lease = objectValue(job.lease);
+      const expires = timestampMs(lease.expiresAt);
+      if (expires === undefined || now.getTime() - expires < RECENT_COMPLETION_HANDOFF_GRACE_MS) return undefined;
+      recoveryProblem = `a launch job lease expired; owner ${Number.isInteger(lease.pid) && Number(lease.pid) > 0 ? (isProcessAlive(Number(lease.pid)) ? "process is alive" : "process is absent") : "is unknown"}`;
+    } else return undefined;
+  }
+  if (Array.isArray(state.attempts)) for (const value of state.attempts) {
+    const attempt = objectValue(value);
+    const phase = attempt.phase;
+    if (!attemptMayOwnWork(phase)) continue;
+    if (!oldEnough(attempt.updatedAt || attempt.createdAt)) return undefined;
+    const pid = Number(objectValue(attempt.processEvidence).processPid);
+    recoveryProblem = `an attempt remains unresolved; owner ${Number.isInteger(pid) && pid > 0 ? (isProcessAlive(pid) ? "process is alive" : "process is absent") : "is unknown"}`;
+  }
+  return {
+    completionMs,
+    assessment: {
+      outcome: "stalled", runId: run.id, lastAgent: agents[agents.length - 1]?.id || "unknown",
+      lastAgentStatus: agents[agents.length - 1]?.status || "unknown", pendingAgents: [],
+      reason: recoveryProblem || "no active agents or pending handoffs after completion grace",
+    },
+  };
+}
+
+function idleMarker(run: RunRecord): Record<string, unknown> {
+  return objectValue(objectValue(run.runnerV2).idleIncident);
+}
+
+function clearIdleIncident(path: string, now: Date, reason: string, expectedId?: string): void {
+  updateRunJson(path, (run) => {
+    if (!run) throw new Error(`run.json not found: ${path}`);
+    const marker = idleMarker(run);
+    if (marker.status !== "open" || (expectedId && marker.id !== expectedId)) return run;
+    return { ...run, runnerV2: { ...objectValue(run.runnerV2), idleIncident: {
+      ...marker, status: "cleared", clearedAt: now.toISOString(), clearReason: reason,
+    } } };
+  });
+}
+
+async function reconcileIdleIncident(path: string, initial: ReadonlyMap<string, WatchdogSession>, input: {
+  eventsDir: string; stateDir: string; namespaceId: string; orgId: string; now: Date;
+  dependencies: WatchdogDependencies; result: TypedWatchdogScanResult;
+}): Promise<void> {
+  let occurrence = "";
+  updateRunJson(path, (run) => {
+    if (!run) throw new Error(`run.json not found: ${path}`);
+    const assessment = assessCompletedIdleRun(run, initial, input.now, input.dependencies.processAlive);
+    const marker = idleMarker(run);
+    if (!assessment) {
+      if (marker.status !== "open") return run;
+      return { ...run, runnerV2: { ...objectValue(run.runnerV2), idleIncident: {
+        ...marker, status: "cleared", clearedAt: input.now.toISOString(), clearReason: "idle evidence no longer sufficient",
+      } } };
+    }
+    if (marker.status === "open" && typeof marker.id === "string") {
+      occurrence = marker.id;
+      return run;
+    }
+    occurrence = randomUUID();
+    return { ...run, runnerV2: { ...objectValue(run.runnerV2), idleIncident: {
+      id: occurrence, status: "open", detectedAt: input.now.toISOString(), reason: assessment.assessment.reason,
+    } } };
+  });
+  if (!occurrence) return;
+  let sessions: WatchdogSession[];
+  try {
+    sessions = await input.dependencies.transport.list();
+  } catch (error) {
+    clearIdleIncident(path, input.now, "PTY recheck unavailable", occurrence);
+    throw error;
+  }
+  updateRunJson(path, (run) => {
+    if (!run) throw new Error(`run.json not found: ${path}`);
+    const marker = idleMarker(run);
+    if (marker.status !== "open" || marker.id !== occurrence) return run;
+    const idle = assessCompletedIdleRun(run, sessionMap(sessions), input.now, input.dependencies.processAlive);
+    if (!idle) return { ...run, runnerV2: { ...objectValue(run.runnerV2), idleIncident: {
+      ...marker, status: "cleared", clearedAt: input.now.toISOString(), clearReason: "activity observed on recheck",
+    } } };
+    input.result.stalled.push(run.id);
+    if (marker.alertQueuedAt) return run;
+    const key = `watchdog:${run.id}:idle:${occurrence}:v1`;
+    input.result.externalEffectsQueued += enqueueExternalEffectsOnce(join(input.stateDir, "external-effects.jsonl"), [{
+      idempotencyKey: `${key}:notification`, namespaceId: input.namespaceId, orgId: input.orgId,
+      operation: { type: "notification", event: "run-idle-incident", chainName: run.chain || "unknown", runId: run.id,
+        reason: idle.assessment.reason, incidentRunPath: path, incidentId: occurrence },
+      timestamp: input.now.toISOString(), reason: "watchdog idle incident",
+    }]);
+    return { ...run, runnerV2: { ...objectValue(run.runnerV2), idleIncident: {
+      ...marker, alertQueuedAt: input.now.toISOString(), reason: idle.assessment.reason,
+    } } };
+  });
+}
+
+function hasProtectedWork(run: RunRecord, sessions: ReadonlyMap<string, WatchdogSession>): boolean {
+  return Boolean(hasReconcilerProtectedWork(run as unknown as Record<string, unknown>)
+    || (Array.isArray(run.sessions) && run.sessions.some((name) => (
+      typeof name !== "string" || sessions.get(name)?.alive || sessions.get(`monitor-${name}`)?.alive
+      || hasLiveCompletionHandler(sessions, name)
+    ))));
 }
 
 function terminalizeIfStillStalled(
@@ -438,6 +617,7 @@ function terminalizeIfStillStalled(
   const completedAt = now.toISOString();
   const run = updateRunJson(runJsonPath, (current) => {
     if (!current) throw new Error(`run.json not found: ${runJsonPath}`);
+    if (hasProtectedWork(current, sessions)) return current;
     const currentAssessment = assessRunForWatchdog(current, sessions, now, isProcessAlive);
     if (currentAssessment.outcome !== "stalled") return current;
     terminalized = true;

@@ -16,6 +16,7 @@ import {
   type RunStatusReason,
 } from "@/lib/runs/run-record";
 import { clearPendingHandoffAgent } from "@/lib/runner-v2/handoff-liveness";
+import { clearIdleIncidentOnActivity } from "@/lib/runs/idle-incident";
 
 export type { AgentStatus, RunAgentRecord, RunRecord, RunStatus, RunStatusReason } from "@/lib/runs/run-record";
 
@@ -116,7 +117,9 @@ export function updateRunJson(
 ): RunRecord {
   return withRunJsonLock(runJsonPath, () => {
     const current = existsSync(runJsonPath) ? readRunJson(runJsonPath) : undefined;
-    const next = update(current);
+    const next = clearIdleIncidentOnActivity(current, update(current));
+    // An idle incident is invalidated by any persisted execution transition,
+    // even when that transition starts and finishes between watchdog scans.
     assertRunRecord(next);
     if (current && next.id !== current.id) {
       throw new Error(`run.json mutation cannot change id from ${current.id} to ${next.id}`);
