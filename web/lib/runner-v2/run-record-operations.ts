@@ -178,8 +178,12 @@ export function startPeerRun(
     const current = requireCurrent(value, runJsonPath);
     if (current.agents.length < 2) throw new Error("peer run requires at least two agents");
     const agents = [...current.agents];
-    agents[0] = { ...agents[0], session: firstSession, status: "running" };
-    agents[1] = { ...agents[1], session: secondSession, status: "running" };
+    agents[0] = {
+      ...agents[0], session: firstSession, status: "running", lastMessage: undefined,
+    };
+    agents[1] = {
+      ...agents[1], session: secondSession, status: "running", lastMessage: undefined,
+    };
     return {
       ...current,
       status: "running",
@@ -201,8 +205,12 @@ export function completePeerRun(
     const current = requireCurrent(value, runJsonPath);
     if (current.agents.length < 2) throw new Error("peer run requires at least two agents");
     const agents = [...current.agents];
-    agents[0] = { ...agents[0], status: "complete", completed: agents[0].completed || timestamp };
-    agents[1] = { ...agents[1], status: "complete", completed: agents[1].completed || timestamp };
+    agents[0] = {
+      ...agents[0], status: "complete", completed: agents[0].completed || timestamp, lastMessage: undefined,
+    };
+    agents[1] = {
+      ...agents[1], status: "complete", completed: agents[1].completed || timestamp, lastMessage: undefined,
+    };
     return { ...current, status: "completed", completed: timestamp, agents, rounds };
   });
 }
@@ -271,7 +279,7 @@ export function buildRunSummary(
   const latestFirst = [...ordered].reverse();
   const finalSummary = latestFirst[0];
   let outcome: string;
-  if (summaries.some((summary) => statusFailed(summary) || explicit(summary, /(?:overall )?result:\s*fail/i))) {
+  if (summaries.some((summary) => statusFailed(summary, run.status) || explicit(summary, /(?:overall )?result:\s*fail/i))) {
     outcome = "fail";
   } else if (summaries.some((summary) =>
     stringValue(summary.status).toLowerCase() === "partial"
@@ -332,8 +340,10 @@ function runArtifacts(run: RunRecord): unknown[] {
   return [...run.artifacts];
 }
 
-function statusFailed(summary: AgentSummary): boolean {
-  return ["failed", "failure", "error", "blocked"].includes(stringValue(summary.status).toLowerCase());
+function statusFailed(summary: AgentSummary, runStatus: string): boolean {
+  const status = stringValue(summary.status).toLowerCase();
+  return ["failed", "failure", "error"].includes(status)
+    || status === "blocked" && runStatus !== "completed";
 }
 
 function explicit(summary: AgentSummary, pattern: RegExp): boolean {

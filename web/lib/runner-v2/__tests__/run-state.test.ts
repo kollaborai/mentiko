@@ -110,7 +110,16 @@ describe("runner-v2 run-state", () => {
   it("promotes a launched agent via addRunSession and dedupes sessions", () => {
     const file = runPath();
     const run = createRunRecord({ chainName: "chain", goal: "goal" });
-    updateRunJson(file, () => run);
+    updateRunJson(file, () => ({
+      ...run,
+      agents: [{
+        id: "agent-a",
+        name: "Agent A",
+        session: "",
+        status: "pending",
+        lastMessage: "queued: waiting for an active agent slot",
+      }],
+    }));
 
     addRunSession(file, "session-a", "agent-a", "Agent A");
     const updated = addRunSession(file, "session-a", "agent-a", "Agent A");
@@ -125,6 +134,7 @@ describe("runner-v2 run-state", () => {
       session: "session-a",
       status: "running",
     });
+    expect(updated.agents[0].lastMessage).toBeUndefined();
   });
 
   it("refuses to let a routed child revive a terminal run", () => {
@@ -203,13 +213,52 @@ describe("runner-v2 run-state", () => {
     const run = createRunRecord({ chainName: "chain", goal: "goal" });
     updateRunJson(file, () => ({
       ...run,
-      agents: [{ id: "agent-a", name: "Agent A", session: "session-a", status: "running" }],
+      agents: [{
+        id: "agent-a",
+        name: "Agent A",
+        session: "session-a",
+        status: "running",
+        lastMessage: "queued: waiting for an active agent slot",
+      }],
     }));
 
     const updated = updateRunAgent(file, "agent-a", "complete");
 
     expect(updated.agents[0].status).toBe("complete");
     expect(updated.agents[0].completed).toBeDefined();
+    expect(updated.agents[0].lastMessage).toBeUndefined();
     expect(updated.status).toBe("pending");
+  });
+
+  it("replaces a queued lastMessage with the reason when an agent fails", () => {
+    const file = runPath();
+    const run = createRunRecord({ chainName: "chain", goal: "goal" });
+    updateRunJson(file, () => ({
+      ...run,
+      agents: [{
+        id: "agent-a",
+        name: "Agent A",
+        session: "session-a",
+        status: "running",
+        lastMessage: "queued: waiting for an active agent slot",
+      }],
+    }));
+    const reason = "monitor: agent CLI process exited before producing its completion event";
+
+    const updated = updateRunAgent(
+      file,
+      "agent-a",
+      "failed",
+      new Date("2026-07-15T00:01:00.000Z"),
+      undefined,
+      undefined,
+      { actor: "system", reason },
+    );
+
+    expect(updated.agents[0]).toMatchObject({
+      status: "failed",
+      lastMessage: reason,
+      statusReason: { actor: "system", reason },
+    });
   });
 });

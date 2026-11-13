@@ -438,7 +438,7 @@ function applyRecoveredAgent(
   return {
     ...run,
     agents: (run.agents || []).map((agent) => agent.id === agentId
-      ? { ...agent, status: "complete", completed: agent.completed || at }
+      ? { ...agent, status: "complete", completed: agent.completed || at, lastMessage: undefined }
       : agent),
     runnerV2: {
       ...state.raw,

@@ -77,21 +77,24 @@ describe("typed Run Record operations", () => {
     const { runsDir, runJsonPath } = fixture({
       status: "pending",
       agents: [
-        { id: "agent1", name: "Peer one", session: "", status: "pending" },
-        { id: "agent2", name: "Peer two", session: "", status: "pending" },
+        { id: "agent1", name: "Peer one", session: "", status: "pending", lastMessage: "queued: waiting for an active agent slot" },
+        { id: "agent2", name: "Peer two", session: "", status: "pending", lastMessage: "queued: waiting for an active agent slot" },
       ],
     });
-    startPeerRun(runJsonPath, "peer-one", "peer-two");
-    completePeerRun(runJsonPath, 4, new Date("2026-07-15T00:04:00Z"));
-    expect(readRunRecordAt(runsDir, "run-1")).toMatchObject({
+    const started = startPeerRun(runJsonPath, "peer-one", "peer-two");
+    expect(started.agents.map((agent) => agent.lastMessage)).toEqual([undefined, undefined]);
+
+    const completed = completePeerRun(runJsonPath, 4, new Date("2026-07-15T00:04:00Z"));
+    expect(completed).toMatchObject({
       status: "completed",
       sessions: ["peer-one", "peer-two"],
       rounds: 4,
       agents: [
-        { id: "agent1", session: "peer-one", status: "complete" },
-        { id: "agent2", session: "peer-two", status: "complete" },
+        { id: "agent1", session: "peer-one", status: "complete", lastMessage: undefined },
+        { id: "agent2", session: "peer-two", status: "complete", lastMessage: undefined },
       ],
     });
+    expect(readRunRecordAt(runsDir, "run-1").agents.map((agent) => agent.lastMessage)).toEqual([undefined, undefined]);
   });
 
   it("preserves unrelated legacy artifacts and replaces only owned activity entries", () => {
@@ -141,5 +144,28 @@ describe("typed Run Record operations", () => {
     expect(artifacts).toContain("opaque-extension");
     expect(artifacts.filter((item) => typeof item === "object" && item !== null
       && (item as { type?: string }).type === "run-summary")).toHaveLength(1);
+  });
+
+  it("does not turn a completed run into a failed outcome for an attribution-only blocked summary", () => {
+    const { runJsonPath } = fixture({
+      status: "completed",
+      completed: "2026-07-15T00:10:00.000Z",
+      agents: [{ id: "reviewer", name: "Reviewer", session: "reviewer-1", status: "complete" }],
+    });
+    const artifactsDir = join(runJsonPath, "..", "artifacts");
+    mkdirSync(artifactsDir, { recursive: true });
+    writeFileSync(join(artifactsDir, "reviewer-summary.json"), JSON.stringify({
+      status: "blocked",
+      executiveSummary: "Reviewed and approved; workspace attribution unavailable because this is not a git repository.",
+    }));
+
+    const { summary } = writeRunSummaryArtifact(runJsonPath, new Date("2026-07-15T00:11:00Z"));
+
+    expect(summary).toMatchObject({
+      status: "completed",
+      outcome: "complete",
+      decision_required: false,
+      recommendation: "move_forward",
+    });
   });
 });

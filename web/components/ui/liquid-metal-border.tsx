@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, type CSSProperties, type ReactNode } from "react";
+import type { ShaderMount } from "@paper-design/shaders";
 import { cn } from "@/lib/utils";
 
 /**
@@ -58,8 +59,7 @@ export function LiquidMetalBorder({
   const hostRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    let mount: { destroy?: () => void; canvasElement?: HTMLCanvasElement } | null =
-      null;
+    let mount: ShaderMount | null = null;
     let cancelled = false;
     const reduceMotion = window.matchMedia(
       "(prefers-reduced-motion: reduce)",
@@ -96,7 +96,7 @@ export function LiquidMetalBorder({
     return () => {
       cancelled = true;
       try {
-        mount?.destroy?.();
+        mount?.dispose();
       } catch {
         /* noop */
       }

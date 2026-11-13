@@ -226,6 +226,7 @@ export function addRunSession(
       session: sessionName,
       status: "running",
       completed: undefined,
+      lastMessage: undefined,
       started: (existing >= 0 ? agents[existing].started : undefined) || nowIso(now),
     };
     if (existing >= 0) agents[existing] = nextAgent;
@@ -275,9 +276,20 @@ export function updateRunAgent(
       agents: (current.agents || []).map((agent) => {
         if (agent.id !== agentId) return agent;
         const effectiveReason = terminalReasonFor(status, TERMINAL_AGENT_STATUSES, statusReason);
+        const refreshesLastMessage = status === "running"
+          || status === "complete"
+          || status === "blocked"
+          || status === "failed"
+          || status === "stopped"
+          || status === "cancelled"
+          || status === "error";
+        const lastMessage = status === "running" || status === "complete"
+          ? undefined
+          : effectiveReason?.reason ?? statusReason?.reason;
         return {
           ...agent,
           status,
+          ...(refreshesLastMessage ? { lastMessage } : {}),
           ...(TERMINAL_AGENT_STATUSES.has(status) && !agent.completed ? { completed: nowIso(now) } : {}),
           ...(effectiveReason ? { statusReason: effectiveReason } : {}),
         };

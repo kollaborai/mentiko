@@ -12,6 +12,19 @@ describe("runner-v2 quality gate", () => {
     });
   });
 
+  it("accepts a blocked attribution summary when a valid completion event landed", () => {
+    expect(evaluateQualityGate({
+      agent: { id: "reviewer" },
+      summary: { status: "blocked" },
+      completionEventAccepted: true,
+    })).toEqual({ passed: true });
+
+    expect(evaluateQualityGate({
+      agent: { id: "reviewer" },
+      summary: { status: "blocked" },
+    })).toMatchObject({ passed: false, reason: "agent summary status is blocked" });
+  });
+
   it("fails a completion when its required summary artifact is not valid JSON", () => {
     expect(evaluateQualityGate({
       agent: { id: "writer" },

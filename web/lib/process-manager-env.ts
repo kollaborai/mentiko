@@ -78,6 +78,11 @@ export function resolveManagedDevGlobalRoot(
   return environment.MENTIKO_GLOBAL_ROOT || environment.MENTIKO_ROOT || join(home, ".mentiko");
 }
 
+/** Resolve the repository shim when the supervisor is launched from web/. */
+export function resolveManagedDevMcpShim(cwd: string): string {
+  return join(cwd, "..", "bin", "mentiko-mcp");
+}
+
 /**
  * A local supervisor can inherit `/app` from a long-lived container-oriented
  * terminal daemon. Treat only a missing `/app` as that stale transport value;
