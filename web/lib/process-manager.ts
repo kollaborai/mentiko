@@ -15,6 +15,7 @@ import type {
 } from './pm-types';
 import { buildManagedProcessEnv, expandManagedProcessArgs, resolveManagedDevGlobalRoot, shouldReplaceUnavailableDevContainerRoot } from './process-manager-env';
 import { registerKollabMentikoMcpServer } from './kollabor-mcp-settings';
+import { formatReadinessTimeout, resolveReadinessTimeout, resolveRestartDelay } from './process-manager-readiness';
 
 interface ManagedProcess {
   config: ProcessConfig;
@@ -168,8 +169,9 @@ function checkHttp(url: string): Promise<boolean> {
 
 async function waitReady(_name: string, r: ReadinessConfig | undefined): Promise<boolean> {
   if (!r || r.type === 'none') return true;
-  if (r.type === 'timer') { await sleep(r.timeout || 1000); return true; }
-  const deadline = Date.now() + (r.timeout || 10000);
+  const timeoutMs = resolveReadinessTimeout(r);
+  if (r.type === 'timer') { await sleep(timeoutMs); return true; }
+  const deadline = Date.now() + timeoutMs;
   const interval = r.interval || POLL_INTERVAL;
   while (Date.now() < deadline) {
     if (shuttingDown) return false;
@@ -202,7 +204,9 @@ function spawnChild(config: ProcessConfig): ManagedProcess {
   child.on('exit', (code: number | null, signal: string | null) => handleExit(m, code, signal));
   child.on('error', (err: Error) => {
     logErr(`${config.name} spawn error: ${err.message}`);
+    const readinessPending = m.status === 'starting';
     m.status = 'crashed';
+    if (readinessPending && config.critical && config.restart?.retryOnStartup) return;
     scheduleRestart(m);
   });
   return m;
@@ -210,6 +214,7 @@ function spawnChild(config: ProcessConfig): ManagedProcess {
 
 function handleExit(m: ManagedProcess, code: number | null, signal: string | null) {
   const name = m.config.name;
+  const readinessPending = m.status === 'starting';
   m.lastExit = Date.now();
   m.lastExitCode = code;
   m.child = null;
@@ -245,24 +250,27 @@ function handleExit(m: ManagedProcess, code: number | null, signal: string | nul
   if (code === 0 && !(m.config.restart?.enabled ?? true)) {
     m.status = 'stopped'; log(`${name} exited cleanly (${desc})`); return;
   }
+  if (readinessPending && m.config.critical && m.config.restart?.retryOnStartup) {
+    log(`${name} exited before readiness; startup retry will follow its readiness window`);
+    return;
+  }
   log(`${name} crashed (${desc}), uptime ${Math.round(uptime / 1000)}s`);
   scheduleRestart(m);
 }
 
 function scheduleRestart(m: ManagedProcess) {
   if (shuttingDown) return;
-  const r = m.config.restart ?? { enabled: true, maxRestarts: 10, baseDelay: 1000, maxDelay: 30000, resetAfter: 60000, jitter: true };
-  if (!r.enabled) { m.status = 'stopped'; return; }
-  const max = r.maxRestarts ?? 10;
-  if (m.restarts >= max) {
+  const restart = m.config.restart;
+  if (restart && !restart.enabled) { m.status = 'stopped'; return; }
+  const nextRestart = resolveRestartDelay(restart, m.restarts);
+  const max = nextRestart?.maxRestarts ?? restart?.maxRestarts ?? 10;
+  if (!nextRestart) {
     m.status = 'failed';
     logErr(`${m.config.name} exceeded max restarts (${max}/${max}), giving up`);
     if (m.config.critical) { logErr(`critical process ${m.config.name} failed, shutting down`); exitCode = 1; shutdown(); }
     return;
   }
-  const base = r.baseDelay ?? 1000;
-  let delay = Math.min(base * Math.pow(2, m.restarts), r.maxDelay ?? 30000);
-  if (r.jitter ?? true) delay = Math.round(delay * (0.85 + Math.random() * 0.3));
+  const delay = nextRestart.delayMs;
   m.restarts++;
   log(`${m.config.name} restarting in ${delay}ms (attempt ${m.restarts}/${max})`);
   m.restartTimer = setTimeout(async () => {
@@ -304,12 +312,23 @@ async function startOne(config: ProcessConfig, options: StartOptions = {}): Prom
       if (daemonPid) { m.pid = daemonPid; log(`${config.name} daemon pid ${daemonPid}`); }
     }
   } else if (!shuttingDown) {
-    logErr(`${config.name} readiness timeout, killing`);
+    const timeoutMs = resolveReadinessTimeout(config.readiness);
+    logErr(formatReadinessTimeout(config.name, config.readiness, timeoutMs, expandEnv));
     await killProc(m);
     m.status = 'crashed';
     if (options.abortCriticalReadinessTimeout && config.critical) {
+      const retry = config.restart?.retryOnStartup
+        ? resolveRestartDelay(config.restart, m.restarts)
+        : null;
+      if (retry) {
+        m.restarts++;
+        log(`${config.name} retrying startup in ${retry.delayMs}ms after readiness timeout (attempt ${m.restarts}/${retry.maxRestarts})`);
+        await sleep(retry.delayMs);
+        if (shuttingDown) return m;
+        return startOne(config, options);
+      }
       m.status = 'failed';
-      logErr(`critical process ${config.name} failed readiness during startup`);
+      logErr(`${config.name} failed readiness during startup after ${m.restarts} retries (max ${config.restart?.maxRestarts ?? 0})`);
       exitCode = 1;
       await shutdown();
     } else {
