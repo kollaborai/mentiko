@@ -12,14 +12,18 @@ import {
   type DevCheck,
   type PtyManagerCandidate,
 } from "../lib/system/dev-environment-checks";
+import {
+  checkSqliteNativeAddons,
+  SQLITE_ADDON_PACKAGES,
+} from "../lib/system/sqlite-native-addons";
 
 const args = new Set(process.argv.slice(2));
 const preflight = args.has("--preflight");
 
-function run(command: string, commandArgs: string[]): CommandResult {
+function run(command: string, commandArgs: string[], timeout = 10_000): CommandResult {
   const result = spawnSync(command, commandArgs, {
     encoding: "utf8",
-    timeout: 10_000,
+    timeout,
   });
 
   return {
@@ -116,8 +120,20 @@ async function checkEngineHealth(): Promise<DevCheck> {
 }
 
 async function main() {
+  const sqliteAddons = checkSqliteNativeAddons({
+    run,
+    executable: process.execPath,
+    nodeVersion: process.version,
+    preflight,
+    onRebuild: () =>
+      process.stdout.write(
+        `Rebuilding ${SQLITE_ADDON_PACKAGES.join(", ")} for Node ${process.version}...\n`,
+      ),
+  });
+
   const checks: DevCheck[] = [
     checkNodeVersion(process.version),
+    sqliteAddons,
     checkCommandResult({
       id: "python",
       label: "Python",
