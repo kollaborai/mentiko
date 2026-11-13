@@ -42,6 +42,7 @@ import {
   recoveryKeyBytes,
   type StartupRecoveryInput,
 } from "@/lib/runner-v2/readiness-cli";
+import { relaunchAuthorizationAdmits } from "@/lib/runner-v2/relaunch-authorization";
 import { addRunSession, readRunJson, updateRunJson, updateRunStatus, type RunAgentRecord } from "@/lib/runner-v2/run-state";
 import {
   type AgentAttemptPhase,
@@ -635,25 +636,26 @@ function assertBootstrapLaunchable(
   // A resume route authorizes one fresh occurrence by persisting resumedAt on
   // the run before relaunch. This is durable route state, unlike an environment
   // occurrence id (which is only a caller claim). authorizeTypedRelaunch writes
-  // a separate occurrence-scoped entry in the per-agent relaunchAuthorizations
-  // map (agent id key + launch job id) for retry and routed-revisit relaunches,
-  // so a replayed or duplicate launch job cannot admit a completed agent, one
+  // a separate occurrence-scoped entry (relaunchAuthorizations[agent][job:<id>
+  // or direct]) for retry and routed-revisit relaunches, so a retry and a
+  // routed revisit of the same agent never displace each other (#25). A replayed or duplicate launch job cannot admit a completed agent, one
   // agent's authorization cannot admit another's relaunch, and relaunches do
   // not extend the watchdog/reconciler resumedAt grace windows. Once
-  // createAgentAttempt allocates the next attempt, that attempt's updatedAt is
-  // newer than the authorization, so the same entry admits no further attempt;
+  // createAgentAttempt allocates an attempt for that agent and occurrence, its
+  // createdAt is at or after the authorization, so the entry is consumed and
+  // admits no further attempt; another occurrence's entry stays live;
   // if bootstrap dies before createAgentAttempt the entry simply stays live and
   // a later bootstrap of the still-stuck agent is admitted — intended.
   const attemptUpdatedAt = Date.parse(latestAttempt.updatedAt);
   const resumedAt = typeof run.resumedAt === "string" ? Date.parse(run.resumedAt) : Number.NaN;
   if (Number.isFinite(resumedAt) && Number.isFinite(attemptUpdatedAt) && resumedAt > attemptUpdatedAt) return;
-  const relaunch = run.relaunchAuthorizations?.[agentId];
-  if (
-    relaunch
-    && typeof relaunch === "object"
-    && relaunch.launchJobId === launchJobId
-    && Date.parse(typeof relaunch.authorizedAt === "string" ? relaunch.authorizedAt : "") > attemptUpdatedAt
-  ) return;
+  if (relaunchAuthorizationAdmits({
+    run,
+    runId,
+    agentId,
+    launchJobId,
+    attempts: readRunnerV2AttemptState(runJsonPath).attempts,
+  })) return;
 
   // Existing routed launches are replayed from their persisted acceptance
   // receipt by adapters.ts before bootstrap is reached; a direct bootstrap
