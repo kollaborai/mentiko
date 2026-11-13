@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { kollabConfigDir } from "./kollab-config-dir";
 import { dirname, join } from "node:path";
 
 import { getKollabMentikoMcpServerEnv } from "./kollabor-mcp-server-env";
@@ -54,7 +54,9 @@ export function registerKollabMentikoMcpServer(
   input: RegisterKollabMentikoMcpServerInput,
 ): RegisterKollabMentikoMcpServerResult {
   if (!input.command.trim()) throw new Error("MCP command is required");
-  const path = join(input.homeDir ?? homedir(), ".kollab", "mcp", "mcp_settings.json");
+  const path = input.homeDir
+    ? join(input.homeDir, ".kollab", "mcp", "mcp_settings.json")
+    : join(kollabConfigDir(), "mcp", "mcp_settings.json");
   mkdirSync(dirname(path), { recursive: true });
   const { existed, settings, raw } = readSettings(path);
   const servers = {

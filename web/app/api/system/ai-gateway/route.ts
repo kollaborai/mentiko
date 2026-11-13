@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "fs";
-import { homedir } from "os";
+import { kollabConfigDir } from "@/lib/kollab-config-dir";
 import { join } from "path";
 import { checkAuth } from "@/lib/auth/api-auth";
 import { apiSuccess, withErrorHandling } from "@/lib/api-response";
@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 // the local AI gateway proxy (wired by lane B2 on boot).
 
 function readMentikoProfileActive(): boolean {
-  const configPath = join(homedir(), ".kollab", "config.json");
+  const configPath = join(kollabConfigDir(), "config.json");
   if (!existsSync(configPath)) return false;
 
   try {
