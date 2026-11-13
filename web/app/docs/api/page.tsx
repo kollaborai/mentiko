@@ -2322,7 +2322,7 @@ const endpoints: ApiEndpoint[] = [
     method: "ANY",
     path: "/api/kollabor/engine/[...path]",
     auth: true,
-    description: "reverse proxy to the local Kollabor engine (loopback :7433 by default) — forwards method/body/headers 1:1 and streams SSE responses through. PATCH and DELETE always return 405 except DELETE .../profiles/:name (profile removal). POST .../sessions is special-cased: mints a Mentiko session JWT and injects session_id/user_token into the forwarded body so the engine can hand it to the MCP subprocess at spawn time.",
+    description: "reverse proxy to the local Kollabor engine (loopback :7443 by default) — forwards method/body/headers 1:1 and streams SSE responses through. PATCH and DELETE always return 405 except DELETE .../profiles/:name (profile removal). POST .../sessions is special-cased: mints a Mentiko session JWT and injects session_id/user_token into the forwarded body so the engine can hand it to the MCP subprocess at spawn time.",
     response: "passthrough of upstream body/status/content-type",
   },
   {

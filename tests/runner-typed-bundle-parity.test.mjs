@@ -42,13 +42,25 @@ const standaloneBundles = [
   ["lib/runner-v2/job-worker.ts", "runner-job-worker"],
   ["lib/pty/pty-transport-cli.ts", "runner-pty-transport"],
 ];
+const shellLaunchBundles = new Set([
+  "runner-v2-direct-run",
+  "runner-batch-runner",
+  "runner-v2-existing-run",
+  "runner-v2-launch-agent",
+  "runner-v2-next-chain",
+  "runner-peer-link-controller",
+]);
 const temp = mkdtempSync(join(tmpdir(), "mentiko-bundle-parity-"));
 try {
   for (const [source, bundle] of pairs) {
     const output = join(temp, `${bundle}.js`);
     const sourcePath = source.endsWith(".ts") ? source : `lib/runner-v2/${source}.ts`;
     execFileSync("npx", ["esbuild", sourcePath, "--bundle", "--platform=node", "--target=node20", `--outfile=${output}`], { cwd: web, stdio: "pipe" });
-    assert.equal(readFileSync(output, "utf8"), readFileSync(join(root, "lib", `${bundle}.js`), "utf8"), `${bundle} is stale`);
+    const built = readFileSync(output, "utf8");
+    assert.equal(built, readFileSync(join(root, "lib", `${bundle}.js`), "utf8"), `${bundle} is stale`);
+    if (shellLaunchBundles.has(bundle)) {
+      assert.doesNotMatch(built, /\.spawn\s*\(\s*[^,]+,\s*["']zsh["']/s, `${bundle} hardcodes zsh for a PTY spawn`);
+    }
   }
   for (const [source, bundle] of standaloneBundles) {
     const output = join(temp, `${bundle}.js`);

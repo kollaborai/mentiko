@@ -1,12 +1,16 @@
-import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   agentCompleteMarkerDurable,
   findTranscriptJsonl,
   findTranscriptJsonlByInstructionPath,
+  readUserTextsFromTranscript,
   scoreTranscriptIdentity,
   selectTranscriptFromCapture,
+  transcriptContainsUserText,
+  transcriptContainsUserTextAfter,
+  userTexts,
 } from "@/lib/runner-v2/agent-transcript";
 
 const DECOY = "11111111-1111-4111-8111-111111111111";
@@ -23,6 +27,46 @@ function transcriptRecord(sessionId: string, cwd: string, text: string) {
 }
 
 describe("agent transcript typed owner", () => {
+  it("reads Codex user messages for delivery proof without trusting assistant echoes", () => {
+    const root = mkdtempSync(join(tmpdir(), "mentiko-agent-transcript-"));
+    const path = join(root, "codex.jsonl");
+    const nudge = "continue only the current assigned task";
+    try {
+      const records = [
+        { type: "session_meta", payload: { cwd: "/workspace/current" } },
+        { type: "event_msg", payload: { type: "user_message", message: nudge } },
+        {
+          type: "response_item",
+          payload: { type: "message", role: "user", content: [{ type: "input_text", text: "Read /tmp/run-instructions.md" }] },
+        },
+        {
+          type: "response_item",
+          payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: nudge }] },
+        },
+        { type: "user", message: { content: [{ type: "text", text: "claude-style user turn" }] } },
+      ];
+      writeFileSync(path, `${records.map((record) => JSON.stringify(record)).join("\n")}\n`);
+
+      expect(userTexts(records[1])).toEqual([nudge]);
+      expect(readUserTextsFromTranscript(path)).toEqual([
+        nudge,
+        "Read /tmp/run-instructions.md",
+        "claude-style user turn",
+      ]);
+      expect(transcriptContainsUserText(path, nudge)).toBe(true);
+      expect(transcriptContainsUserText(path, "output-only text")).toBe(false);
+      const existingUserTextCount = readUserTextsFromTranscript(path).length;
+      expect(transcriptContainsUserTextAfter(path, nudge, existingUserTextCount)).toBe(false);
+      appendFileSync(path, `${JSON.stringify({
+        type: "event_msg",
+        payload: { type: "user_message", message: nudge },
+      })}\n`);
+      expect(transcriptContainsUserTextAfter(path, nudge, existingUserTextCount)).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("rejects a real JSONL decoy and selects the current run's transcript", () => {
     const root = mkdtempSync(join(tmpdir(), "mentiko-agent-transcript-"));
     const workspace = join(root, "workspace");
@@ -130,6 +174,27 @@ describe("agent transcript typed owner", () => {
         payload: { content: [{ type: "text", text: "AGENT_COMPLETE" }] },
       })}\n`);
       expect(agentCompleteMarkerDurable(path)).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reads Codex rollouts, which keep role and cwd on the record payload", () => {
+    const root = mkdtempSync(join(tmpdir(), "mentiko-agent-transcript-"));
+    const worktree = join(root, "runs", "run-1", ".internal", "workspace-isolation", "worktrees", "abc");
+    const path = join(root, "rollout.jsonl");
+    const line = (type: string, payload: object) => JSON.stringify({ timestamp: "2026-10-30T01:27:54.000Z", type, payload });
+    const instructionPath = "/runs/run-1/artifacts/writer-instructions.md";
+    try {
+      writeFileSync(path, [
+        line("session_meta", { id: REAL, cwd: worktree }),
+        line("response_item", { type: "message", role: "user", content: [{ type: "input_text", text: `read ${instructionPath}, then AGENT_COMPLETE` }] }),
+        line("response_item", { type: "message", role: "assistant", content: [{ type: "output_text", text: "done\n\nAGENT_COMPLETE" }] }),
+      ].join("\n"));
+      expect(agentCompleteMarkerDurable(path)).toBe(true);
+      const identity = { attemptStartedAt: "2026-10-30T01:24:28.000Z", instructionPath, now: new Date("2026-10-30T01:28:00.000Z") };
+      expect(scoreTranscriptIdentity(path, undefined, { ...identity, workspacePath: worktree })).not.toBeNull();
+      expect(scoreTranscriptIdentity(path, undefined, { ...identity, workspacePath: join(root, "workspaces", "mentiko") })).toBeNull();
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
