@@ -47,6 +47,10 @@ describe("manual typed monitor", () => {
     expect(fallbackNudge(1)).toContain("Resume only");
     expect(fallbackNudge(3)).toContain("You look stalled");
     expect(fallbackNudge(5)).toContain("Stop waiting");
+    for (const staleCount of [1, 3, 5]) {
+      expect(fallbackNudge(staleCount)).toContain("MENTIKO_BIN, MENTIKO_AGENT_ID, MENTIKO_RUN_ID, and PATH inline");
+      expect(fallbackNudge(staleCount)).not.toContain("mentiko emit");
+    }
   });
 
   it("records the manual global log, sends a typed fallback nudge, and keeps the log after a gone session", async () => {
