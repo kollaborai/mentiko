@@ -17,6 +17,7 @@ import {
   buildManagedProcessEnv,
   expandManagedProcessArgs,
   resolveManagedDevGlobalRoot,
+  resolveManagedDevMcpShim,
   resolveManagedWebPort,
   shouldReplaceUnavailableDevContainerRoot,
 } from './process-manager-env';
@@ -833,7 +834,7 @@ async function housekeep(config: ProcessesFile) {
     // Prefer the bundled binary in prod, repo shim in dev
     const mcpBin = fs.existsSync('/opt/mentiko/bin/mentiko-mcp')
       ? '/opt/mentiko/bin/mentiko-mcp'
-      : path.join(process.cwd(), '..', 'bin', 'mentiko-mcp');
+      : resolveManagedDevMcpShim(process.cwd());
     const registration = registerKollabMentikoMcpServer({ command: mcpBin });
     log(`mentiko-mcp: registered at ${registration.path} (cmd=${mcpBin})`);
   } catch (e: unknown) {
