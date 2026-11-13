@@ -139,7 +139,9 @@ describe("typed error handling", () => {
       expect(authorized.id).toBe("run-auth");
       expect(authorized.parent_run_id).toBe("run-parent");
       expect(authorized.relaunchAuthorizations).toEqual({
-        writer: { launchJobId: "job-revisit", authorizedAt: expect.any(String) },
+        writer: {
+          "job:job-revisit": { launchJobId: "job-revisit", authorizedAt: expect.any(String) },
+        },
       });
       expect(authorized.resumedAt).toBeUndefined(); // must not touch the resume-route/grace field
 
