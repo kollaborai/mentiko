@@ -393,6 +393,14 @@ describe("run reconciler", () => {
         ],
       })
     );
+    writeFileSync(join(mockEventsDir, "task-generation-complete.event"), [
+      "event: task-generation-complete",
+      "source: task-generator",
+      "run_id: run-1777857759654",
+      "timestamp: 2026-05-04T01:22:42.000Z",
+      "processed: true",
+      "data: generation complete",
+    ].join("\n"));
 
     const result = await reconcileOrphanedRuns();
     const run = JSON.parse(readFileSync(join(runDir, "run.json"), "utf-8"));
@@ -434,6 +442,14 @@ describe("run reconciler", () => {
         ],
       })
     );
+    writeFileSync(join(mockEventsDir, "task-generation-complete-stopped.event"), [
+      "event: task-generation-complete",
+      "source: task-generator",
+      "run_id: run-1779903236975",
+      "timestamp: 2026-05-27T17:34:56.000Z",
+      "processed: true",
+      "data: generation complete",
+    ].join("\n"));
 
     const result = await reconcileOrphanedRuns();
     const run = JSON.parse(readFileSync(join(runDir, "run.json"), "utf-8"));
@@ -442,6 +458,81 @@ describe("run reconciler", () => {
     expect(run.status).toBe("completed");
     expect(run.completed).toBeTruthy();
     expect(run.agents[0].status).toBe("complete");
+  });
+
+  it("keeps a stopped loop-back run stopped while its revisit completion event is unconsumed", async () => {
+    const runId = "run-1793409877696-e601ff25";
+    const runDir = join(mockRunsDir, runId);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(join(runDir, "chain.json"), JSON.stringify({
+      agents: [
+        { id: "step-one", emits: "step-one-done", triggers: ["manual-start", "step-two-done"] },
+        { id: "step-two", emits: "step-two-done", triggers: ["step-one-done"] },
+      ],
+    }));
+    writeFileSync(join(runDir, "run.json"), JSON.stringify({
+      id: runId,
+      status: "stopped",
+      agents: [
+        { id: "step-one", name: "Step One", status: "complete", completed: "2026-05-27T17:34:56.000Z" },
+        { id: "step-two", name: "Step Two", status: "complete", completed: "2026-05-27T17:42:19.000Z" },
+      ],
+    }));
+    writeFileSync(join(mockEventsDir, "step-two-loop-back.event"), [
+      "event: step-two-done",
+      "source: step-two",
+      `run_id: ${runId}`,
+      "timestamp: 2026-05-27T17:42:19.000Z",
+      "processed: false",
+      "data: revisit step one",
+    ].join("\n"));
+
+    await reconcileOrphanedRuns();
+    const run = JSON.parse(readFileSync(join(runDir, "run.json"), "utf-8"));
+
+    expect(run.status).toBe("stopped");
+    expect(run.agents.map((agent: { status: string }) => agent.status)).toEqual(["complete", "complete"]);
+  });
+
+  it("keeps a stopped run stopped when a consumed loop-back event still has a queued revisit", async () => {
+    const runId = "run-1793409877696-queued-revisit";
+    const runDir = join(mockRunsDir, runId);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(join(runDir, "chain.json"), JSON.stringify({
+      agents: [
+        { id: "step-one", emits: "step-one-done", triggers: ["manual-start", "step-two-done"] },
+        { id: "step-two", emits: "step-two-done", triggers: ["step-one-done"] },
+      ],
+    }));
+    writeFileSync(join(runDir, "run.json"), JSON.stringify({
+      id: runId,
+      status: "stopped",
+      agents: [
+        { id: "step-one", name: "Step One", status: "complete", completed: "2026-05-27T17:34:56.000Z" },
+        { id: "step-two", name: "Step Two", status: "complete", completed: "2026-05-27T17:42:19.000Z" },
+      ],
+      runnerV2: {
+        launchJobs: {
+          revisit: {
+            status: "queued",
+            targets: [{ agentId: "step-one" }],
+          },
+        },
+      },
+    }));
+    writeFileSync(join(mockEventsDir, "step-two-loop-back-consumed.event"), [
+      "event: step-two-done",
+      "source: step-two",
+      `run_id: ${runId}`,
+      "timestamp: 2026-05-27T17:42:19.000Z",
+      "processed: true",
+      "data: revisit step one",
+    ].join("\n"));
+
+    await reconcileOrphanedRuns();
+    const run = JSON.parse(readFileSync(join(runDir, "run.json"), "utf-8"));
+
+    expect(run.status).toBe("stopped");
   });
 
   it("records actor \"reaper\" and a reason on a run and its agents when it reaps an orphaned run", async () => {

@@ -1,7 +1,7 @@
 /** @jest-environment node */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { sweepGdprUserData } from "@/lib/runs/gdpr-user-sweep";
@@ -18,16 +18,16 @@ describe("typed Run Record runtime binding", () => {
     expect(dockerfile).toContain("--outfile=/context/lib/runner-run-record.js");
   });
 
-  // ponytail: byte-identical esbuild compare was flaky (npx --yes pulls
-  // whatever esbuild is cached, not the version that built the checked-in
-  // bundle). Drift check instead: bundle must be newer than source + non-trivial.
-  // The "executes ... through the real compiled bundle" test below is the real
-  // functional proof; byte compare added nothing that behavioral test doesn't.
-  it("keeps the checked-in bundle up-to-date with its source", () => {
-    const sourceStat = statSync(sourceRunRecord);
-    const bundleStat = statSync(compiledRunRecord);
-    expect(bundleStat.mtimeMs).toBeGreaterThanOrEqual(sourceStat.mtimeMs);
-    expect(bundleStat.size).toBeGreaterThan(1000);
+  // Git checkout mtimes describe extraction order, not build order. Bind the
+  // checked-in artifact to a current CLI contract that must also exist in its
+  // TypeScript source instead of treating timestamps as freshness evidence.
+  it("includes the current create validation contract in the checked-in bundle", () => {
+    const source = readFileSync(sourceRunRecord, "utf8");
+    const bundle = readFileSync(compiledRunRecord, "utf8");
+    const contract = "create accepts exactly one of --chain or --chain-file";
+    expect(source).toContain(contract);
+    expect(bundle).toContain(contract);
+    expect(bundle.length).toBeGreaterThan(1000);
   });
 
   it("executes create and named mutations through the real compiled bundle", () => {

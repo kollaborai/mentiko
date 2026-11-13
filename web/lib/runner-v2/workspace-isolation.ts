@@ -1499,6 +1499,8 @@ export function mergeGitNodeIntegration(input: {
   runWorkspace: GitRunWorkspaceIsolation;
   integration: GitNodeIntegrationResult;
   now?: Date;
+  /** Deterministic crash hook used by the merge-back receipt recovery test. */
+  afterApplyBeforeReceipt?: () => void;
 }): "applied" | "no-changes" | "already-published" {
   const runWorkspace = assertRunIsolation(input.runWorkspace, {
     runId: input.runWorkspace.runId,
@@ -1541,6 +1543,24 @@ export function mergeGitNodeIntegration(input: {
       label: `${runWorkspace.runId}-merge-back-cas`,
       capturedAt: appliedAt,
     });
+    if (before.snapshotTree === integrationTree) {
+      // Crash recovery: git apply completed but the immutable merge-back
+      // receipt did not. The exact integration tree proves the delta is
+      // already present, so record that fact before considering source drift.
+      const recovered: GitRunWorkspaceMergeBackResult = {
+        version: WORKSPACE_ISOLATION_VERSION,
+        kind: "git-run-workspace-merge-back",
+        runId: runWorkspace.runId,
+        previousIntegrationCommit: input.integration.previousIntegrationCommit,
+        integrationCommit: input.integration.integrationCommit,
+        sourceTreeBefore: previousTree,
+        sourceTreeAfter: before.snapshotTree,
+        artifactPath,
+        appliedAt,
+      };
+      writeJsonOnce(artifactPath, recovered);
+      return "already-published";
+    }
     if (before.snapshotTree !== previousTree) {
       const drift = runGitResult(runWorkspace.sourceRepositoryRoot, [
         "diff",
@@ -1601,6 +1621,7 @@ export function mergeGitNodeIntegration(input: {
       "--whitespace=nowarn",
       "-",
     ], patch.stdout);
+    input.afterApplyBeforeReceipt?.();
     const verified = captureGitWorkspaceSnapshot({
       workspacePath: runWorkspace.sourceWorkspacePath,
       scratchDir,
