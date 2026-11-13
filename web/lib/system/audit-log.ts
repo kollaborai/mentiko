@@ -30,6 +30,7 @@ export interface AuditPaths {
 const INDEX_LIMIT = 1_001;
 const MAX_EVENT_LENGTH = 160;
 const MAX_DESCRIPTION_LENGTH = 16_000;
+const MAX_WRITER_LENGTH = 256;
 const PII_KEYS = new Set(["email", "name", "user_email", "user_name", "username"]);
 
 export function resolveAuditPaths(namespaceId = config.namespaceId): AuditPaths {
@@ -104,8 +105,9 @@ function sanitizeText(value: string, field: string, maxLength: number): string {
   return normalized;
 }
 
-function currentUser(): string {
-  return process.env.AUDIT_USER || process.env.LOGNAME || process.env.USER || "unknown";
+function resolveWriter(writer: string | undefined): string {
+  const servicePrincipal = process.env.MENTIKO_AUDIT_SERVICE_PRINCIPAL || "mentiko-server";
+  return sanitizeText(writer || servicePrincipal, "writer", MAX_WRITER_LENGTH);
 }
 
 function currentHost(): string {
@@ -120,6 +122,8 @@ export function writeAuditLog(input: {
   metadata?: AuditLogMetadata;
   source?: string;
   ip?: string;
+  /** Set only by trusted server-side callers that know the session identity. */
+  writer?: string;
 }): AuditEntry {
   const paths = resolveAuditPaths(input.namespaceId);
   mkdirSync(paths.dir, { recursive: true, mode: 0o700 });
@@ -131,7 +135,7 @@ export function writeAuditLog(input: {
     timestamp: new Date().toISOString(),
     event_type: sanitizeText(input.eventType, "event type", MAX_EVENT_LENGTH),
     description: sanitizeText(input.description, "description", MAX_DESCRIPTION_LENGTH),
-    user: currentUser(),
+    user: resolveWriter(input.writer),
     source: input.source || "system",
     ip: input.ip || "",
     hostname: currentHost(),

@@ -15,6 +15,8 @@ export type { AuditLogMetadata };
 export interface AuditExecOptions {
   source?: string;
   ip?: string;
+  /** Trusted server-side writer identity; never copy this from request JSON. */
+  writer?: string;
   timeoutMs?: number;
   namespaceId?: string;
 }
@@ -32,6 +34,7 @@ export async function execAuditLog(
     metadata,
     source: options.source ?? "web",
     ip: sanitizeIp(options.ip),
+    writer: options.writer,
   });
   return entry.id;
 }
