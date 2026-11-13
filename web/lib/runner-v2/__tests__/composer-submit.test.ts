@@ -1,8 +1,9 @@
-import { composerState, confirmComposerSubmission, isComposerHoldingInput } from "@/lib/runner-v2/composer-submit";
+import { composerState, confirmComposerSubmission, isCodexWorking, isComposerHoldingInput } from "@/lib/runner-v2/composer-submit";
 
 const HOLDING = "some output\n❯ finish and print AGENT_COMPLETE";
 const EMPTY = "some output\n> finish and print AGENT_COMPLETE\n❯ ";
 const CODEX_IDLE = "some output\n› Ask Codex to do anything";
+const CODEX_WORKING = "› Ask Codex to do anything\n• Working (3s • esc to interrupt)";
 
 describe("isComposerHoldingInput", () => {
   it("is true when text sits after the last prompt caret", () => {
@@ -26,6 +27,15 @@ describe("composerState", () => {
     // proof of delivery -- conflating the two silently killed a real run.
     expect(composerState("claude: starting up...")).toBe("absent");
     expect(composerState("")).toBe("absent");
+    expect(composerState(CODEX_IDLE)).toBe("codex-empty");
+  });
+});
+
+describe("Codex submission screen states", () => {
+  it("recognizes Codex's active working indicator", () => {
+    expect(isCodexWorking(CODEX_WORKING)).toBe(true);
+    expect(isCodexWorking(CODEX_IDLE)).toBe(false);
+    expect(isCodexWorking("The agent is working on the report")).toBe(false);
   });
 });
 
@@ -122,6 +132,26 @@ describe("confirmComposerSubmission", () => {
     );
     expect(ok).toBe(false);
     expect(capture).toHaveBeenCalledTimes(1);
+    expect(sendEnter).not.toHaveBeenCalled();
+  });
+
+  it("accepts Codex's active working state only when the caller opts in", async () => {
+    const sendEnter = jest.fn().mockResolvedValue(undefined);
+    const ok = await confirmComposerSubmission(
+      { capture: async () => CODEX_WORKING, sendEnter },
+      { ...fast, acceptCodexWorking: true },
+    );
+    expect(ok).toBe(true);
+    expect(sendEnter).not.toHaveBeenCalled();
+  });
+
+  it("does not mistake Codex's idle composer placeholder for delivered instructions", async () => {
+    const sendEnter = jest.fn().mockResolvedValue(undefined);
+    const ok = await confirmComposerSubmission(
+      { capture: async () => CODEX_IDLE, sendEnter },
+      { ...fast, acceptCodexWorking: true },
+    );
+    expect(ok).toBe(false);
     expect(sendEnter).not.toHaveBeenCalled();
   });
 

@@ -1285,6 +1285,7 @@ async function confirmInstructionSubmission(
     deadlineMs,
     maxEnterRetries: 4,
     captureLines: 60,
+    acceptCodexWorking: true,
   });
 }
 

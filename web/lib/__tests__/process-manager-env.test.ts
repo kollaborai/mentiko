@@ -1,4 +1,4 @@
-import { readFileSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import {
   buildManagedProcessEnv,
@@ -6,6 +6,7 @@ import {
   MANAGED_PROCESS_ENV_WHITELIST,
   PLATFORM_PROCESS_ENV_WHITELIST,
   resolveManagedDevGlobalRoot,
+  resolveManagedDevMcpShim,
   resolveManagedWebPort,
   shouldReplaceUnavailableDevContainerRoot,
 } from "../process-manager-env";
@@ -17,6 +18,18 @@ describe("process manager environment", () => {
     expect(resolveManagedDevGlobalRoot({}, "/Users/marco")).toBe("/Users/marco/.mentiko");
     expect(resolveManagedDevGlobalRoot({ MENTIKO_ROOT: "/legacy-root" }, "/Users/marco")).toBe("/legacy-root");
     expect(resolveManagedDevGlobalRoot({ MENTIKO_GLOBAL_ROOT: "/explicit-root", MENTIKO_ROOT: "/legacy-root" }, "/Users/marco")).toBe("/explicit-root");
+  });
+
+  it("resolves the dev MCP shim from the repository root", () => {
+    const shim = resolveManagedDevMcpShim(process.cwd());
+    const repoRootShim = join(process.cwd(), "..", "bin", "mentiko-mcp");
+
+    expect(shim).toBe(repoRootShim);
+    expect(existsSync(shim)).toBe(true);
+    expect(existsSync(join(process.cwd(), "bin", "mentiko-mcp"))).toBe(false);
+
+    const source = readFileSync(join(process.cwd(), "lib/process-manager.ts"), "utf8");
+    expect(source).toContain("resolveManagedDevMcpShim(process.cwd())");
   });
 
   it("replaces only a nonexistent inherited container root during local dev", () => {
