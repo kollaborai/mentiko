@@ -13,7 +13,13 @@ import type {
   ProcessConfig, ProcessesFile, ReadinessConfig,
   IPCRequest,
 } from './pm-types';
-import { buildManagedProcessEnv, expandManagedProcessArgs, resolveManagedDevGlobalRoot, shouldReplaceUnavailableDevContainerRoot } from './process-manager-env';
+import {
+  buildManagedProcessEnv,
+  expandManagedProcessArgs,
+  resolveManagedDevGlobalRoot,
+  resolveManagedWebPort,
+  shouldReplaceUnavailableDevContainerRoot,
+} from './process-manager-env';
 import { registerKollabMentikoMcpServer } from './kollabor-mcp-settings';
 
 interface ManagedProcess {
@@ -670,7 +676,7 @@ async function handleIpc(raw: string, conn: net.Socket) {
 
 // -- housekeeping --
 
-async function housekeep() {
+async function housekeep(config: ProcessesFile) {
   if (!process.env.PATH?.includes('/opt/mentiko/bin'))
     process.env.PATH = `/opt/mentiko/bin:${process.env.PATH || ''}`;
 
@@ -776,7 +782,8 @@ async function housekeep() {
       : crypto.randomBytes(32).toString('hex');
     log(`internal service secret: ${isDev ? 'using dev default' : 'generated'} (len=${process.env.INTERNAL_SERVICE_SECRET.length})`);
   }
-  const webPort = process.env.WEB_PORT || process.env.PORT || '3000';
+  const platformConfig = config.processes.find(process => process.name === 'platform');
+  const webPort = resolveManagedWebPort(process.env, platformConfig);
   if (!process.env.WEB_PORT) process.env.WEB_PORT = webPort;
   if (!process.env.PORT && isDev) process.env.PORT = webPort;
   if (!process.env.BETTER_AUTH_URL && isDev) process.env.BETTER_AUTH_URL = `http://localhost:${webPort}`;
@@ -872,11 +879,11 @@ async function main() {
     });
   });
 
-  try { await housekeep(); } catch (e: unknown) { logErr(`housekeeping failed: ${errorMessage(e)}`); }
-
   configPath = findConfig();
   log(`config: ${configPath}`);
   const config = loadConfig(configPath);
+  try { await housekeep(config); } catch (e: unknown) { logErr(`housekeeping failed: ${errorMessage(e)}`); }
+
   startupOrder = topoSort(config.processes);
   log(`startup order: ${startupOrder.join(' -> ')}`);
   startIpc();
