@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { existsSync, readFileSync, readdirSync, writeFileSync } from "fs";
+import { existsSync, readFileSync, readdirSync } from "fs";
 import { randomUUID } from "node:crypto";
 import { join } from "path";
 import { checkAuth } from "@/lib/auth/api-auth";
@@ -47,6 +47,7 @@ import { hasLivePendingHandoff } from "@/lib/runner-v2/handoff-liveness";
 import { isConcurrencyCapBlockedReason } from "@/lib/runner-v2/concurrency-admission";
 import { isDecisionGateReleased } from "@/lib/tasks/decision-gate-release";
 import { unblockTaskViaResolvedDecision } from "@/lib/tasks/decision-unblock";
+import { updateRunJsonRecord } from "@/lib/runner-v2/run-state";
 
 export const dynamic = "force-dynamic";
 
@@ -349,7 +350,7 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
       reason = "run directory no longer exists";
     } else {
       try {
-        const run = JSON.parse(readFileSync(runJsonPath, "utf-8"));
+        let run = JSON.parse(readFileSync(runJsonPath, "utf-8"));
         if (isNonExecutionRun(run)) {
           const safeId = validateTaskId(issue.id);
           const cleaned = cleanTaskExecutionRunMetadata(meta, run, runId);
@@ -376,14 +377,24 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
           reason = terminalRunReason(run);
           holdForLateCompletion = shouldHoldForLateCompletionRecovery(run);
         } else {
-          const agents = run.agents || [];
           if (allDeclaredAgentsComplete(run, runDir)) {
-            run.status = "completed";
-            run.completed = latestAgentCompletion(run) || run.completed || new Date().toISOString();
-            writeFileSync(runJsonPath, JSON.stringify(run, null, 2));
-            newStatus = "completed";
-            reason = "all declared agents are complete";
+            run = updateRunJsonRecord(runJsonPath, (current) => {
+              if (!current) throw new Error(`run.json not found: ${runJsonPath}`);
+              const currentRun = current as typeof run;
+              if ((currentRun.status !== "running" && currentRun.status !== "pending")
+                || !allDeclaredAgentsComplete(currentRun, runDir)) return current;
+              return {
+                ...currentRun,
+                status: "completed",
+                completed: latestAgentCompletion(currentRun) || currentRun.completed || new Date().toISOString(),
+              };
+            });
+            if (run.status === "completed") {
+              newStatus = "completed";
+              reason = "all declared agents are complete";
+            }
           }
+          const agents = run.agents || [];
           const anyAlive = agents.some(
             (a: { status: string; session?: string }) =>
               a.status === "running" && a.session && liveSessions.has(a.session)
@@ -401,15 +412,38 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
                 ? Date.now() - lastCompletionMs < RUN_HANDOFF_GRACE_MS
                 : false;
               if (ageMs >= RUN_STARTUP_GRACE_MS && !inHandoffWindow) {
-                newStatus = "stopped";
-                reason = "no live sessions found";
-                // Persist the exact terminal state before lifecycle reduction.
-                // Fingerprints must never observe this logically stopped run as
-                // `running:no-terminal-time` and consume retry/audit twice.
-                run.status = "stopped";
-                run.completed = run.completed || new Date().toISOString();
-                run.statusReason = { actor: "reconciler", reason };
-                writeFileSync(runJsonPath, JSON.stringify(run, null, 2));
+                const stopReason = "no live sessions found";
+                // Recheck current run activity inside the shared file lock so a
+                // concurrent launch or completion cannot be overwritten.
+                run = updateRunJsonRecord(runJsonPath, (current) => {
+                  if (!current) throw new Error(`run.json not found: ${runJsonPath}`);
+                  const currentRun = current as typeof run;
+                  if (currentRun.status !== "running" && currentRun.status !== "pending") return current;
+                  const currentAgents = Array.isArray(currentRun.agents)
+                    ? currentRun.agents as Array<{ status: string; session?: string; completed?: unknown }>
+                    : [];
+                  if (currentAgents.some((agent) => agent.status === "running" && agent.session && liveSessions.has(agent.session))) return current;
+                  if (hasLivePendingHandoff(currentRun) || allDeclaredAgentsComplete(currentRun, runDir)) return current;
+                  const currentHasUnresolvedAgents = currentAgents.some((agent) => agent.status === "running" || agent.status === "pending");
+                  if (!currentHasUnresolvedAgents) return current;
+                  const currentStartedAt = parseTimeMs(currentRun.started) || parseTimeMs(meta.last_run_started);
+                  const currentAgeMs = currentStartedAt ? Date.now() - currentStartedAt : RUN_STARTUP_GRACE_MS;
+                  const currentLastCompletionMs = latestAgentCompletionMs(currentAgents);
+                  const currentInHandoffWindow = currentLastCompletionMs
+                    ? Date.now() - currentLastCompletionMs < RUN_HANDOFF_GRACE_MS
+                    : false;
+                  if (currentAgeMs < RUN_STARTUP_GRACE_MS || currentInHandoffWindow) return current;
+                  return {
+                    ...currentRun,
+                    status: "stopped",
+                    completed: currentRun.completed || new Date().toISOString(),
+                    statusReason: { actor: "reconciler", reason: stopReason },
+                  };
+                });
+                if (run.status === "stopped") {
+                  newStatus = "stopped";
+                  reason = stopReason;
+                }
               }
             }
           }
