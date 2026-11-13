@@ -1513,13 +1513,15 @@ describe("runner-v2 completion entrypoint", () => {
       writeJson(join(fixture.runDir, "artifacts", "decision-result.json"), { summary: "s", tasks: [], dependencies: [] });
       emitVerifierEvent(fixture.eventsDir);
       const fetchMock = jest.fn().mockResolvedValue(new Response(null, { status: 200 }));
-      global.fetch = fetchMock;
+      const unexpectedNetwork = jest.fn().mockRejectedValue(new Error("unexpected network call"));
+      global.fetch = unexpectedNetwork;
 
       const result = runRunnerV2CompletionEntrypoint({
         sessionName: "verifier-run-123",
         chainPath: fixture.chainPath,
         env: routedEnv(fixture),
         now: new Date("2026-07-04T00:00:00.000Z"),
+        fetchImpl: fetchMock,
       });
       expect(readRunJson(fixture.runJsonPath).status).toBe("completed");
       // The completion path fires the import as an unawaited side effect; let
@@ -1536,6 +1538,7 @@ describe("runner-v2 completion entrypoint", () => {
         runId: "run-123",
         selectedOptionId: "opt-a",
       });
+      expect(unexpectedNetwork).not.toHaveBeenCalled();
     });
 
     it("does not trigger a decision import when a completed run carries no decision metadata", async () => {

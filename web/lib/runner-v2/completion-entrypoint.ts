@@ -58,6 +58,8 @@ export interface RunnerV2CompletionEntrypointInput {
   dryRun?: boolean;
   now?: Date;
   onRunMutation?: RunMutationObserver;
+  /** Injectable HTTP transport for completion-owned decision imports. */
+  fetchImpl?: typeof fetch;
 }
 
 export interface RunnerV2CompletionEntrypointResult {
@@ -530,6 +532,7 @@ export function runRunnerV2CompletionEntrypoint(
         runId,
         runDir,
         webUrl: env.MENTIKO_WEB_URL,
+        fetchImpl: input.fetchImpl,
       });
     }
 
@@ -938,6 +941,7 @@ function maybeTriggerDecisionImportOnCompletion(input: {
   runId: string;
   runDir: string;
   webUrl?: string;
+  fetchImpl?: typeof fetch;
 }): void {
   const identity = resolveDecisionIdentity(input.run);
   if (!identity) return;
@@ -957,6 +961,7 @@ function maybeTriggerDecisionImportOnCompletion(input: {
     selectedOptionId,
     runDir: input.runDir,
     webUrl: input.webUrl,
+    fetchImpl: input.fetchImpl,
   });
 }
 
