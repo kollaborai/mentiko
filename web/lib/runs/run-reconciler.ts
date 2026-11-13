@@ -17,8 +17,9 @@ import { getLiveSessions } from "../pty/pty-client";
 import { taskGet, taskMergeMeta, taskUpdate } from "../tasks/task-store";
 import { normalizeRunId } from "../auth/run-acl";
 import { cleanTaskExecutionRunMetadata, isNonExecutionRun } from "./run-provenance";
-import { hasLivePendingHandoff } from "../runner-v2/handoff-liveness";
+import { hasLivePendingHandoff, pendingHandoffs } from "../runner-v2/handoff-liveness";
 import { parseRunnerEvent } from "../runner-v2/events";
+import { runnerEventIdentityMatches } from "../runner-v2/event-identity";
 import type { RunStatusReason } from "./run-record";
 
 interface ReconcilerContext {
@@ -83,6 +84,7 @@ interface ChainAgent {
   name?: string;
   role?: string;
   emits?: string | string[];
+  session_prefix?: string;
 }
 
 interface EventRecord {
@@ -90,6 +92,7 @@ interface EventRecord {
   event?: string;
   source?: string;
   runId: string;
+  processed: boolean;
   mtimeMs: number;
 }
 
@@ -97,6 +100,12 @@ function asTimeMs(value?: string): number | undefined {
   if (!value) return undefined;
   const time = new Date(value).getTime();
   return Number.isFinite(time) ? time : undefined;
+}
+
+function objectValue(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
 }
 
 function readChainEmits(runDir: string): Map<string, string[]> {
@@ -134,6 +143,7 @@ function parseEventRecord(eventsDir: string, file: string): EventRecord | null {
       event: event.event,
       source: event.source,
       runId: event.runId,
+      processed: event.processed,
       mtimeMs: statSync(eventFile).mtimeMs,
     };
   } catch {
@@ -249,6 +259,75 @@ function allDeclaredAgentsComplete(run: RunJson, runDir: string): boolean {
   );
 }
 
+function hasPendingCompletionWork(context: ReconcilerContext, run: RunJson, runDir: string, runId: string): boolean {
+  const chainAgents = readChainAgents(runDir).filter((agent): agent is ChainAgent & { id: string } => Boolean(agent.id));
+  const declaredAgentIds = new Set(chainAgents.map((agent) => agent.id));
+
+  // A completion event can have been accepted before the routed launch starts.
+  // Until the event is consumed, the declared flow has not reached its next
+  // decision (and a loop-back target may still be waiting to run).
+  const emitsByAgent = readChainEmits(runDir);
+  const activeEvents = readEventRecords(context.eventsDir);
+  if (activeEvents.some((event) => !event.processed && event.runId === runId && chainAgents.some((agent) => {
+    const emits = emitsByAgent.get(agent.id) || [];
+    return Boolean(event.event && event.source)
+      && emits.includes(event.event!.trim().toLowerCase())
+      && runnerEventIdentityMatches(event.source!, agent.id, agent.session_prefix, [...declaredAgentIds]);
+  }))) {
+    return true;
+  }
+
+  // A consumed event may already have queued its revisit. Keep the run stopped
+  // until the durable handoff, launch job, and latest typed attempts have all
+  // settled; agent summaries alone describe only the most recent status write.
+  if (pendingHandoffs(run).length > 0) return true;
+  const runnerV2 = objectValue(run.runnerV2);
+  const launchJobs = objectValue(runnerV2?.launchJobs);
+  if (launchJobs && Object.values(launchJobs).some((value) => {
+    const job = objectValue(value);
+    const targets = Array.isArray(job?.targets) ? job.targets : [];
+    const targetsDeclaredAgent = targets.some((target) => {
+      const record = objectValue(target);
+      return typeof record?.agentId === "string" && declaredAgentIds.has(record.agentId);
+    });
+    return targetsDeclaredAgent && job?.status !== "completed";
+  })) {
+    return true;
+  }
+
+  const attempts = Array.isArray(runnerV2?.attempts) ? runnerV2.attempts : [];
+  const latestAttemptByAgent = new Map<string, Record<string, unknown>>();
+  for (const value of attempts) {
+    const attempt = objectValue(value);
+    if (!attempt || typeof attempt.agentId !== "string" || !declaredAgentIds.has(attempt.agentId)) continue;
+    if (attempt.runId !== undefined && attempt.runId !== runId) continue;
+    latestAttemptByAgent.set(attempt.agentId, attempt);
+  }
+  if ([...latestAttemptByAgent.values()].some((attempt) => attempt.phase !== "completed")) return true;
+
+  // Require durable proof that each declared completion handoff was consumed.
+  // Processed events move to the archive; an empty event directory is not proof
+  // that every agent's flow reached its terminal decision.
+  const completionEvents = [
+    ...activeEvents,
+    ...readEventRecords(join(context.eventsDir, "archive")),
+  ];
+  return chainAgents.some((agent) => {
+    const emits = emitsByAgent.get(agent.id) || [];
+    if (emits.length === 0) {
+      const latestAttempt = latestAttemptByAgent.get(agent.id);
+      return latestAttempt?.terminalReason !== "completed_empty_emits_last_agent";
+    }
+    return !completionEvents.some((event) => {
+      const eventName = event.event?.trim().toLowerCase();
+      return event.processed
+        && event.runId === runId
+        && Boolean(eventName && emits.includes(eventName))
+        && Boolean(event.source && runnerEventIdentityMatches(event.source, agent.id, agent.session_prefix, [...declaredAgentIds]));
+    });
+  });
+}
+
 function latestAgentCompletion(run: RunJson): string | undefined {
   const latest = (run.agents || [])
     .filter((agent) => agent.status === "complete" && agent.completed)
@@ -262,6 +341,7 @@ function latestAgentCompletion(run: RunJson): string | undefined {
 function repairStoppedAllCompleteRun(context: ReconcilerContext, run: RunJson, runDir: string): boolean {
   if (run.status !== "stopped") return false;
   if (!allDeclaredAgentsComplete(run, runDir)) return false;
+  if (hasPendingCompletionWork(context, run, runDir, run.id || "")) return false;
 
   run.status = "completed";
   run.completed = latestAgentCompletion(run) || run.completed || new Date().toISOString();
@@ -455,7 +535,7 @@ export async function reconcileOrphanedRuns(options: ReconcileOptions = {}): Pro
       if (hasLiveSession) continue; // run is alive
       if (hasLivePendingHandoff(run)) continue; // detached chain-runner is starting the next PTY
 
-      if (allDeclaredAgentsComplete(run, runDir)) {
+      if (allDeclaredAgentsComplete(run, runDir) && !hasPendingCompletionWork(context, run, runDir, runId)) {
         run.status = "completed";
         run.completed = latestAgentCompletion(run) || run.completed || new Date().toISOString();
         changed = true;
