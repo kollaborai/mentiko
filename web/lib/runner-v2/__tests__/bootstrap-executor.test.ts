@@ -1257,6 +1257,76 @@ describe("runner-v2 bootstrap executor", () => {
     expect(attempts[0]?.phase).toBe("instructions_submitted");
   });
 
+  it("confirms Codex instruction delivery from the attempt's transcript user message", async () => {
+    const root = tempDir();
+    writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
+    const runJsonPath = seedRunJson(root);
+    const transcriptRoot = join(root, "codex-logs");
+    mkdirSync(transcriptRoot, { recursive: true });
+    const profilePath = join(root, "codex-profile.json");
+    const transcriptPath = join(transcriptRoot, "codex.jsonl");
+    writeFileSync(profilePath, JSON.stringify({ log_path: transcriptRoot }));
+    const bootstrapPlan = plan(root);
+    bootstrapPlan.runContextExports.MENTIKO_AGENT_PROFILE_PATH = profilePath;
+    let instructionPointerSent = false;
+    const executor = {
+      remove: jest.fn(async () => {}),
+      list: jest.fn(async () => []),
+      spawn: jest.fn(async (name: string) => ({ name, pid: 123 })),
+      sendKeys: jest.fn(async (_name: string, text: string) => {
+        if (!text.includes(bootstrapPlan.instructionPath)) return;
+        instructionPointerSent = true;
+        const timestamp = new Date().toISOString();
+        writeFileSync(transcriptPath, [
+          { type: "session_meta", timestamp, payload: { cwd: bootstrapPlan.projectRoot } },
+          { type: "event_msg", timestamp, payload: { type: "user_message", message: text } },
+        ].map((record) => JSON.stringify(record)).join("\n") + "\n");
+      }),
+      sendRaw: jest.fn(async () => {}),
+      capture: jest.fn(async () => instructionPointerSent ? "› Ask Codex to do anything" : "claude ready >"),
+    };
+
+    await executeLocalBootstrap(bootstrapPlan, context(root), executor);
+
+    expect(executor.sendRaw).not.toHaveBeenCalled();
+    const attempts = (JSON.parse(readFileSync(runJsonPath, "utf8")).runnerV2 || {}).attempts || [];
+    expect(attempts[0]?.phase).toBe("instructions_submitted");
+  });
+
+  it("ignores a prior attempt's Codex transcript when confirming the current pointer", async () => {
+    const root = tempDir();
+    writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
+    const runJsonPath = seedRunJson(root);
+    const transcriptRoot = join(root, "codex-logs");
+    mkdirSync(transcriptRoot, { recursive: true });
+    const profilePath = join(root, "codex-profile.json");
+    writeFileSync(profilePath, JSON.stringify({ log_path: transcriptRoot }));
+    const bootstrapPlan = plan(root);
+    bootstrapPlan.runContextExports.MENTIKO_AGENT_PROFILE_PATH = profilePath;
+    const oldTimestamp = new Date(Date.now() - 60_000).toISOString();
+    writeFileSync(join(transcriptRoot, "prior-attempt.jsonl"), [
+      { type: "session_meta", timestamp: oldTimestamp, payload: { cwd: bootstrapPlan.projectRoot } },
+      { type: "event_msg", timestamp: oldTimestamp, payload: { type: "user_message", message: bootstrapPlan.instructionPointer } },
+    ].map((record) => JSON.stringify(record)).join("\n") + "\n");
+    let instructionPointerSent = false;
+    const executor = {
+      remove: jest.fn(async () => {}),
+      list: jest.fn(async () => []),
+      spawn: jest.fn(async (name: string) => ({ name, pid: 123 })),
+      sendKeys: jest.fn(async (_name: string, text: string) => {
+        if (text.includes(bootstrapPlan.instructionPath)) instructionPointerSent = true;
+      }),
+      sendRaw: jest.fn(async () => {}),
+      capture: jest.fn(async () => instructionPointerSent ? "› Ask Codex to do anything" : "claude ready >"),
+    };
+
+    await executeLocalBootstrap(bootstrapPlan, context(root), executor);
+
+    const attempts = (JSON.parse(readFileSync(runJsonPath, "utf8")).runnerV2 || {}).attempts || [];
+    expect(attempts[0]?.phase).toBe("stuck");
+    expect(attempts[0]?.terminalReason).toBe("instruction_submission_unconfirmed");
+  });
+
   it("does not record submission while the composer is absent during startup", async () => {
     const root = tempDir();
     writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -16,6 +16,7 @@ jest.mock("@/lib/pty/pty-client", () => ({
     capture: jest.fn(),
     pid: jest.fn(),
     sendRaw: jest.fn(),
+    sendKeys: jest.fn(),
     spawn: jest.fn(),
     remove: jest.fn(),
   },
@@ -51,6 +52,7 @@ const ptyMock = jest.requireMock("@/lib/pty/pty-client").pty as {
   capture: jest.Mock;
   pid: jest.Mock;
   sendRaw: jest.Mock;
+  sendKeys: jest.Mock;
   spawn: jest.Mock;
   remove: jest.Mock;
 };
@@ -115,6 +117,22 @@ function liveIo(f: ReturnType<typeof fixture>, extraEnv: Record<string, string> 
   });
 }
 
+function codexTranscriptWithNudge(workspace: string, nudge: string): string {
+  const timestamp = new Date().toISOString();
+  return [
+    { type: "session_meta", timestamp, payload: { cwd: workspace } },
+    { type: "event_msg", timestamp, payload: { type: "user_message", message: nudge } },
+  ].map((record) => JSON.stringify(record)).join("\n") + "\n";
+}
+
+function codexUserMessageRecord(message: string): string {
+  return `${JSON.stringify({
+    type: "event_msg",
+    timestamp: new Date().toISOString(),
+    payload: { type: "user_message", message },
+  })}\n`;
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
   lastCompletionContext = {};
@@ -127,6 +145,57 @@ beforeEach(() => {
 });
 
 describe("monitor-v2 live IO", () => {
+  it("does not treat an earlier identical Codex nudge as proof for the current send", async () => {
+    const f = fixture();
+    const transcript = join(f.root, "codex-transcript.jsonl");
+    const nudge = "continue only the current assigned task";
+    writeFileSync(transcript, codexTranscriptWithNudge(f.workspace, nudge));
+    ptyMock.capture.mockResolvedValue("› Ask Codex to do anything");
+    ptyMock.sendKeys.mockResolvedValue(undefined);
+    ptyMock.sendRaw.mockResolvedValue(undefined);
+    const logSpy = jest.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      await liveIo(f, {
+        MENTIKO_TRANSCRIPT_JSONL: transcript,
+        MENTIKO_MONITOR_NUDGE_SUBMIT_POLL_MS: "1",
+        MENTIKO_MONITOR_NUDGE_SUBMIT_DEADLINE_MS: "250",
+      }).sendNudge("writer-run-123", nudge);
+
+      expect(ptyMock.sendKeys).toHaveBeenCalledWith("writer-run-123", nudge);
+      expect(ptyMock.sendRaw).toHaveBeenCalled();
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("was not confirmed submitted"));
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it("confirms a Codex nudge when a matching user message is appended after the send", async () => {
+    const f = fixture();
+    const transcript = join(f.root, "codex-transcript.jsonl");
+    const nudge = "continue only the current assigned task";
+    writeFileSync(transcript, codexTranscriptWithNudge(f.workspace, nudge));
+    ptyMock.capture.mockResolvedValue("› Ask Codex to do anything");
+    ptyMock.sendKeys.mockResolvedValue(undefined);
+    ptyMock.sendRaw.mockImplementation(async () => {
+      appendFileSync(transcript, codexUserMessageRecord(nudge));
+    });
+    const logSpy = jest.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      await liveIo(f, {
+        MENTIKO_TRANSCRIPT_JSONL: transcript,
+        MENTIKO_MONITOR_NUDGE_SUBMIT_POLL_MS: "1",
+        MENTIKO_MONITOR_NUDGE_SUBMIT_DEADLINE_MS: "500",
+      }).sendNudge("writer-run-123", nudge);
+
+      expect(ptyMock.sendRaw).toHaveBeenCalledTimes(1);
+      expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining("was not confirmed submitted"));
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
   it("accepts only a current, contract-compatible core generation artifact", () => {
     const f = fixture();
     mkdirSync(join(f.runDir, "artifacts"), { recursive: true });

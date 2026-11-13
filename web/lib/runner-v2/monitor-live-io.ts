@@ -8,6 +8,8 @@ import {
   findTranscriptJsonl,
   findTranscriptJsonlByInstructionPath,
   hasTranscriptIdentityBoundary,
+  readUserTextsFromTranscript,
+  transcriptContainsUserTextAfter,
   scoreTranscriptIdentity,
   selectTranscriptFromCapture,
   transcriptRootFromProfile,
@@ -185,28 +187,44 @@ export function createLiveMonitorIO(context: LiveMonitorContext): MonitorDriverI
     },
     // A nudge the CLI never submitted is worse than no nudge: the monitor
     // believes it asked the agent to finish, the text sits in the composer,
-    // and the run cannot close. This used to send raw text, sleep a blind 1s,
-    // then send a raw \r — but the paste-settle window belongs to the pty
-    // daemon (an external, unpinned dependency), so any window longer than 1s
-    // swallowed that enter into the paste body. Use the daemon-owned send,
-    // which appends its own enter after ITS settle delay, then confirm the
-    // composer actually emptied. Same contract bootstrap uses for the
-    // instruction pointer — one implementation, in composer-submit.ts.
+    // and the run cannot close. A successful PTY write does not prove that
+    // Codex accepted the nudge: its `›` glyph cannot distinguish transcript
+    // from composer, and the Enter sent with a paste can be swallowed. Use the
+    // same confirmation contract as bootstrap, with a new transcript user
+    // message as Codex's durable proof of delivery.
     sendNudge: async (session, message) => {
+      // Pin the transcript and count its user-authored segments before sending.
+      // Nudges are intentionally identical across stale cycles, so finding the
+      // same text anywhere in the transcript could be an older delivery while
+      // this copy is still sitting in Codex's composer.
+      const transcriptPath = await resolveTranscriptJsonl(session, context.env, context);
+      const previousUserTextCount = transcriptPath
+        ? readUserTextsFromTranscript(transcriptPath).length
+        : -1;
       await pty.sendKeys(session, message);
       const submitted = await confirmComposerSubmission({
         capture: (lines) => pty.capture(session, lines),
         sendEnter: () => pty.sendRaw(session, "\r"),
+        hasAcceptedSubmissionEvidence: () => Boolean(
+          transcriptPath
+          && previousUserTextCount >= 0
+          && transcriptContainsUserTextAfter(transcriptPath, message, previousUserTextCount),
+        ),
       }, {
+        // Codex can keep the `›` composer visually indistinguishable from its
+        // transcript while its paste-burst window is still swallowing Enter.
+        // Keep retrying the bare Enter for the whole confirmation deadline;
+        // the durable user message is the stopping condition.
+        pollMs: positiveInt(context.env.MENTIKO_MONITOR_NUDGE_SUBMIT_POLL_MS, 1_500),
         deadlineMs: positiveInt(context.env.MENTIKO_MONITOR_NUDGE_SUBMIT_DEADLINE_MS, 12_000),
-        stopOnAbsentComposer: true,
+        maxEnterRetries: Number.POSITIVE_INFINITY,
       });
       if (!submitted) {
         // Not terminal: the next tick re-evaluates and may nudge again. Log it
         // so an unsubmittable composer is visible instead of looking like an
         // agent that ignored the nudge.
         console.log(
-          `monitor: nudge for ${context.agentId} was not confirmed submitted; composer still holds input after enter retries`,
+          `monitor: nudge for ${context.agentId} was not confirmed submitted; neither durable transcript nor composer evidence arrived before the retry deadline`,
         );
       }
     },
