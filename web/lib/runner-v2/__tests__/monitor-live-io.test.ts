@@ -383,10 +383,22 @@ describe("monitor-v2 live IO", () => {
 
   it("dead without event marks run and agent failed with monitor diagnostic event", async () => {
     const f = fixture();
+    updateRunJson(f.runJsonPath, (run) => ({
+      ...(run as RunRecord),
+      agents: (run as RunRecord).agents.map((agent) => ({
+        ...agent,
+        lastMessage: "queued: waiting for an active agent slot",
+      })),
+    }));
+
     await liveIo(f).onDied("writer-run-123");
     expect(readRunJson(f.runJsonPath)).toMatchObject({
       status: "failed",
-      agents: [{ id: "writer", status: "failed" }],
+      agents: [{
+        id: "writer",
+        status: "failed",
+        lastMessage: "monitor: agent CLI process exited before producing its completion event",
+      }],
     });
     const eventFiles = readFileSync(join(f.eventsDir, readDirOne(f.eventsDir)), "utf8");
     expect(eventFiles).toContain("event: agent-error");
