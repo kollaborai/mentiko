@@ -1272,6 +1272,32 @@ describe("runner-v2 bootstrap executor", () => {
     expect(attempts[0]?.phase).toBe("instructions_submitted");
   });
 
+  it("confirms Codex instruction delivery from its working state without a transcript profile", async () => {
+    const root = tempDir();
+    writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
+    const runJsonPath = seedRunJson(root);
+    const bootstrapPlan = plan(root);
+    let instructionPointerSent = false;
+    const executor = {
+      remove: jest.fn(async () => {}),
+      list: jest.fn(async () => []),
+      spawn: jest.fn(async (name: string) => ({ name, pid: 123 })),
+      sendKeys: jest.fn(async (_name: string, text: string) => {
+        if (text.includes(bootstrapPlan.instructionPath)) instructionPointerSent = true;
+      }),
+      sendRaw: jest.fn(async () => {}),
+      capture: jest.fn(async () => instructionPointerSent
+        ? "› Ask Codex to do anything\n• Working (0s • esc to interrupt)"
+        : "claude ready >"),
+    };
+
+    await executeLocalBootstrap(bootstrapPlan, context(root), executor);
+
+    expect(executor.sendRaw).not.toHaveBeenCalled();
+    const attempts = (JSON.parse(readFileSync(runJsonPath, "utf8")).runnerV2 || {}).attempts || [];
+    expect(attempts[0]?.phase).toBe("instructions_submitted");
+  });
+
   it("confirms Codex instruction delivery from the attempt's transcript user message", async () => {
     const root = tempDir();
     writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
