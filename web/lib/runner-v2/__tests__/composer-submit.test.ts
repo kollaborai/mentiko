@@ -2,6 +2,7 @@ import { composerState, confirmComposerSubmission, isComposerHoldingInput } from
 
 const HOLDING = "some output\n❯ finish and print AGENT_COMPLETE";
 const EMPTY = "some output\n> finish and print AGENT_COMPLETE\n❯ ";
+const CODEX_IDLE = "some output\n› Ask Codex to do anything";
 
 describe("isComposerHoldingInput", () => {
   it("is true when text sits after the last prompt caret", () => {
@@ -95,6 +96,21 @@ describe("confirmComposerSubmission", () => {
       "work complete\nAGENT_COMPLETE",
     );
     expect(sendEnter).not.toHaveBeenCalled();
+  });
+
+  it("uses durable submission evidence when Codex has no recognizable composer glyph", async () => {
+    let evidenceChecks = 0;
+    const sendEnter = jest.fn().mockResolvedValue(undefined);
+    const ok = await confirmComposerSubmission(
+      {
+        capture: async () => CODEX_IDLE,
+        sendEnter,
+        hasAcceptedSubmissionEvidence: () => ++evidenceChecks >= 2,
+      },
+      { ...fast, maxEnterRetries: Number.POSITIVE_INFINITY },
+    );
+    expect(ok).toBe(true);
+    expect(sendEnter).toHaveBeenCalledTimes(1);
   });
 
   it("fails fast without blind enter retries when a running CLI has no composer", async () => {

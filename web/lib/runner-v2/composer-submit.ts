@@ -2,18 +2,11 @@
 // composer-submit.ts — the ONE way typed code puts text into a CLI composer
 // and proves the CLI accepted it.
 // -------------------------------------------------------------------
-// Two callers used to disagree. Bootstrap sent the instruction pointer with
-// the daemon-owned send (paste settle + daemon-appended enter) and then
-// VERIFIED the composer had emptied, retrying bare enters. The monitor nudge
-// sent raw text, slept a blind 1s, sent a raw \r, and verified nothing — so
-// whenever the daemon's paste-detection window outlasted that 1s, the enter
-// was swallowed into the paste body and the nudge sat unsubmitted in the
-// composer forever. The agent never saw the instruction to finish; the run
-// never closed.
-//
-// The delay is not ours to guess: it belongs to the pty daemon, whose version
-// is an external dependency. So never hand-roll a sleep-then-enter. Use the
-// daemon-owned send, then confirm against the rendered composer and retry.
+// Bootstrap and monitor nudges both send text through pty.sendKeys, then
+// confirm that the CLI accepted it. A CLI can consume the Enter sent with a
+// paste while it is still processing the paste burst; a bare Enter after a
+// poll interval may be needed. Keep that retry and confirmation policy here
+// so neither caller assumes that a successful PTY write means delivery.
 // -------------------------------------------------------------------
 
 /**
@@ -24,8 +17,10 @@
  *   empty   — a ❯ is rendered with nothing after it: the CLI took the paste
  *             (an accepted paste re-renders in history with a `>` prefix).
  *   absent  — no ❯ anywhere. The CLI has not rendered a composer yet (still
- *             booting), or the screen is something else entirely. We have NO
- *             evidence either way, so this must never count as delivery.
+ *             booting), or the screen is something else entirely. Codex uses
+ *             a `›` glyph for both its transcript and composer, so it also
+ *             lands here deliberately. We have NO evidence either way, so
+ *             this must never count as delivery by itself.
  *
  * Menus/dialogs also use ❯ as a selection caret — an enter retry there picks
  * the default option, which the readiness failure classifier already treats
@@ -56,11 +51,11 @@ export interface ConfirmSubmissionIO {
   capture(lines: number): Promise<string>;
   /** send a bare enter with no daemon-appended enter of its own */
   sendEnter(): Promise<void>;
+  /** Optional caller-scoped durable proof that this exact submission landed. */
+  hasAcceptedSubmissionEvidence?(capture: string): boolean | Promise<boolean>;
   /**
-   * Optional caller-scoped durable proof that the submitted work already ran.
-   * This must be stronger than screen shape (for example, an exact run-owned
-   * completion event), because an execute-and-exit CLI has no composer left to
-   * render after accepting the assignment.
+   * Backwards-compatible name for callers that prove a durable execution
+   * handoff. New callers should use hasAcceptedSubmissionEvidence.
    */
   hasAcceptedExecutionEvidence?(capture: string): boolean | Promise<boolean>;
 }
@@ -113,9 +108,10 @@ export async function confirmComposerSubmission(
     // booting-CLI false positive.
     const state = output === null ? null : composerState(output);
     if (state === "empty") return true;
-    if (io.hasAcceptedExecutionEvidence) {
+    const hasAcceptedEvidence = io.hasAcceptedSubmissionEvidence || io.hasAcceptedExecutionEvidence;
+    if (hasAcceptedEvidence) {
       const evidence = await awaitBeforeDeadline(
-        () => Promise.resolve(io.hasAcceptedExecutionEvidence!(output ?? "")),
+        () => Promise.resolve(hasAcceptedEvidence(output ?? "")),
         deadline,
       ).catch(() => false);
       if (evidence === SUBMISSION_DEADLINE_EXCEEDED) return false;

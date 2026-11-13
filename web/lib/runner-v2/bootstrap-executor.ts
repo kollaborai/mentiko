@@ -20,6 +20,12 @@ import {
 import { classifyCliReadiness, type CliReadinessResult } from "@/lib/runner-v2/readiness-policy";
 import { composerState, confirmComposerSubmission } from "@/lib/runner-v2/composer-submit";
 import {
+  findTranscriptJsonlByInstructionPath,
+  scoreTranscriptIdentity,
+  transcriptContainsUserText,
+  transcriptRootFromProfile,
+} from "@/lib/runner-v2/agent-transcript";
+import {
   captureAssertsAgentComplete,
   findCompletionEventFile,
 } from "@/lib/runner-v2/monitor-io";
@@ -485,12 +491,10 @@ export async function executeLocalBootstrap(
       pointer: executionPlan.instructionPointer,
     });
     if (submission.delivered) {
-      // no trailing \r: the pointer is multi-line, so the CLI receives it as a
-      // bracketed paste and an embedded enter is swallowed into the paste body.
-      // The pty daemon's non-raw send appends its own enter after the paste
-      // settle delay; confirmInstructionSubmission then verifies the composer
-      // actually accepted it (a CLI still running boot checks — e.g. MCP auth —
-      // renders the composer but drops enters) and retries bare enters.
+      // No trailing \r: pty.sendKeys appends one itself. The multi-line pointer
+      // is sent as a paste, and Codex may consume that return while processing
+      // the paste. confirmInstructionSubmission checks durable transcript
+      // evidence as well as the composer and retries bare enters when needed.
       await executor.sendKeys(executionPlan.sessionName, executionPlan.instructionPointer);
       const confirmed = await confirmInstructionSubmission(executionPlan, executor);
       if (confirmed) {
@@ -1240,8 +1244,9 @@ async function confirmInstructionSubmission(
     sendEnter: () => executor.sendRaw
       ? executor.sendRaw(plan.sessionName, "\r")
       : executor.sendKeys(plan.sessionName, ""),
-    hasAcceptedExecutionEvidence: (capture) => (
-      (composerState(capture) === "absent" && captureAssertsAgentComplete(capture))
+    hasAcceptedSubmissionEvidence: (capture) => (
+      instructionPointerRecorded(plan)
+      || (composerState(capture) === "absent" && captureAssertsAgentComplete(capture))
       || Boolean(findCompletionEventFile({
         eventsDir: plan.eventsDir,
         runId: plan.monitorSpec.runId,
@@ -1256,6 +1261,34 @@ async function confirmInstructionSubmission(
     maxEnterRetries: 4,
     captureLines: 60,
   });
+}
+
+/**
+ * Codex uses `›` for both its transcript and composer, so the rendered PTY
+ * cannot prove that the pointer left the input box. Its durable rollout does:
+ * the instruction path is unique to this attempt and is recorded in the user
+ * message when Codex accepts the pointer. Keep this lookup independent of the
+ * screen glyphs and fail closed on zero or multiple matching transcripts.
+ */
+function instructionPointerRecorded(plan: AgentBootstrapPlan): boolean {
+  const root = transcriptRootFromProfile(plan.runContextExports.MENTIKO_AGENT_PROFILE_PATH);
+  if (!root) return false;
+  const runDir = plan.runContextExports.MENTIKO_RUN_DIR || dirname(plan.artifactsDir);
+  const attemptId = plan.runContextExports.MENTIKO_AGENT_ATTEMPT_ID;
+  const attempt = attemptId
+    ? readRunnerV2AttemptState(join(runDir, "run.json")).attempts.find((candidate) => candidate.id === attemptId)
+    : undefined;
+  const identity = {
+    instructionPath: plan.instructionPath,
+    workspacePath: plan.projectRoot,
+    ...(attempt?.createdAt ? { attemptStartedAt: attempt.createdAt } : {}),
+  };
+  const candidates = findTranscriptJsonlByInstructionPath(
+    root,
+    identity,
+    4,
+  ).filter((path) => scoreTranscriptIdentity(path, undefined, identity) !== null);
+  return candidates.length === 1 && transcriptContainsUserText(candidates[0], plan.instructionPath);
 }
 
 async function startMonitorSession(
