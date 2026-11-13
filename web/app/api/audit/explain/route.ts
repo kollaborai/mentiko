@@ -39,6 +39,9 @@ interface AuditEntry {
   timestamp?: string;
   event_type?: string;
   description?: string;
+  metadata?: {
+    run_id?: unknown;
+  };
   [key: string]: unknown;
 }
 
@@ -105,7 +108,9 @@ function loadAuditForRun(namespaceId: string, runId: string): AuditEntry[] {
           return null;
         }
       })
-      .filter((e): e is AuditEntry => e !== null && String(e.run_id || e.id || "") === runId);
+      .filter((e): e is AuditEntry =>
+        e !== null && typeof e.metadata?.run_id === "string" && e.metadata.run_id === runId
+      );
   } catch {
     return [];
   }
