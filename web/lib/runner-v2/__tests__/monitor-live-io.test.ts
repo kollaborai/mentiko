@@ -170,6 +170,27 @@ describe("monitor-v2 live IO", () => {
     }
   });
 
+  it("does not hold the monitor loop open when no transcript or composer can confirm a nudge", async () => {
+    const f = fixture();
+    ptyMock.capture.mockResolvedValue("stub echo-stall ready for agents");
+    ptyMock.sendKeys.mockResolvedValue(undefined);
+    ptyMock.sendRaw.mockResolvedValue(undefined);
+    const logSpy = jest.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      await liveIo(f, {
+        MENTIKO_MONITOR_NUDGE_SUBMIT_POLL_MS: "1",
+        MENTIKO_MONITOR_NUDGE_SUBMIT_DEADLINE_MS: "100",
+      }).sendNudge("writer-run-123", "continue only the current assigned task");
+
+      expect(ptyMock.sendKeys).toHaveBeenCalledTimes(1);
+      expect(ptyMock.sendRaw).not.toHaveBeenCalled();
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("was not confirmed submitted"));
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
   it("confirms a Codex nudge when a matching user message is appended after the send", async () => {
     const f = fixture();
     const transcript = join(f.root, "codex-transcript.jsonl");

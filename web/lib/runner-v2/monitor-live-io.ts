@@ -214,10 +214,14 @@ export function createLiveMonitorIO(context: LiveMonitorContext): MonitorDriverI
         // Codex can keep the `›` composer visually indistinguishable from its
         // transcript while its paste-burst window is still swallowing Enter.
         // Keep retrying the bare Enter for the whole confirmation deadline;
-        // the durable user message is the stopping condition.
+        // the durable user message is the stopping condition. When no
+        // attempt-scoped transcript is available, an absent composer cannot
+        // produce stronger evidence; stop this confirmation promptly so the
+        // monitor can keep evaluating its durable nudge budget.
         pollMs: positiveInt(context.env.MENTIKO_MONITOR_NUDGE_SUBMIT_POLL_MS, 1_500),
         deadlineMs: positiveInt(context.env.MENTIKO_MONITOR_NUDGE_SUBMIT_DEADLINE_MS, 12_000),
         maxEnterRetries: Number.POSITIVE_INFINITY,
+        stopOnAbsentComposer: !transcriptPath,
       });
       if (!submitted) {
         // Not terminal: the next tick re-evaluates and may nudge again. Log it
