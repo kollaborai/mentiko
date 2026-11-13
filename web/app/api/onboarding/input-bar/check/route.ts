@@ -17,7 +17,7 @@ import {
 // message, so it doubles as the "one bounded, harmless connection check"
 // the spec requires — the same signal floating-kollabor-bar.tsx's own
 // enginePing() uses to decide its "connected" vs "engine offline" state.
-const ENGINE_BASE_URL = process.env.KOLLABOR_ENGINE_URL || "http://127.0.0.1:7433";
+const ENGINE_BASE_URL = process.env.KOLLABOR_ENGINE_URL || "http://127.0.0.1:7443";
 const PROBE_TIMEOUT_MS = 5_000;
 
 async function probeInputBarBackend(): Promise<{ reachable: boolean; reason: string }> {

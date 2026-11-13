@@ -1,5 +1,5 @@
 import { readFile } from "fs/promises";
-import { homedir } from "os";
+import { kollabConfigDir } from "@/lib/kollab-config-dir";
 import { join } from "path";
 import { NextRequest, NextResponse } from "next/server";
 import { checkAuth } from "@/lib/auth/api-auth";
@@ -10,14 +10,14 @@ import { randomBytes } from "crypto";
 export const dynamic = "force-dynamic";
 
 const ENGINE_BASE_URL =
-  process.env.KOLLABOR_ENGINE_URL || "http://127.0.0.1:7433";
+  process.env.KOLLABOR_ENGINE_URL || "http://127.0.0.1:7443";
 
 type RouteContext = {
   params: Promise<{ path?: string[] }>;
 };
 
 async function readEngineToken(): Promise<string> {
-  const path = join(homedir(), ".kollab", "engine.token");
+  const path = join(kollabConfigDir(), "engine.token");
   const token = (await readFile(path, "utf8")).trim();
   if (!token) throw new Error("engine.token is empty");
   return token;
