@@ -11,6 +11,7 @@ import type { AgentProfileReadinessConfig } from "@/lib/types";
 export interface BootstrapChainAgent {
   id?: string;
   name?: string;
+  cli?: string;
   role?: string;
   prompt?: string;
   emits?: string;
@@ -22,6 +23,7 @@ export interface BootstrapChainAgent {
 }
 
 export interface BootstrapChainConfig {
+  cli?: string;
   project_root?: string;
   session_prefix?: string;
   monitor?: boolean;
@@ -67,6 +69,7 @@ export interface AgentBootstrapMonitorSpec {
 export interface AgentBootstrapPlan {
   agentId: string;
   agentName: string;
+  cli: string;
   sessionPrefix: string;
   sessionName: string;
   monitorSessionName: string;
@@ -101,6 +104,7 @@ export function buildAgentBootstrapPlan(input: AgentBootstrapPlanInput): AgentBo
   // record made mixed shell/typed runs invisible to the live stream reader.
   const stateDir = input.env?.STATE_DIR || config.stateDir;
   const sessionPrefix = resolveSessionPrefix(chain, agent);
+  const cli = resolveAgentCli(agent, chain, input.env);
   const projectName = basename(sourceWorkspacePath) || "workspace";
   const sessionName = `${projectName}-${sessionPrefix}-${input.runId}`;
   const statePath = runnerAgentStatePath(stateDir, sessionPrefix, input.runId);
@@ -186,7 +190,8 @@ export function buildAgentBootstrapPlan(input: AgentBootstrapPlanInput): AgentBo
     runContextExports,
     instructionPath,
     instructionPointer,
-    localStartCommand: buildLocalStartCommand(projectRoot, runContextExports, profile.path, input.env),
+    cli,
+    localStartCommand: buildLocalStartCommand(projectRoot, runContextExports, profile.path, cli),
     monitorSpec,
     monitorCommand: buildMonitorCommand({
       sessionName,
@@ -226,7 +231,7 @@ export function retargetAgentBootstrapPlan(
       projectRoot,
       runContextExports,
       plan.profilePath,
-      env,
+      plan.cli || resolveAgentCli({}, {}, env),
     ),
     monitorCommand: buildMonitorCommand({
       sessionName: plan.sessionName,
@@ -328,6 +333,17 @@ function resolveSessionPrefix(chain: BootstrapChainFile, agent: BootstrapChainAg
   return chain.config?.session_prefix ? `${chain.config.session_prefix}-${agent.id}` : agent.id || "agent";
 }
 
+function resolveAgentCli(
+  agent: BootstrapChainAgent,
+  chain: BootstrapChainFile,
+  env?: Record<string, string | undefined>,
+): string {
+  for (const candidate of [agent.cli, chain.config?.cli, env?.MENTIKO_CLI]) {
+    if (typeof candidate === "string" && candidate.trim()) return candidate;
+  }
+  return "claude";
+}
+
 interface ProfileResolutionInput {
   chain: BootstrapChainFile;
   agent: BootstrapChainAgent;
@@ -376,9 +392,8 @@ function buildLocalStartCommand(
   projectRoot: string,
   runContextExports: Record<string, string>,
   profilePath: string | undefined,
-  env: Record<string, string | undefined> | undefined,
+  cli: string,
 ): string {
-  const cli = env?.MENTIKO_CLI || "claude";
   const agentProfileCli = join(config.codeRoot, "lib", "runner-agent-profile.js");
   const profileCommand = profilePath
     ? `eval "$(node ${shellEscape(agentProfileCli)} command --profile-path ${shellEscape(profilePath)} --interactive true --namespace-id ${shellEscape(runContextExports.NAMESPACE_ID)} --org-id ${shellEscape(runContextExports.ORG_ID)})"`

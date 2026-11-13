@@ -9,6 +9,7 @@ import {
   resolveRunnerV2LaunchEnv,
 } from "@/lib/runner-v2/bootstrap-executor";
 import { startLaunch } from "@/lib/runner-v2/adapters";
+import { buildAgentBootstrapPlan } from "@/lib/runner-v2/agent-bootstrap-plan";
 import { authorizeTypedRelaunch } from "@/lib/runner-v2/error-handling";
 import { claimRoutedLaunchJob, persistRoutedLaunchJob } from "@/lib/runner-v2/launch-job";
 import { transitionAgentAttempt } from "@/lib/runner-v2/agent-attempt";
@@ -43,6 +44,7 @@ function plan(root: string): AgentBootstrapPlan {
   return {
     agentId: "writer",
     agentName: "Writer",
+    cli: "claude",
     sessionPrefix: "writer",
     sessionName: "workspace-writer-run-1",
     monitorSessionName: "monitor-workspace-writer-run-1",
@@ -281,7 +283,15 @@ describe("runner-v2 bootstrap executor", () => {
 
   it("creates local pty session and sends start script plus existing instruction pointer", async () => {
     const root = tempDir();
-    writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
+    const chainPath = join(root, "chain.json");
+    const workspacePath = join(root, "workspace");
+    const profilesDir = join(root, "profiles");
+    mkdirSync(workspacePath, { recursive: true });
+    mkdirSync(profilesDir, { recursive: true });
+    writeFileSync(chainPath, JSON.stringify({
+      config: { cli: "chain-cli", project_root: workspacePath },
+      agents: [{ id: "writer", name: "Writer", cli: "codex", emits: "done" }],
+    }));
     const calls: Array<{ op: string; args: unknown[] }> = [];
     let instructionPointerSent = false;
     const executor = {
@@ -299,7 +309,20 @@ describe("runner-v2 bootstrap executor", () => {
     };
     const runJsonPath = seedRunJson(root);
 
-    const typedPlan = plan(root);
+    const typedPlan = buildAgentBootstrapPlan({
+      chainPath,
+      runDir: root,
+      runId: "run-1",
+      agentId: "writer",
+      workspacePath,
+      env: {
+        ...context(root).env,
+        AGENT_PROFILES_DIR: profilesDir,
+        EVENTS_DIR: join(root, "events"),
+        STATE_DIR: join(root, "state"),
+        MENTIKO_CLI: "environment-cli",
+      },
+    });
     typedPlan.runContextExports.TASK_ID = "TASK-12";
     typedPlan.runContextExports.TASK_CONTEXT = "TASK ID: TASK-12\nTITLE: Typed task";
     await executeLocalBootstrap(typedPlan, {
@@ -340,7 +363,7 @@ describe("runner-v2 bootstrap executor", () => {
     expect(instructions).not.toContain("ensure-event-file");
     expect(instructions).not.toContain("monitor-chain-agent");
     const startScript = readFileSync(join(root, "artifacts", "writer-start.sh"), "utf8");
-    expect(startScript).toContain("runner-agent-profile.js");
+    expect(startScript).toContain("exec 'codex'");
     expect(startScript).not.toContain("SECRET_THAT_MUST_NOT_BE_IN_SCRIPT");
     expect(startScript).not.toContain("chain-runner.sh");
     expect(calls.map((call) => call.op)).toEqual(["remove", "spawn", "sendKeys", "sendKeys", "remove", "spawn"]);
@@ -387,15 +410,18 @@ describe("runner-v2 bootstrap executor", () => {
       sessions: ["workspace-writer-run-1"],
       agents: [{ id: "writer", status: "running", session: "workspace-writer-run-1" }],
     });
-    expect(executor.spawn).toHaveBeenLastCalledWith(
-      "monitor-workspace-writer-run-1",
-      bootstrapShell,
-      ["-c", "export MENTIKO_AGENT_ATTEMPT_ID='run-1:writer:1'; monitor-chain-agent workspace-writer-run-1"],
-      expect.objectContaining({
-        cwd: join(root, "workspace"),
-        env: expect.objectContaining({ MENTIKO_AGENT_ATTEMPT_ID: "run-1:writer:1" }),
-      }),
-    );
+    const monitorSpawn = executor.spawn.mock.calls[executor.spawn.mock.calls.length - 1];
+    const monitorShellArgs = monitorSpawn[2] as string[];
+    expect(monitorSpawn[0]).toBe("monitor-workspace-writer-run-1");
+    expect(monitorSpawn[1]).toBe(bootstrapShell);
+    expect(monitorShellArgs[0]).toBe("-c");
+    expect(monitorShellArgs[1]).toContain("export MENTIKO_AGENT_ATTEMPT_ID='run-1:writer:1'");
+    expect(monitorShellArgs[1]).toContain("exec node ");
+    expect(monitorShellArgs[1]).toContain("monitor-v2.js");
+    expect(monitorSpawn[3]).toMatchObject({
+      cwd: join(root, "workspace"),
+      env: expect.objectContaining({ MENTIKO_AGENT_ATTEMPT_ID: "run-1:writer:1" }),
+    });
   });
 
   it("launches a Git-backed agent in its run-owned worktree with baseline evidence", async () => {
