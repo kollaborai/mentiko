@@ -1127,7 +1127,11 @@ describe("runner-v2 completion entrypoint", () => {
     });
 
     const runJsonPath = join(runDir, "run.json");
-    const run = createRunRecord({ chainName: "Chain Recommendation", goal: "recommend" });
+    const run = createRunRecord({
+      chainName: "Chain Recommendation",
+      goal: "recommend",
+      now: new Date("2026-06-25T00:00:00.000Z"),
+    });
     updateRunJson(runJsonPath, () => ({
       ...run,
       id: "run-123",
@@ -1139,12 +1143,15 @@ describe("runner-v2 completion entrypoint", () => {
       agents: [{ id: "chain-recommender", name: "Chain Recommender", session: "chain-recommender-run-123", status: "running" }],
       sessions: ["chain-recommender-run-123"],
     }));
-    writeJson(join(artifactsDir, "generation-result.json"), {
+    const generationResultPath = join(artifactsDir, "generation-result.json");
+    writeJson(generationResultPath, {
       recommendation: {
         action: "no_action_needed",
         reasoning: "Already built.",
       },
     });
+    const artifactTime = new Date("2026-06-26T00:00:01.000Z");
+    utimesSync(generationResultPath, artifactTime, artifactTime);
 
     const result = runRunnerV2CompletionEntrypoint({
       sessionName: "chain-recommender-run-123",
