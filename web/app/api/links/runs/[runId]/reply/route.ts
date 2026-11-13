@@ -12,6 +12,7 @@ import {
   resolvePeerReplyPath,
   validateLinkRunId,
 } from "@/lib/links/link-run-runtime";
+import { updateRunJsonRecord } from "@/lib/runner-v2/run-state";
 
 export const dynamic = "force-dynamic";
 
@@ -62,14 +63,18 @@ export const POST = withErrorHandling(async (
     writeFileSync(liveReplyPath, reply);
   }
 
-  // update last escalation with reply
-  if (run.escalations?.length > 0) {
-    const last = run.escalations[run.escalations.length - 1];
-    last.human_reply = reply;
-    last.replied_at = new Date().toISOString();
-  }
-  run.status = "running";
-  writeFileSync(runPath, JSON.stringify(run, null, 2));
+  updateRunJsonRecord(runPath, (current) => {
+    if (!current) throw new NotFound("Run not found");
+    if (current.type !== "link") throw new BadRequest("Not a link run");
+    const escalations = Array.isArray(current.escalations) ? current.escalations : [];
+    const updatedEscalations = escalations.map((escalation, index) => {
+      if (index !== escalations.length - 1 || !escalation || typeof escalation !== "object" || Array.isArray(escalation)) {
+        return escalation;
+      }
+      return { ...(escalation as Record<string, unknown>), human_reply: reply, replied_at: new Date().toISOString() };
+    });
+    return { ...current, escalations: updatedEscalations, status: "running" };
+  });
 
   return apiSuccess({ ok: true });
 });

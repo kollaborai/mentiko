@@ -23,7 +23,7 @@ import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
 import { hasInternalAuth } from "@/lib/auth/internal-api-auth";
 import { Unauthorized, NotFound, Conflict } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { withRunJsonLock, writeRunJsonAtomic } from "@/lib/runs/run-json-lock";
+import { updateRunJsonRecord } from "@/lib/runner-v2/run-state";
 
 export const dynamic = "force-dynamic";
 
@@ -69,35 +69,29 @@ export const POST = withErrorHandling(async (
     ? body.status
     : undefined;
 
-  // bug #7: the heartbeat route is one of THREE independent run.json writers (the
-  // others are the bash completion helpers in lib/run-lib.sh and the watchdog). The
-  // full read-modify-write below runs under the shared mkdir lock so a concurrent
-  // agent-status or watchdog write cannot lost-update this heartbeat (and vice
-  // versa). The run.json read MUST happen inside the lock so we mutate the latest
-  // committed state; the write is atomic (temp+rename) so readers never see a partial
-  // file. A `Conflict` thrown inside the locked section still releases the lock
-  // (withRunJsonLock releases in finally).
-  withRunJsonLock(runJsonPath, () => {
-    if (!existsSync(runJsonPath)) {
-      throw new NotFound("Run", runId);
-    }
-    const run = JSON.parse(readFileSync(runJsonPath, "utf-8"));
-
+  updateRunJsonRecord(runJsonPath, (current) => {
+    if (!current) throw new NotFound("Run", runId);
     // reject heartbeats for stopped/completed runs
     // orphan heartbeat loops from dead chain-runners keep firing and
     // overwrite agent statuses that the reconciler already fixed
-    if (run.status !== "running" && run.status !== "pending") {
-      throw new Conflict(`run is ${run.status}`, { rejected: true, reason: `run is ${run.status}` });
+    if (current.status !== "running" && current.status !== "pending") {
+      throw new Conflict(`run is ${String(current.status)}`, { rejected: true, reason: `run is ${String(current.status)}` });
     }
 
     // update the agent's heartbeat in the agents array
-    if (Array.isArray(run.agents)) {
-      const agentIdx = run.agents.findIndex(
-        (a: { id: string }) => a.id === agentId
+    const agents = Array.isArray(current.agents)
+      ? current.agents.map((agent) => agent && typeof agent === "object" && !Array.isArray(agent)
+        ? { ...(agent as Record<string, unknown>) }
+        : agent)
+      : undefined;
+    if (agents) {
+      const agentIdx = agents.findIndex(
+        (agent) => !!agent && typeof agent === "object" && !Array.isArray(agent)
+          && (agent as Record<string, unknown>).id === agentId,
       );
       if (agentIdx === -1) {
         // agent not in run yet — create a minimal entry
-        run.agents.push({
+        agents.push({
           id: agentId,
           status: safeStatus || "running",
           session: "",
@@ -106,20 +100,22 @@ export const POST = withErrorHandling(async (
           ...(body.round != null ? { round: body.round } : {}),
         });
       } else {
-        run.agents[agentIdx].lastHeartbeat = now;
-        if (safeStatus) run.agents[agentIdx].status = safeStatus;
-        if (safeMessage) run.agents[agentIdx].lastMessage = safeMessage;
-        if (body.round != null) run.agents[agentIdx].round = body.round;
+        const agent = agents[agentIdx] as Record<string, unknown>;
+        agent.lastHeartbeat = now;
+        if (safeStatus) agent.status = safeStatus;
+        if (safeMessage) agent.lastMessage = safeMessage;
+        if (body.round != null) agent.round = body.round;
       }
     }
 
+    const run: Record<string, unknown> = { ...current, ...(agents ? { agents } : {}) };
     if (safeStatus === "blocked") {
       run.status = "blocked";
       run.blockedAt = run.blockedAt || now;
       if (safeMessage) run.blockedReason = safeMessage;
     }
 
-    writeRunJsonAtomic(runJsonPath, run);
+    return run;
   });
 
   return apiSuccess({

@@ -145,4 +145,27 @@ describe("typed Run Record operations", () => {
     expect(artifacts.filter((item) => typeof item === "object" && item !== null
       && (item as { type?: string }).type === "run-summary")).toHaveLength(1);
   });
+
+  it("does not turn a completed run into a failed outcome for an attribution-only blocked summary", () => {
+    const { runJsonPath } = fixture({
+      status: "completed",
+      completed: "2026-07-15T00:10:00.000Z",
+      agents: [{ id: "reviewer", name: "Reviewer", session: "reviewer-1", status: "complete" }],
+    });
+    const artifactsDir = join(runJsonPath, "..", "artifacts");
+    mkdirSync(artifactsDir, { recursive: true });
+    writeFileSync(join(artifactsDir, "reviewer-summary.json"), JSON.stringify({
+      status: "blocked",
+      executiveSummary: "Reviewed and approved; workspace attribution unavailable because this is not a git repository.",
+    }));
+
+    const { summary } = writeRunSummaryArtifact(runJsonPath, new Date("2026-07-15T00:11:00Z"));
+
+    expect(summary).toMatchObject({
+      status: "completed",
+      outcome: "complete",
+      decision_required: false,
+      recommendation: "move_forward",
+    });
+  });
 });

@@ -8,6 +8,7 @@ import { checkAuth } from "@/lib/auth/api-auth";
 import { writeLog } from "@/lib/system/system-logger";
 import config from "@/lib/config";
 import { pty } from "@/lib/pty/pty-client";
+import { updateRunJson } from "@/lib/runner-v2/run-state";
 
 export const dynamic = "force-dynamic";
 
@@ -53,12 +54,18 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
         await pkillPattern(`AGENT_CHAIN_RUN_ID=${dir}`);
 
         // mark as stopped
-        run.status = "stopped";
-        run.completed = new Date().toISOString();
-        run.stop_reason = "emergency_stop";
-        run.statusReason = { actor: "user", reason: "emergency stop-all" };
-        writeFileSync(runJsonPath, JSON.stringify(run, null, 2));
-        stopped.push(dir);
+        const updatedRun = updateRunJson(runJsonPath, (current) => {
+          if (!current) throw new Error(`run.json not found: ${runJsonPath}`);
+          if (current.status !== "running" && current.status !== "pending") return current;
+          return {
+            ...current,
+            status: "stopped",
+            completed: new Date().toISOString(),
+            stop_reason: "emergency_stop",
+            statusReason: { actor: "user", reason: "emergency stop-all" },
+          };
+        });
+        if (updatedRun.status === "stopped") stopped.push(dir);
       } catch (e) {
         errors.push(`${dir}: ${e instanceof Error ? e.message : String(e)}`);
       }

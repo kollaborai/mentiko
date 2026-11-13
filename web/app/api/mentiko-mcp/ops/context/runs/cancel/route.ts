@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireOpsAuth, requireOpsPermission } from "@/lib/ai-engine/mentiko-mcp-ops-auth";
-import { existsSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { taskMergeMeta } from "@/lib/tasks/task-store";
 import { writeLog } from "@/lib/system/system-logger";
@@ -9,6 +9,7 @@ import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
 import { checkRunAccessForUser, normalizeRunId } from "@/lib/auth/run-acl";
 import { isNonExecutionRun } from "@/lib/runs/run-provenance";
 import type { RunStatusReason } from "@/lib/runs/run-record";
+import { updateRunJsonRecord } from "@/lib/runner-v2/run-state";
 
 export const dynamic = "force-dynamic";
 
@@ -66,22 +67,36 @@ export async function POST(req: Request) {
     }
   }
 
-  run.status = "cancelled";
-  run.completed = new Date().toISOString();
-  run.statusReason = { actor: "user", reason: "cancelled via mentiko MCP ops" };
-  for (const agent of run.agents || []) {
-    if (agent.status === "running" || agent.status === "pending") {
-      agent.status = "cancelled";
-      agent.statusReason = { actor: "user", reason: "run cancelled via mentiko MCP ops" };
-    }
-  }
+  let cancelled = false;
+  const updatedRun = updateRunJsonRecord(metaPath, (current) => {
+    if (!current) throw new Error(`run.json not found: ${safeRunId}`);
+    if (current.status !== "running" && current.status !== "pending") return current;
+    cancelled = true;
+    const runReason = { actor: "user", reason: "cancelled via mentiko MCP ops" };
+    const agentReason = { actor: "user", reason: "run cancelled via mentiko MCP ops" };
+    return {
+      ...current,
+      status: "cancelled",
+      completed: new Date().toISOString(),
+      statusReason: runReason,
+      agents: Array.isArray(current.agents)
+        ? current.agents.map((agent) => {
+          if (!agent || typeof agent !== "object" || Array.isArray(agent)) return agent;
+          const record = agent as Record<string, unknown>;
+          if (record.status !== "running" && record.status !== "pending") return record;
+          return { ...record, status: "cancelled", statusReason: agentReason };
+        })
+        : current.agents,
+    };
+  });
+  if (!cancelled) return new NextResponse("Run is not active", { status: 409 });
 
-  writeFileSync(metaPath, JSON.stringify(run, null, 2));
-  writeLog(ctx.namespaceId, ctx.orgId, "warn", "mcp-ops", `run ${safeRunId} cancelled`, `chain: ${run.chain || "unknown"}`);
+  const finalRun = updatedRun as RunObject;
+  writeLog(ctx.namespaceId, ctx.orgId, "warn", "mcp-ops", `run ${safeRunId} cancelled`, `chain: ${finalRun.chain || "unknown"}`);
 
-  if (run.taskId && run.id && !isNonExecutionRun(run)) {
+  if (finalRun.taskId && finalRun.id && !isNonExecutionRun(finalRun)) {
     try {
-      taskMergeMeta(ctx.orgId, run.taskId, { last_run_status: "cancelled", last_run_id: run.id }, ctx.namespaceId);
+      taskMergeMeta(ctx.orgId, finalRun.taskId, { last_run_status: "cancelled", last_run_id: finalRun.id }, ctx.namespaceId);
     } catch {
       // best effort
     }

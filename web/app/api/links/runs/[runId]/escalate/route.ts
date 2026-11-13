@@ -11,6 +11,7 @@ import { buildChildEnv } from "@/lib/runs/child-env";
 import { resolveLinkRunPaths, validateLinkRunId } from "@/lib/links/link-run-runtime";
 import { hasInternalAuth } from "@/lib/auth/internal-api-auth";
 import { LINK_ESCALATION_FALLBACK_MODEL } from "@/lib/agents/agent-provider-catalog";
+import { updateRunJsonRecord } from "@/lib/runner-v2/run-state";
 
 export const dynamic = "force-dynamic";
 
@@ -81,11 +82,12 @@ export const POST = withErrorHandling(async (
     created_at: new Date().toISOString(),
   };
 
-  // append to run.json escalations
-  if (!run.escalations) run.escalations = [];
-  run.escalations.push(escalation);
-  run.status = "stalled";
-  writeFileSync(runPath, JSON.stringify(run, null, 2));
+  updateRunJsonRecord(runPath, (current) => {
+    if (!current) throw new NotFound("Run not found");
+    if (current.type !== "link") throw new BadRequest("Not a link run");
+    const escalations = Array.isArray(current.escalations) ? current.escalations : [];
+    return { ...current, escalations: [...escalations, escalation], status: "stalled" };
+  });
 
   // create escalation dir for reply file
   mkdirSync(escDir, { recursive: true });

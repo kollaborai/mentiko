@@ -16,6 +16,7 @@ import {
   type RunStatusReason,
 } from "@/lib/runs/run-record";
 import { clearPendingHandoffAgent } from "@/lib/runner-v2/handoff-liveness";
+import { clearIdleIncidentOnActivity } from "@/lib/runs/idle-incident";
 
 export type { AgentStatus, RunAgentRecord, RunRecord, RunStatus, RunStatusReason } from "@/lib/runs/run-record";
 
@@ -116,7 +117,9 @@ export function updateRunJson(
 ): RunRecord {
   return withRunJsonLock(runJsonPath, () => {
     const current = existsSync(runJsonPath) ? readRunJson(runJsonPath) : undefined;
-    const next = update(current);
+    const next = clearIdleIncidentOnActivity(current, update(current));
+    // An idle incident is invalidated by any persisted execution transition,
+    // even when that transition starts and finishes between watchdog scans.
     assertRunRecord(next);
     if (current && next.id !== current.id) {
       throw new Error(`run.json mutation cannot change id from ${current.id} to ${next.id}`);
@@ -129,6 +132,38 @@ export function updateRunJson(
     onMutation?.({ before: current, after: readRunJson(runJsonPath) });
     return next;
   }, onLockTimeout);
+}
+
+/**
+ * Mutate a legacy or mixed-schema run record under the same lock and idle
+ * incident invalidation used by typed run writes. Prefer updateRunJson when
+ * the caller requires the current RunRecord schema to validate.
+ */
+export function updateRunJsonRecord(
+  runJsonPath: string,
+  update: (run: Record<string, unknown> | undefined) => Record<string, unknown>,
+): Record<string, unknown> {
+  return withRunJsonLock(runJsonPath, () => {
+    let current: Record<string, unknown> | undefined;
+    if (existsSync(runJsonPath)) {
+      const parsed: unknown = JSON.parse(readFileSync(runJsonPath, "utf-8"));
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error(`Invalid run.json object: ${runJsonPath}`);
+      }
+      current = parsed as Record<string, unknown>;
+    }
+    const next = clearIdleIncidentOnActivity(
+      current as RunRecord | undefined,
+      update(current) as unknown as RunRecord,
+    ) as Record<string, unknown>;
+    if (current && current.id !== next.id) {
+      throw new Error(`run.json mutation cannot change id from ${String(current.id)} to ${String(next.id)}`);
+    }
+    if (current && next === current) return current;
+    if (current) writeRunJsonAtomic(runJsonPath, next);
+    else writeRunJsonExclusive(runJsonPath, next);
+    return next;
+  });
 }
 
 export function updateRunStatus(

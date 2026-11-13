@@ -6,7 +6,7 @@ import { isDeepStrictEqual } from "util";
 import { runQualityGateEventArtifact } from "@/lib/event-artifacts/event-artifact-runner";
 import { applyTypedExecutorPlan, GenerationImportError, killAgentSessions, readTypedRetryAttempt, type AdapterResult } from "@/lib/runner-v2/adapters";
 import { adoptAgentAttemptForCompletion, isTerminalAgentAttemptPhase, markAgentAttemptCompletedFromGeneration, readRunnerV2AttemptState, releaseAgentCapacitySlot, resolveAgentAttemptForCompletion, transitionAgentAttempt, type AgentAttemptRecord } from "@/lib/runner-v2/agent-attempt";
-import { agentOwnsEvent } from "@/lib/runner-v2/completion";
+import { agentOwnsEvent, findCompletionEvent } from "@/lib/runner-v2/completion";
 import { runCompletionPipeline, type CompletionPipelineResult } from "@/lib/runner-v2/completion-pipeline";
 import type { AgentLivenessInput, CompletionRecoveryEvidence } from "@/lib/runner-v2/completion-runner";
 import { readPendingRunnerEventTransactions, scanRunnerEventFiles } from "@/lib/runner-v2/event-lifecycle";
@@ -284,6 +284,12 @@ export function runRunnerV2CompletionEntrypoint(
   // when a decision deliverable is present skip the gate and let the pipeline's
   // decision-terminal path complete it. Reused as `decision:` in the pipeline.
   const decisionPlan = decisionCompletionPlan(run, runDir, agent.id);
+  const completionEventAccepted = findCompletionEvent({
+    agent,
+    runId,
+    events,
+    allAgentIds: chain.agents.map((candidate) => candidate.id),
+  }).matched;
   const qualityGate = decisionPlan ? null : maybeHandleQualityGateFailure({
     run,
     runDir,
@@ -294,6 +300,7 @@ export function runRunnerV2CompletionEntrypoint(
     orgId: env.ORG_ID || "default",
     now: input.now,
     dryRun: input.dryRun,
+    completionEventAccepted,
     onRunMutation,
     attemptGuard,
     });
@@ -1034,6 +1041,7 @@ function maybeHandleQualityGateFailure(input: {
   orgId: string;
   now?: Date;
   dryRun?: boolean;
+  completionEventAccepted?: boolean;
   onRunMutation?: RunMutationObserver;
   attemptGuard: RunAgentAttemptGuard;
 }) {
@@ -1048,6 +1056,7 @@ function maybeHandleQualityGateFailure(input: {
       role: stringValue((input.agent as unknown as Record<string, unknown>).role),
     },
     summary,
+    completionEventAccepted: input.completionEventAccepted,
     summaryParseError: summaryArtifact.parseError,
   });
   if (result.passed) return null;

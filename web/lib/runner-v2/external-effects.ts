@@ -16,6 +16,8 @@ import {
   taskUpdate,
 } from "@/lib/tasks/task-store";
 import config from "@/lib/config";
+import { readRunJson } from "@/lib/runner-v2/run-state";
+import { withRunJsonLock } from "@/lib/runs/run-json-lock";
 import type { AdapterOperation } from "@/lib/runner-v2/adapters";
 import {
   claimProcessIdentity,
@@ -446,6 +448,24 @@ async function dispatchOperation(
 ): Promise<{ status: "dispatched" | "skipped"; reason?: string }> {
   if (operation.type === "notification") {
     const notification = notificationFromOperation(operation);
+    if (operation.event === "run-idle-incident") {
+      if (!operation.incidentRunPath || !operation.incidentId
+        || basename(operation.incidentRunPath) !== "run.json"
+        || basename(dirname(operation.incidentRunPath)) !== operation.runId) {
+        throw new Error("idle incident notification has invalid run identity");
+      }
+      return withRunJsonLock(operation.incidentRunPath, () => {
+        const run = readRunJson(operation.incidentRunPath!);
+        const state = run.runnerV2 as Record<string, unknown> | undefined;
+        const incident = state?.idleIncident as Record<string, unknown> | undefined;
+        if (run.id !== operation.runId || run.status !== "running"
+          || incident?.status !== "open" || incident.id !== operation.incidentId) {
+          return { status: "skipped" as const, reason: "idle incident no longer open" };
+        }
+        createNotification(context.namespaceId, { ...notification, idempotencyKey: operation.idempotencyKey });
+        return { status: "dispatched" as const };
+      });
+    }
     // Key the RECORD on the run, not on the operation payload: the payload
     // digest changes with wording/reason, so a replay under a different
     // phrasing would land as a second card for the same terminal event.
@@ -580,6 +600,13 @@ function notificationFromOperation(operation: Extract<AdapterOperation, { type: 
   metadata: Record<string, unknown>;
 } {
   const chainName = operation.chainName || "chain";
+  if (operation.event === "run-idle-incident") {
+    return {
+      type: "warning", title: "Run may be stalled",
+      message: `${chainName}: ${operation.reason || "no active work was observed"}. This was detected by the watchdog; the run may have resumed.`,
+      metadata: { chainId: chainName, runId: operation.runId, actionUrl: `/runs?runId=${encodeURIComponent(operation.runId)}`, actionLabel: "View Run" },
+    };
+  }
   const stalled = operation.event.includes("stalled");
   const failed = stalled || operation.event.includes("failed") || operation.event.includes("stopped");
   // agent-level events keep agent typing (dispatch route parity:
