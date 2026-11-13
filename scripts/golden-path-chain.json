@@ -10,12 +10,15 @@
   "agents": [
     {
       "id": "writer",
+      "name": "Writer",
       "cli": "claude",
+      "triggers": ["manual-start"],
       "task": "Write a 3-sentence markdown blurb about canary run to draft.md, then emit event draft-ready.",
       "emits": "draft-ready"
     },
     {
       "id": "reviewer",
+      "name": "Reviewer",
       "cli": "claude",
       "triggers": ["draft-ready"],
       "task": "Read draft.md. Append a single line 'APPROVED' at the end. Emit event reviewed.",

@@ -37,7 +37,8 @@
       "readiness": {
         "type": "port",
         "port": 3099,
-        "timeout": 8000,
+        "timeout": 30000,
+        "timeoutEnv": "MENTIKO_WS_TERMINAL_READINESS_TIMEOUT_MS",
         "interval": 250
       },
       "restart": {
@@ -45,7 +46,8 @@
         "maxRestarts": 5,
         "baseDelay": 1000,
         "maxDelay": 10000,
-        "resetAfter": 30000
+        "resetAfter": 30000,
+        "retryOnStartup": true
       },
       "critical": true,
       "order": 2
@@ -116,7 +118,8 @@
       "readiness": {
         "type": "http",
         "url": "http://127.0.0.1:7443/health",
-        "timeout": 5000,
+        "timeout": 30000,
+        "timeoutEnv": "MENTIKO_KOLLAB_ENGINE_READINESS_TIMEOUT_MS",
         "interval": 500
       },
       "restart": {

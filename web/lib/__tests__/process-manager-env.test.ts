@@ -6,6 +6,7 @@ import {
   MANAGED_PROCESS_ENV_WHITELIST,
   PLATFORM_PROCESS_ENV_WHITELIST,
   resolveManagedDevGlobalRoot,
+  resolveManagedWebPort,
   shouldReplaceUnavailableDevContainerRoot,
 } from "../process-manager-env";
 import type { ProcessesFile } from "../pm-types";
@@ -34,6 +35,24 @@ describe("process manager environment", () => {
     const processes = JSON.parse(readFileSync(join(process.cwd(), "processes.dev.json"), "utf8"));
     const pty = processes.processes.find((process: { name: string }) => process.name === "pty-mgr");
     expect(pty.args).toEqual(["daemon", "@$PTY_DAEMON"]);
+  });
+
+  it("uses the configured platform port before stamping the default into the supervisor env", () => {
+    const dev = JSON.parse(readFileSync(join(__dirname, "..", "..", "processes.dev.json"), "utf8"));
+    const platform = dev.processes.find((process: { name: string }) => process.name === "platform");
+    const webPort = resolveManagedWebPort({}, platform);
+
+    expect(webPort).toBe("3200");
+    expect(resolveManagedWebPort({ PORT: "3211" }, platform)).toBe("3211");
+    expect(resolveManagedWebPort({ WEB_PORT: "3212" }, platform)).toBe("3212");
+    expect(buildManagedProcessEnv(platform, { PORT: webPort, WEB_PORT: webPort }).PORT).toBe("3200");
+
+    const source = readFileSync(join(process.cwd(), "lib/process-manager.ts"), "utf8");
+    expect(source).toContain("resolveManagedWebPort(process.env, platformConfig)");
+    const configLoadAt = source.indexOf("const config = loadConfig(configPath)");
+    const housekeepAt = source.indexOf("await housekeep(config)");
+    expect(configLoadAt).toBeGreaterThanOrEqual(0);
+    expect(housekeepAt).toBeGreaterThan(configLoadAt);
   });
 
   it("hands KOLLAB_CONFIG_DIR only to the web app and the engine", () => {
