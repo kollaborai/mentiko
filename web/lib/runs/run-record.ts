@@ -71,14 +71,22 @@ export interface RunAgentRecord {
   [key: string]: unknown;
 }
 
-/** One-shot direct-relaunch admission written by authorizeTypedRelaunch, keyed
- * by agent id so concurrent retry and routed-revisit authorizations in one run
- * never overwrite each other. Distinct from resumedAt (the resume route), which
- * the watchdog and reconciler also read as a stall-detection grace window. */
+/** One-shot relaunch admission written by authorizeTypedRelaunch. */
 export interface TypedRelaunchAuthorization {
   authorizedAt: string;
   launchJobId?: string;
 }
+
+/**
+ * Relaunch authorizations are keyed by agent and then by occurrence
+ * (`direct` or `job:<launchJobId>`). Older run records stored one authorization
+ * object directly under each agent; readers accept that shape as a legacy
+ * single entry so an in-flight relaunch survives the data-shape upgrade.
+ */
+export type RelaunchAuthorizations = Record<
+  string,
+  Record<string, TypedRelaunchAuthorization> | TypedRelaunchAuthorization
+>;
 
 export interface RunRecord {
   id: string;
@@ -100,7 +108,7 @@ export interface RunRecord {
   metadata?: Record<string, unknown>;
   type?: string;
   linkId?: string;
-  relaunchAuthorizations?: Record<string, TypedRelaunchAuthorization>;
+  relaunchAuthorizations?: RelaunchAuthorizations;
   [key: string]: unknown;
 }
 

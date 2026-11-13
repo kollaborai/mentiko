@@ -139,7 +139,7 @@ export function buildAgentProfileCommand(input: ProfileCommandInput): string {
     envFile ? `source ${shellQuote(envFile)}; rm -f ${shellQuote(envFile)}; rmdir ${shellQuote(dirname(envFile))} 2>/dev/null || true` : "",
     envFile && !Object.hasOwn(profile.env ?? {}, "ANTHROPIC_API_KEY") ? "unset ANTHROPIC_API_KEY" : "",
     profile.pre_exec ?? "",
-    ...(codex ? [buildCodexSetup()] : []),
+    ...(codex ? [buildCodexSetup(profile.log_path?.trim())] : []),
     ...(profile.cli === "claude" && input.interactive ? [buildClaudeTrustSetup()] : []),
     command,
   ].filter(Boolean);
@@ -173,8 +173,19 @@ function buildClaudeTrustSetup(): string {
  * update settings before `exec` can consume the runner's stdin, while auth is
  * still needed for OAuth-backed profiles. Copying only auth.json preserves the
  * credential without allowing a user's config/plugins to affect this run.
+ *
+ * Codex writes its rollout transcript under $CODEX_HOME/sessions, so the
+ * sessions dir is linked to the profile's log_path: that is where the monitor
+ * looks for a durable AGENT_COMPLETE. Without the link the transcript sat in
+ * the temp home and no Codex agent's marker could ever latch (#35). The exit
+ * trap removes only the link, never the linked directory.
  */
-function buildCodexSetup(): string {
+function buildCodexSetup(logPath?: string): string {
+  // Expand a leading ~ the same way transcriptRootFromProfile does, but on the
+  // shell side so the link is right on whichever host runs the agent.
+  const sessions = logPath === "~" || logPath?.startsWith("~/")
+    ? `"$HOME"${shellQuote(logPath.slice(1))}`
+    : logPath ? shellQuote(logPath) : "";
   return [
     // Capture the caller's auth location before replacing CODEX_HOME.
     `MENTIKO_CODEX_AUTH_HOME="\${CODEX_HOME:-\$HOME/.codex}"`,
@@ -186,8 +197,11 @@ function buildCodexSetup(): string {
     String.raw`MENTIKO_CODEX_PROJECT="$(pwd -P)"`,
     String.raw`MENTIKO_CODEX_PROJECT_KEY="$(printf '%s' "$MENTIKO_CODEX_PROJECT" | sed 's/\\/\\\\/g; s/"/\\"/g')"`,
     `printf 'check_for_update_on_startup = false\\n[projects."%s"]\\ntrust_level = "trusted"\\n' "$MENTIKO_CODEX_PROJECT_KEY" > "$CODEX_HOME/config.toml"`,
+    // Never block the launch on the link, but say so: without it AGENT_COMPLETE
+    // detection falls back to the declared event file only.
+    sessions ? `{ mkdir -p ${sessions} && ln -s ${sessions} "$CODEX_HOME/sessions"; } 2>/dev/null || echo "mentiko: could not link Codex sessions to the profile log_path; AGENT_COMPLETE needs the completion event" >&2` : "",
     `trap 'rm -rf "$CODEX_HOME"' EXIT`,
-  ].join("; ");
+  ].filter(Boolean).join("; ");
 }
 
 export function profileTranscriptConfig(profilePath: string): { cli: string; logPath?: string } {
