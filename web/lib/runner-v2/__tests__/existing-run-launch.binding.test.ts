@@ -1,16 +1,10 @@
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const codeRoot = join(process.cwd(), "..");
 const compiledExistingRun = join(codeRoot, "lib", "runner-v2-existing-run.js");
 const existingRunSource = join(process.cwd(), "lib", "runner-v2", "existing-run-launch-cli.ts");
-
-// ponytail: byte-identical esbuild compare was flaky (npx --yes pulls
-// whatever esbuild is cached, not the version that built the checked-in
-// bundle). Replaced with a drift check: the compiled bundle must be newer
-// than the source AND contain a distinctive marker from the source. This
-// catches the real bug the byte check was for (source edited, bundle not
-// regenerated) without depending on deterministic esbuild output.
+const existingRunLaunchSource = join(process.cwd(), "lib", "runner-v2", "existing-run-launch.ts");
 
 describe("runner-v2 existing-run launch bundle binding", () => {
   it("binds the existing-run source to the tenant-image bundle", () => {
@@ -19,10 +13,14 @@ describe("runner-v2 existing-run launch bundle binding", () => {
     expect(dockerfile).toContain("--outfile=/context/lib/runner-v2-existing-run.js");
   });
 
-  it("keeps the checked-in bundle up-to-date with its source", () => {
-    const sourceStat = statSync(existingRunSource);
-    const bundleStat = statSync(compiledExistingRun);
-    expect(bundleStat.mtimeMs).toBeGreaterThanOrEqual(sourceStat.mtimeMs);
-    expect(bundleStat.size).toBeGreaterThan(1000);
+  // Git checkout mtimes describe extraction order, not build order. Check the
+  // current single-flight launch behavior in both source and emitted bundle.
+  it("includes the current single-flight launch contract in the checked-in bundle", () => {
+    const source = readFileSync(existingRunLaunchSource, "utf8");
+    const bundle = readFileSync(compiledExistingRun, "utf8");
+    const contract = "already has an in-progress launch";
+    expect(source).toContain(contract);
+    expect(bundle).toContain(contract);
+    expect(bundle.length).toBeGreaterThan(1000);
   });
 });
