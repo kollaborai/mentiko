@@ -198,13 +198,14 @@ export function sanitizeNudge(value: string): string {
 }
 
 export function fallbackNudge(staleCount: number): string {
+  const completionCommand = "run the exact completion command from your instructions, which supplies MENTIKO_BIN, MENTIKO_AGENT_ID, MENTIKO_RUN_ID, and PATH inline";
   if (staleCount <= 2) {
-    return "Resume only the current assigned task. If it is complete, write any required artifacts, run your completion command (mentiko emit), and make the final non-empty line exactly AGENT_COMPLETE.";
+    return `Resume only the current assigned task. If it is complete, write any required artifacts, ${completionCommand}, and make the final non-empty line exactly AGENT_COMPLETE.`;
   }
   if (staleCount <= 4) {
-    return "You look stalled. State the blocker in one sentence, then continue the assigned task or, if done, write your required artifacts, run your completion command (mentiko emit), and finish with AGENT_COMPLETE.";
+    return `You look stalled. State the blocker in one sentence, then continue the assigned task or, if done, write your required artifacts, ${completionCommand}, and finish with AGENT_COMPLETE.`;
   }
-  return "Stop waiting. Finish only the assigned task: write required artifacts, run your completion command (mentiko emit), and make the final non-empty line exactly AGENT_COMPLETE. Do not hand-write event files.";
+  return `Stop waiting. Finish only the assigned task: write required artifacts, ${completionCommand}, and make the final non-empty line exactly AGENT_COMPLETE. Do not hand-write event files.`;
 }
 
 function validateManualMonitorInput(input: ManualMonitorInput): void {
