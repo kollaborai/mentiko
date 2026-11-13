@@ -206,7 +206,7 @@ export async function withDecisionResolutionLock<T>(
 export function createDecision(
   nsId: string,
   orgId: string,
-  input: { prompt: string; source?: string; id?: string },
+  input: { prompt: string; source?: string; id?: string; createdBy?: Decision["createdBy"] },
   workspacePath?: string
 ): Decision {
   const dir = getDecisionsDir(nsId, orgId, workspacePath);
@@ -226,6 +226,7 @@ export function createDecision(
     title: input.prompt,
     source: input.source,
     createdAt: now,
+    ...(input.createdBy ? { createdBy: input.createdBy } : {}),
     updatedAt: now,
     options: [],
     ...(workspacePath ? { workspacePath } : {}),

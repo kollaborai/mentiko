@@ -49,7 +49,7 @@ import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
 import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
 import { resolveInternalAuthSecret } from "@/lib/auth/internal-api-auth";
 import { resolveInternalWebOrigin } from "@/lib/auth/internal-web-origin";
-import { mintSessionToken, verifySessionToken } from "@/lib/auth/session-token";
+import { mintSessionToken } from "@/lib/auth/session-token";
 import { resolveRunAgentProfile } from "@/lib/agents/run-agent-profile";
 import { shouldRecordTaskExecutionMetadata } from "@/lib/runs/run-provenance";
 import { executionStartedLifecycleMetadata } from "@/lib/orchestration/task-lifecycle-metadata";
@@ -183,8 +183,14 @@ function getClientIp(request: Request): string {
   return request.headers.get("x-real-ip") || "unknown";
 }
 
-function logAuditEvent(eventType: string, description: string, metadata: Record<string, string>, ip: string): Promise<void> {
-  return execAuditLog(eventType, description, metadata, { ip }).then(() => undefined);
+function logAuditEvent(
+  eventType: string,
+  description: string,
+  metadata: Record<string, string>,
+  ip: string,
+  actor: ChainSessionActor,
+): Promise<void> {
+  return execAuditLog(eventType, description, metadata, { ip, userId: actor.id }).then(() => undefined);
 }
 
 /** Mark a run terminally failed after launch (sync or deferred) could not start it. */
@@ -253,6 +259,7 @@ function normalizeRunMetadata(value: unknown): Record<string, unknown> | undefin
 
 interface ChainSessionActor {
   id: string;
+  sessionId?: string;
   role?: SessionUser["role"];
 }
 
@@ -262,21 +269,9 @@ async function resolveChainSessionActor(
   orgId: string,
 ): Promise<ChainSessionActor | null> {
   const user = await getSessionUser(request);
-  if (user) return { id: user.id, role: user.role };
-
-  const authHeader = request.headers.get("authorization");
-  if (!authHeader?.startsWith("Bearer ")) return null;
-
-  try {
-    const claims = await verifySessionToken(authHeader.slice(7));
-    if (claims.ns !== namespaceId || claims.org !== orgId) return null;
-    return {
-      id: claims.sub,
-      ...(claims.role ? { role: claims.role } : {}),
-    };
-  } catch {
-    return null;
-  }
+  if (!user || !user.id) return null;
+  if (user.namespaceId !== namespaceId || (user.orgId && user.orgId !== orgId)) return null;
+  return { id: user.id, sessionId: user.sessionId, role: user.role };
 }
 
 async function buildChainSessionEnv(
@@ -284,12 +279,8 @@ async function buildChainSessionEnv(
   namespaceId: string,
   orgId: string,
   runId: string,
-  actor: ChainSessionActor | null,
+  actor: ChainSessionActor,
 ): Promise<Record<string, string | undefined>> {
-  if (!actor) {
-    throw new Forbidden("Session user required to start chain run");
-  }
-
   const sessionId = `chain-${runId}`;
   const sessionToken = await mintSessionToken({
     sub: actor.id,
@@ -324,8 +315,11 @@ export async function startChainRun({
   body,
 }: StartChainRunInput): Promise<StartChainRunResult> {
   const ip = getClientIp(request);
-  const runsDir = resolveLinkRunsDir(namespaceId, orgId);
   const actor = await resolveChainSessionActor(request, namespaceId, orgId);
+  if (!actor) {
+    throw new Forbidden("Session user required to start chain run");
+  }
+  const runsDir = resolveLinkRunsDir(namespaceId, orgId);
   const chain = body.chain as Chain | null;
   const {
     chainId: callerChainId,
@@ -521,6 +515,9 @@ export async function startChainRun({
     // neutral/"waiting") with a clear message. The spawned engine promotes it to
     // `running` on admission. Otherwise it starts `running` as before.
     status: queuedAtCap ? "pending" : "running",
+    user_id: actor.id,
+    ...(actor.sessionId ? { session_id: actor.sessionId } : {}),
+    ...(actor.role ? { org_role: actor.role } : {}),
     ...(queuedAtCap
       ? { status_message: `queued: waiting for a chain slot (${activeCountAtAdmit} active, limit ${maxConcurrentChains})` }
       : {}),
@@ -575,7 +572,10 @@ export async function startChainRun({
     namespace_id: namespaceId,
     agent_count: String(runChain.agents?.length || 0),
     source: "web",
-  }, ip).catch(() => {});
+    user_id: actor.id,
+    ...(actor.sessionId ? { session_id: actor.sessionId } : {}),
+    ...(actor.role ? { org_role: actor.role } : {}),
+  }, ip, actor).catch(() => {});
 
   const executionTaskId = typeof taskId === "string" ? taskId : undefined;
   const logPath = join(runDir, "output.log");
@@ -724,7 +724,10 @@ export async function startChainRun({
     run_id: runId,
     status: "running",
     namespace_id: namespaceId,
-  }, ip).catch(() => {});
+    user_id: actor.id,
+    ...(actor.sessionId ? { session_id: actor.sessionId } : {}),
+    ...(actor.role ? { org_role: actor.role } : {}),
+  }, ip, actor).catch(() => {});
 
   if (executionTaskId && shouldRecordTaskExecutionRun({ taskId: executionTaskId, chainId: runObject.chainId as string, metadata: runMetadata })) {
     try {

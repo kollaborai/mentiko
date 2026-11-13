@@ -33,6 +33,11 @@ jest.mock("@/lib/ai-engine/mentiko-mcp-ops-auth", () => ({
   requireOpsPermission: jest.fn().mockReturnValue(null),
 }));
 
+const mockGetSessionUser = jest.fn();
+jest.mock("@/lib/auth/auth-bridge", () => ({
+  getSessionUser: (...args: unknown[]) => mockGetSessionUser(...args),
+}));
+
 const mockGetDecision = jest.fn();
 jest.mock("@/lib/decisions/decision-storage", () => ({
   getDecision: (...args: unknown[]) => mockGetDecision(...args),
@@ -59,6 +64,13 @@ function makeRequest(body: Record<string, unknown>): Request {
 describe("POST /api/mentiko-mcp/ops/decisions/approve", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockGetSessionUser.mockResolvedValue({
+      id: "user-test",
+      sessionId: "session-test",
+      role: "owner",
+      namespaceId: "mike",
+      orgId: "default",
+    });
     mockGetDecision.mockReturnValue({
       id: "decision-1",
       status: "briefed",
@@ -93,8 +105,14 @@ describe("POST /api/mentiko-mcp/ops/decisions/approve", () => {
       notes: undefined,
       workspaceId: undefined,
       workspacePath: undefined,
-      selectedBy: "mentiko-mcp",
+      actor: {
+        user_id: "user-test",
+        session_id: "session-test",
+        org_role: "owner",
+      },
+      channel: "mentiko-mcp",
     });
+    expect(mockGetSessionUser).toHaveBeenCalled();
     await expect(res.json()).resolves.toMatchObject({
       success: true,
       data: {

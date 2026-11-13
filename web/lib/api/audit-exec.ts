@@ -15,6 +15,8 @@ export type { AuditLogMetadata };
 export interface AuditExecOptions {
   source?: string;
   ip?: string;
+  /** Authenticated application actor, used instead of the process account. */
+  userId?: string;
   timeoutMs?: number;
   namespaceId?: string;
 }
@@ -32,6 +34,7 @@ export async function execAuditLog(
     metadata,
     source: options.source ?? "web",
     ip: sanitizeIp(options.ip),
+    userId: options.userId,
   });
   return entry.id;
 }

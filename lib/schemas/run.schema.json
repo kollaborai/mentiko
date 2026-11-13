@@ -28,6 +28,21 @@
       "type": "string",
       "format": "date-time"
     },
+    "user_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Authenticated session user who initiated the run, when recorded by the web launcher."
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Authenticated session that initiated the run, when available."
+    },
+    "org_role": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Organization role held by the initiating session, when available."
+    },
     "completed": {
       "type": "string",
       "format": "date-time"

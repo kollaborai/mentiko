@@ -1,3 +1,5 @@
+import type { OrgRole } from "@/lib/orgs/org-types";
+
 export type DecisionStatus =
   | "intake"
   | "researching"
@@ -27,10 +29,25 @@ export interface Recommendation {
   alternatives?: string[];
 }
 
+export interface DecisionActorIdentity {
+  user_id: string;
+  session_id?: string;
+  org_role?: OrgRole;
+}
+
+export type DecisionResolutionChannel =
+  | "human"
+  | "workspace-auto-approve"
+  | "mentiko-mcp"
+  | "internal-service";
+
 export interface Resolution {
   selectedOptionId: string;
+  /** Compatibility display field; new approvals store the real actor id here. */
   selectedBy: string;
   selectedAt: string;
+  actor?: DecisionActorIdentity;
+  channel?: DecisionResolutionChannel;
   notes?: string;
   taskId?: string;
   taskIds?: string[];
@@ -228,6 +245,7 @@ export interface Decision {
   category?: string;
   source?: string;
   createdAt: string;
+  createdBy?: DecisionActorIdentity;
   updatedAt: string;
   brief?: DecisionBrief;
   context?: DecisionContext;

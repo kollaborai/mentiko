@@ -36,6 +36,18 @@ function shouldUseDevAuthFallback(): boolean {
   return process.env.NODE_ENV !== "production" && !process.env.DATABASE_URL;
 }
 
+function developmentSessionUser(): SessionUser {
+  return {
+    id: "default-user",
+    email: "user@mentiko.com",
+    name: "User",
+    role: "owner",
+    isAdmin: true,
+    namespaceId: "default",
+    authMethod: "development",
+  };
+}
+
 export interface SessionUser {
   id: string;
   email: string;
@@ -45,6 +57,8 @@ export interface SessionUser {
   orgId?: string;
   namespaceId: string;
   linuxUsername?: string;
+  sessionId?: string;
+  authMethod?: "better-auth" | "session-token" | "internal-service" | "development";
 }
 
 /**
@@ -131,16 +145,46 @@ export async function getNamespaceFromSession(request: Request): Promise<string>
  * main replacement for the x-user-id / x-user-email header pattern.
  */
 export async function getSessionUser(request: Request): Promise<SessionUser | null> {
-  // local/test fallback when auth isn't configured
+  const authHeader = request.headers.get("authorization");
+
+  // Verify a signed ops session before consulting cookies or the local fallback:
+  // the bearer is the authenticated principal for MCP operations.
+  if (authHeader?.startsWith("Bearer ")) {
+    try {
+      const { verifySessionToken } = await import("./session-token");
+      const claims = await verifySessionToken(authHeader.slice(7));
+      return {
+        id: claims.sub,
+        email: "",
+        name: claims.sub,
+        role: claims.role || "member",
+        isAdmin: false,
+        orgId: claims.org,
+        namespaceId: claims.ns || config.namespaceId,
+        sessionId: claims.jti,
+        authMethod: "session-token",
+      };
+    } catch {
+      // Internal-service and development auth are handled below.
+    }
+  }
+
+  // Keep the no-database development shortcut free of Better Auth initialization.
   if (shouldUseDevAuthFallback()) {
-    return {
-      id: "default-user",
-      email: "user@mentiko.com",
-      name: "User",
-      role: "owner",
-      isAdmin: true,
-      namespaceId: "default",
-    };
+    const bearerContext = getTrustedBearerContext(request);
+    if (bearerContext) {
+      return {
+        id: "service-user",
+        email: "service@mentiko.com",
+        name: "Internal Service",
+        role: "member",
+        isAdmin: false,
+        orgId: bearerContext.orgId,
+        namespaceId: bearerContext.namespaceId || config.namespaceId,
+        authMethod: "internal-service",
+      };
+    }
+    return developmentSessionUser();
   }
 
   const session = await getServerSession(request);
@@ -156,8 +200,10 @@ export async function getSessionUser(request: Request): Promise<SessionUser | nu
         isAdmin: false,
         orgId: bearerContext.orgId,
         namespaceId: bearerContext.namespaceId || config.namespaceId,
+        authMethod: "internal-service",
       };
     }
+
     return null;
   }
 
@@ -226,5 +272,7 @@ export async function getSessionUser(request: Request): Promise<SessionUser | nu
     orgId: orgSlug ?? activeOrgId,
     namespaceId,
     linuxUsername,
+    sessionId: (session.session as Record<string, unknown>).id as string | undefined,
+    authMethod: "better-auth",
   };
 }
