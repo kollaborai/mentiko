@@ -13,6 +13,7 @@ interface ParsedArguments {
   runId: string;
   scope: RunnerEventScope;
   data: string;
+  idempotencyKey?: string;
   agent?: string;
   staleCount?: number;
   output: "text" | "json";
@@ -26,6 +27,7 @@ function main(): void {
     runId: args.runId,
     scope: args.scope,
     filenameMode: args.mode,
+    idempotencyKey: args.idempotencyKey,
     diagnosticAgent: args.agent,
     diagnosticReason: args.mode === "diagnostic" ? args.data : undefined,
     diagnosticStaleCount: args.staleCount,
@@ -57,6 +59,7 @@ function parseArguments(argv: string[]): ParsedArguments {
     "--run-id",
     "--scope",
     "--data",
+    "--idempotency-key",
     "--agent",
     "--reason",
     "--stale-count",
@@ -76,6 +79,10 @@ function parseArguments(argv: string[]): ParsedArguments {
   const source = requireNonEmpty(values, "--source");
   const runId = requirePresent(values, "--run-id");
   const scope = parseScope(requireNonEmpty(values, "--scope"));
+  const idempotencyKey = values.get("--idempotency-key");
+  if (idempotencyKey !== undefined && !idempotencyKey.trim()) {
+    throw new Error("Runner event emitter --idempotency-key must not be empty.");
+  }
 
   if (mode === "diagnostic") {
     rejectPresent(values, "--data", command);
@@ -85,6 +92,7 @@ function parseArguments(argv: string[]): ParsedArguments {
       source,
       runId,
       scope,
+      idempotencyKey,
       agent: requireNonEmpty(values, "--agent"),
       data: requireNonEmpty(values, "--reason"),
       staleCount: parseStaleCount(values.get("--stale-count")),
@@ -101,6 +109,7 @@ function parseArguments(argv: string[]): ParsedArguments {
     source,
     runId,
     scope,
+    idempotencyKey,
     data: requirePresent(values, "--data"),
     output: parseOutput(values.get("--output")),
   };
@@ -127,7 +136,7 @@ function parseMode(command: string | undefined): RunnerEventFilenameMode {
   if (command === "emit") return "canonical";
   if (command === "diagnostic") return "diagnostic";
   throw new Error(
-    "usage: runner-event-emitter <emit|diagnostic> --scope <run|ingress> --event <name> --source <source> --run-id <id>",
+    "usage: runner-event-emitter <emit|diagnostic> --scope <run|ingress> --event <name> --source <source> --run-id <id> [--idempotency-key <key>]",
   );
 }
 

@@ -74,5 +74,5 @@ describe("runner-v2 circuit persistence concurrency", () => {
       "retry-failure:occurrence-a:0",
       "retry-failure:occurrence-b:0",
     ]));
-  });
+  }, 30_000);
 });

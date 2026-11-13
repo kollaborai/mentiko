@@ -16,6 +16,7 @@ import {
   findRunnerCompletionEvent,
   markRunnerEventProcessed,
   scanRunnerEventFiles,
+  type ArchiveTransactionHooks,
   type ConsumeRunnerEventsInput,
 } from "@/lib/runner-v2/event-lifecycle";
 import { parseRunnerEvent, serializeRunnerEvent } from "@/lib/runner-v2/events";
@@ -59,11 +60,12 @@ function consumeRunnerEvents(
   input: Omit<ConsumeRunnerEventsInput, "acceptedTrigger"> & {
     acceptedTrigger?: ConsumeRunnerEventsInput["acceptedTrigger"];
   },
+  hooks: ArchiveTransactionHooks = {},
 ) {
   return consumeRunnerEventsStrict({
     ...input,
     acceptedTrigger: input.acceptedTrigger || acceptedTrigger(input.eventsDir, input.triggered),
-  });
+  }, hooks);
 }
 
 describe("typed runner event lifecycle", () => {
@@ -268,7 +270,7 @@ describe("typed runner event lifecycle", () => {
     ]);
   });
 
-  it("keeps the active event unprocessed and discoverable when archive ownership cannot be claimed", () => {
+  it("keeps the exact occurrence private and recoverable when its archive target is blocked", () => {
     const dir = eventsDir();
     const archiveDir = join(dir, "archive");
     mkdirSync(archiveDir);
@@ -281,22 +283,33 @@ describe("typed runner event lifecycle", () => {
       "processed:\tfalse  ",
     );
     writeFileSync(trigger, before);
+    const accepted = acceptedTrigger(dir, trigger);
 
     expect(() => consumeRunnerEvents({
       eventsDir: dir,
       runId: "run-1",
       source: "writer",
       triggered: trigger,
+      acceptedTrigger: accepted,
     })).toThrow(/Archive destination is not a direct regular file/);
 
-    expect(readFileSync(trigger, "utf8")).toBe(before);
-    expect(parseRunnerEvent(readFileSync(trigger, "utf8")).processed).toBe(false);
+    expect(existsSync(trigger)).toBe(false);
+    const transactionDir = join(dir, ".event-transactions", accepted.occurrenceToken);
+    expect(JSON.parse(readFileSync(join(transactionDir, "manifest.json"), "utf8"))).toMatchObject({
+      state: "claimed",
+      sourceFilename: "trigger.event",
+    });
+    expect(parseRunnerEvent(readFileSync(join(transactionDir, "claimed.event"), "utf8")).processed).toBe(true);
     expect(findRunnerCompletionEvent({
       eventsDir: dir,
       runId: "run-1",
       expectedEvent: "draft-ready",
       agentId: "writer",
-    }).match?.path).toBe(trigger);
+    }).match).toMatchObject({
+      filename: "trigger.event",
+      path: trigger,
+      event: { processed: false, runId: "run-1", source: "writer" },
+    });
     expect(readdirSync(archiveDir).filter((name) => name.endsWith(".tmp"))).toEqual([]);
   });
 
@@ -309,7 +322,7 @@ describe("typed runner event lifecycle", () => {
     const sibling = writeEvent(dir, "sibling.event", { event: "note", data: "cleanup" });
     const accepted = acceptedTrigger(dir, trigger);
     const triggerBefore = readFileSync(trigger, "utf8");
-    const siblingBefore = readFileSync(sibling, "utf8");
+    const siblingAccepted = acceptedTrigger(dir, sibling);
 
     expect(() => consumeRunnerEvents({
       eventsDir: dir,
@@ -321,7 +334,13 @@ describe("typed runner event lifecycle", () => {
 
     expect(readFileSync(trigger, "utf8")).toBe(triggerBefore);
     expect(parseRunnerEvent(readFileSync(trigger, "utf8")).processed).toBe(false);
-    expect(readFileSync(sibling, "utf8")).toBe(siblingBefore);
+    expect(existsSync(sibling)).toBe(false);
+    const transactionDir = join(dir, ".event-transactions", siblingAccepted.occurrenceToken);
+    expect(JSON.parse(readFileSync(join(transactionDir, "manifest.json"), "utf8"))).toMatchObject({
+      state: "claimed",
+      sourceFilename: "sibling.event",
+    });
+    expect(parseRunnerEvent(readFileSync(join(transactionDir, "claimed.event"), "utf8")).processed).toBe(true);
     expect(readdirSync(archiveDir).filter((name) => name.startsWith(".event-receipt-"))).toEqual([]);
   });
 
@@ -347,13 +366,58 @@ describe("typed runner event lifecycle", () => {
       triggered: trigger,
     });
 
-    expect(retried.triggered.status).toBe("already-archived");
-    expect(retried.triggered.destination).toBe(join(archiveDir, "trigger.event"));
+    expect(retried.triggered.status).toBe("collision-archived");
+    expect(retried.triggered.destination).toMatch(/trigger-collision-[a-f0-9]{16}-[a-f0-9]{16}\.event$/);
+    expect(readFileSync(join(archiveDir, "trigger.event"), "utf8")).toBe(archivedBytes);
     expect(existsSync(trigger)).toBe(false);
     expect(readFileSync(retried.triggered.destination, "utf8")).toBe(archivedBytes);
     expect(parseRunnerEvent(archivedBytes).processed).toBe(true);
     expect(readdirSync(archiveDir).filter((name) => name.endsWith(".tmp"))).toEqual([]);
   });
+
+  it.each(["prepared", "renamed", "claimed", "processed", "archived", "receipted", "complete"] as const)(
+    "recovers an interrupted manifest transaction after %s",
+    (stage) => {
+      const dir = eventsDir();
+      const occurrenceId = `occ-${stage}`;
+      const trigger = writeEvent(dir, "trigger.event", {
+        extensionFields: { occurrence_id: occurrenceId },
+      });
+      const accepted = acceptedTrigger(dir, trigger);
+      const input = {
+        eventsDir: dir,
+        runId: "run-1",
+        source: "writer",
+        triggered: trigger,
+        acceptedTrigger: accepted,
+      };
+
+      expect(() => consumeRunnerEvents(input, {
+        afterStage: (observed) => {
+          if (observed === stage) throw new Error(`simulated interruption at ${stage}`);
+        },
+      })).toThrow(`simulated interruption at ${stage}`);
+
+      const retried = consumeRunnerEvents(input);
+      expect(retried.triggered.status).toBe("already-archived");
+      expect(parseRunnerEvent(readFileSync(retried.triggered.destination, "utf8"))).toMatchObject({
+        event: "draft-ready",
+        runId: "run-1",
+        processed: true,
+        fields: { occurrence_id: occurrenceId },
+      });
+      const archiveDir = join(dir, "archive");
+      const receipts = readdirSync(archiveDir).filter((name) => name.startsWith(".event-receipt-"));
+      expect(receipts).toHaveLength(1);
+      expect(JSON.parse(readFileSync(join(archiveDir, receipts[0]), "utf8"))).toMatchObject({
+        version: 3,
+        occurrenceId,
+        occurrenceToken: accepted.occurrenceToken,
+        acceptedContentSha256: accepted.rawContentSha256,
+      });
+      expect(readdirSync(join(dir, ".event-transactions"))).toEqual([]);
+    },
+  );
 
   it("never accepts an unrelated processed basename as missing-source archive proof", () => {
     const dir = eventsDir();
@@ -537,7 +601,7 @@ describe("typed runner event lifecycle", () => {
     });
 
     expect(consumed.triggered.status).toBe("collision-archived");
-    expect(basename(consumed.triggered.destination)).toMatch(/^event-collision-[a-f0-9]{64}\.event$/);
+    expect(basename(consumed.triggered.destination)).toMatch(/^event-collision-[a-f0-9]{64}-[a-f0-9]{16}\.event$/);
     const receipts = readdirSync(archiveDir).filter((name) => name.startsWith(".event-receipt-"));
     expect(receipts).toHaveLength(1);
     expect(receipts[0]).toMatch(/^\.event-receipt-[a-f0-9]{64}-[a-f0-9]{64}-[a-f0-9]{64}\.json$/);
@@ -620,9 +684,8 @@ describe("typed runner event lifecycle", () => {
       acceptedTrigger: acceptedB,
     });
 
-    // The archived processed bytes may be shared, but the receipts are distinct
-    // and each exact accepted occurrence remains independently provable.
-    expect(second.triggered.destination).toBe(first.triggered.destination);
+    // Even byte-identical physical occurrences receive distinct archive paths.
+    expect(second.triggered.destination).not.toBe(first.triggered.destination);
     const receipts = readdirSync(join(dir, "archive"))
       .filter((name) => name.startsWith(".event-receipt-"));
     expect(receipts).toHaveLength(2);
@@ -702,7 +765,7 @@ describe("typed runner event lifecycle", () => {
         ...receipt,
         acceptedContentSha256: String(receipt.acceptedContentSha256).toUpperCase(),
       })}\n`,
-      canonical.replace('{"version":2,', '{"version":2,"version":2,'),
+      canonical.replace('{"version":3,', '{"version":3,"version":3,'),
     ];
 
     for (const invalid of invalidReceipts) {
@@ -736,7 +799,7 @@ describe("typed runner event lifecycle", () => {
 
     expect(result.triggered.status).toBe("collision-archived");
     expect(readFileSync(join(archiveDir, "trigger.event"), "utf8")).toBe(existing);
-    expect(result.triggered.destination).toMatch(/trigger-collision-[a-f0-9]{16}\.event$/);
+    expect(result.triggered.destination).toMatch(/trigger-collision-[a-f0-9]{16}-[a-f0-9]{16}\.event$/);
     expect(parseRunnerEvent(readFileSync(result.triggered.destination, "utf8"))).toMatchObject({
       event: "newer",
       processed: true,
@@ -763,7 +826,7 @@ describe("typed runner event lifecycle", () => {
     expect(existsSync(repeated.triggered.destination)).toBe(true);
   });
 
-  it("rejects an archive symlink before mutating the explicit trigger", () => {
+  it("preserves the exact occurrence in its transaction when the archive root is a symlink", () => {
     const dir = eventsDir();
     const outsideArchive = mkdtempSync(join(tmpdir(), "runner-event-archive-outside-"));
     symlinkSync(outsideArchive, join(dir, "archive"));
@@ -776,7 +839,12 @@ describe("typed runner event lifecycle", () => {
       source: "writer",
       triggered: trigger,
     })).toThrow(/archive is not a direct regular directory/);
-    expect(readFileSync(trigger, "utf8")).toBe(before);
+    expect(existsSync(trigger)).toBe(false);
+    const transactionEntries = readdirSync(join(dir, ".event-transactions"));
+    expect(transactionEntries).toHaveLength(1);
+    const transactionDir = join(dir, ".event-transactions", transactionEntries[0]);
+    expect(readFileSync(join(transactionDir, "claimed.event"), "utf8")).not.toBe(before);
+    expect(parseRunnerEvent(readFileSync(join(transactionDir, "claimed.event"), "utf8")).processed).toBe(true);
     expect(readdirSync(outsideArchive)).toEqual([]);
   });
 

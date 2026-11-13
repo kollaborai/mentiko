@@ -1,10 +1,10 @@
 import { NextRequest } from "next/server";
-import { writeFileSync, existsSync, mkdirSync } from "fs";
-import { join } from "path";
+import { existsSync, mkdirSync } from "fs";
 import config from "@/lib/config";
 import { Unauthorized, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { checkAuth } from "@/lib/auth/api-auth";
+import { emitRunnerEvent } from "@/lib/runner-v2/event-emitter";
 import { serializeRunnerEvent } from "@/lib/runner-v2/events";
 
 export const dynamic = "force-dynamic";
@@ -15,7 +15,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   }
 
   const body = await request.json();
-  const { event, source, data, runId } = body;
+  const { event, source, data, runId, idempotencyKey } = body;
 
   if (!event || typeof event !== "string") {
     throw new BadRequest("event is required", { field: "event" });
@@ -23,6 +23,9 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
 
   if (!source || typeof source !== "string") {
     throw new BadRequest("source is required", { field: "source" });
+  }
+  if (idempotencyKey !== undefined && (typeof idempotencyKey !== "string" || !idempotencyKey.trim())) {
+    throw new BadRequest("idempotencyKey must be a non-empty string", { field: "idempotencyKey" });
   }
 
   const eventsDir = config.eventsDir;
@@ -32,32 +35,49 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   }
 
   const timestamp = new Date().toISOString();
-  // filename: source-event.event (matches existing convention)
-  const safeSource = source.replace(/[^a-zA-Z0-9_-]/g, "_");
-  const safeEvent = event.replace(/[^a-zA-Z0-9_-]/g, "_");
-  const filename = `${safeSource}-${safeEvent}.event`;
-  const filePath = join(eventsDir, filename);
-
-  let content: string;
+  const normalizedRunId = typeof runId === "string" ? runId : "";
+  const eventData: string = data === undefined
+    ? ""
+    : typeof data === "string"
+      ? data
+      : JSON.stringify(data) ?? "";
   try {
-    content = serializeRunnerEvent({
+    serializeRunnerEvent({
       event,
       source,
-      runId: typeof runId === "string" ? runId : "",
+      runId: normalizedRunId,
       timestamp,
-      data: data === undefined ? "" : typeof data === "string" ? data : JSON.stringify(data),
+      data: eventData,
     });
   } catch (error) {
     throw new BadRequest(error instanceof Error ? error.message : "Invalid runner event");
   }
 
-  writeFileSync(filePath, content, "utf-8");
+  let emitted;
+  try {
+    emitted = emitRunnerEvent({
+      event,
+      source,
+      runId: normalizedRunId,
+      scope: normalizedRunId ? "run" : "ingress",
+      filenameMode: "api",
+      eventsDir,
+      timestamp,
+      data: eventData,
+      ...(typeof idempotencyKey === "string" ? { idempotencyKey } : {}),
+    });
+  } catch (error) {
+    if (error instanceof Error && /run lifecycle event .* cannot use ingress scope/.test(error.message)) {
+      throw new BadRequest(error.message);
+    }
+    throw error;
+  }
 
   return apiSuccess({
     success: true,
     event,
     source,
-    filename,
+    filename: emitted.filename,
     timestamp,
   });
 });

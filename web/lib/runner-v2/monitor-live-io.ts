@@ -44,7 +44,7 @@ import type { MonitorDriverIO } from "@/lib/runner-v2/monitor";
 import { readRunJson, updateRunAgent, updateRunStatus, type RunRecord } from "@/lib/runner-v2/run-state";
 import { readRunnerV2AttemptState } from "@/lib/runner-v2/agent-attempt";
 import { launchRunnerV2CompletionPty } from "@/lib/runner-v2/completion-launch";
-import { serializeRunnerEvent } from "@/lib/runner-v2/events";
+import { emitRunnerEvent } from "@/lib/runner-v2/event-emitter";
 import { isPayloadCompatibleWithKind } from "@/lib/generation/payload-contract";
 import type { CompletionRecoveryEvidence } from "@/lib/runner-v2/completion-runner";
 
@@ -653,19 +653,20 @@ async function launchCompletionSession(
 
 function writeDiagnosticEvent(eventsDir: string, event: MonitorDiagnosticEvent): void {
   mkdirSync(eventsDir, { recursive: true });
-  const extensionFields = [
-    `agent: ${event.agent}`,
-    `reason: ${event.reason}`,
-    ...(typeof event.staleCount === "number" ? [`stale_count: ${event.staleCount}`] : []),
-  ].join("\n");
-  const content = serializeRunnerEvent({
+  emitRunnerEvent({
     event: event.event,
     source: event.source,
     runId: event.runId,
+    scope: "run",
+    filenameMode: "diagnostic",
+    diagnosticAgent: event.agent,
+    diagnosticReason: event.reason,
+    diagnosticStaleCount: event.staleCount,
     timestamp: new Date().toISOString(),
+    idempotencyKey: `monitor-diagnostic:${event.filename}`,
+    eventsDir,
     data: JSON.stringify({ agent: event.agent, reason: event.reason, staleCount: event.staleCount }),
   });
-  writeFileSync(join(eventsDir, event.filename), `${content}${extensionFields}\n`);
 }
 
 function hasPgrep(): boolean {

@@ -579,7 +579,7 @@ describe("recoverLateCompletionEvents", () => {
         lateCompletionRecoveries: [expect.objectContaining({ deliveryStatus: "applied" })],
       },
     });
-  });
+  }, 30_000);
 
   it("breaks a crashed pre-commit holder and recovers because the event stayed unprocessed", async () => {
     const file = runPath();

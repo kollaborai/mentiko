@@ -653,7 +653,10 @@ describe("monitor-v2 live IO", () => {
 });
 
 function readDirOne(dir: string): string {
-  return jest.requireActual("node:fs").readdirSync(dir)[0];
+  const event = jest.requireActual("node:fs").readdirSync(dir)
+    .find((entry: string) => entry.endsWith(".event"));
+  if (!event) throw new Error(`No event file found in ${dir}`);
+  return event;
 }
 
 function readDirNames(dir: string): string[] {

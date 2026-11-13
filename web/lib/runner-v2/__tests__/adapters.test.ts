@@ -301,7 +301,7 @@ describe("runner-v2 adapters", () => {
     expect(readFileSync(join(archiveDir, "trigger.event"), "utf8")).toBe("existing archive evidence\n");
     expect(existsSync(triggeredPath)).toBe(false);
     const collisionName = readdirSync(archiveDir).find((name) => name.startsWith("trigger-collision-"));
-    expect(collisionName).toMatch(/^trigger-collision-[a-f0-9]{16}\.event$/);
+    expect(collisionName).toMatch(/^trigger-collision-[a-f0-9]{16}-[a-f0-9]{16}\.event$/);
     expect(parseRunnerEvent(readFileSync(join(archiveDir, collisionName!), "utf8")).processed).toBe(true);
   });
 

@@ -308,15 +308,19 @@ describe("typed runner-event producer contract", () => {
     expect(readdirSync(eventsDir).filter((file) => file.endsWith(".event"))).toEqual([]);
   });
 
-  it("reuses semantically identical retries and preserves differing concurrent events", async () => {
+  it("reuses keyed retries and preserves distinct unkeyed emissions", async () => {
     const identicalDir = makeEventsDir();
     const common = [
       "emit", "--scope", "run", "--event", "draft-ready", "--source", "writer",
       "--run-id", "run-collision", "--data", "same", "--output", "json",
     ];
+    const keyedReplay = [
+      ...common.slice(0, -4), "--idempotency-key", "draft-ready-operation",
+      ...common.slice(-4),
+    ];
     const identicalResults = await Promise.all([
-      invokeEmitter(identicalDir, common),
-      invokeEmitter(identicalDir, common),
+      invokeEmitter(identicalDir, keyedReplay),
+      invokeEmitter(identicalDir, keyedReplay),
     ]);
     expect(new Set(identicalResults.map((result) => result.path)).size).toBe(1);
     expect(readdirSync(identicalDir).filter((file) => file.endsWith(".event"))).toHaveLength(1);
@@ -331,7 +335,28 @@ describe("typed runner-event producer contract", () => {
       .map((file) => parseRunnerEvent(readFileSync(join(differingDir, file), "utf8")));
     expect(events).toHaveLength(2);
     expect(events.map((event) => event.data).sort()).toEqual(["first", "second"]);
-    expect(readdirSync(differingDir).some((file) => file.includes("-collision-"))).toBe(true);
+    expect(new Set(events.map((event) => event.fields.occurrence_id)).size).toBe(2);
+    expect(events.every((event) => Boolean(event.fields.content_sha256))).toBe(true);
+  });
+
+  it("publishes identical unkeyed emissions as separate physical occurrences", async () => {
+    const eventsDir = makeEventsDir();
+    const common = [
+      "emit", "--scope", "run", "--event", "draft-ready", "--source", "writer",
+      "--run-id", "run-identical", "--data", "same", "--output", "json",
+    ];
+    const results = await Promise.all([
+      invokeEmitter(eventsDir, common),
+      invokeEmitter(eventsDir, common),
+    ]);
+    const events = readdirSync(eventsDir)
+      .filter((file) => file.endsWith(".event"))
+      .map((file) => parseRunnerEvent(readFileSync(join(eventsDir, file), "utf8")));
+
+    expect(new Set(results.map((result) => result.path)).size).toBe(2);
+    expect(events).toHaveLength(2);
+    expect(new Set(events.map((event) => event.fields.occurrence_id)).size).toBe(2);
+    expect(new Set(events.map((event) => event.fields.content_sha256)).size).toBe(1);
   });
 
   it("archives a real typed diagnostic by its top-level agent ownership field", () => {
