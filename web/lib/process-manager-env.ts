@@ -90,6 +90,18 @@ export function shouldReplaceUnavailableDevContainerRoot(
   return environment.MENTIKO_GLOBAL_ROOT === "/app" && !appRootExists;
 }
 
+/** Resolve the platform port before generated process-manager defaults exist. */
+export function resolveManagedWebPort(
+  environment: EnvSource,
+  platform: Pick<ProcessConfig, "env"> | undefined,
+): string {
+  const configuredPort = platform?.env?.WEB_PORT || platform?.env?.PORT;
+  return environment.WEB_PORT
+    || environment.PORT
+    || (configuredPort ? expandEnvValue(configuredPort, environment) : "")
+    || "3000";
+}
+
 function expandEnvValue(value: string, sourceEnv: EnvSource) {
   return value.replace(/\$([A-Z_][A-Z0-9_]*)/g, (_, name) => sourceEnv[name] || "");
 }
