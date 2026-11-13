@@ -20,10 +20,20 @@ describe("typed peer link controller", () => {
       agents: [{ id: "agent1", name: "One", status: "pending", session: "" }, { id: "agent2", name: "Two", status: "pending", session: "" }],
     }));
     const spawned: string[] = [];
+    const spawnCommands: string[] = [];
     const sent: Array<[string, string]> = [];
     const removed: string[] = [];
+    const binDir = join(root, "bin");
+    mkdirSync(binDir, { recursive: true });
+    const configuredShell = join(binDir, "configured-shell");
+    writeFileSync(configuredShell, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+    const previousEnv = {
+      PATH: process.env.PATH,
+      SHELL: process.env.SHELL,
+      MENTIKO_RUNNER_V2_SHELL: process.env.MENTIKO_RUNNER_V2_SHELL,
+    };
     const transport = {
-      spawn: async (name: string) => { spawned.push(name); return {}; },
+      spawn: async (name: string, command?: string) => { spawned.push(name); spawnCommands.push(command || ""); return {}; },
       sendKeys: async (name: string, text: string) => { sent.push([name, text]); },
       capture: async (name: string) => `${name}\nSTATUS:DONE`,
       alive: async () => true,
@@ -33,12 +43,23 @@ describe("typed peer link controller", () => {
     mkdirSync(join(namespaceRoot, "peer-escalations", "link-test"), { recursive: true });
     writeFileSync(replyPath, "focus on failures");
 
-    await runPeerLinkController({
-      runId: "run-123", runDir, runsDir, namespaceId: "default", orgId: "default", managerSession: "link-test",
-      workspacePath: root, task: "review", agent1Name: "One", agent2Name: "Two", maxRounds: 1,
-    }, { transport, sleep: async () => {}, relay: (_command, capture) => capture });
+    process.env.PATH = binDir;
+    process.env.SHELL = "missing-user-shell";
+    process.env.MENTIKO_RUNNER_V2_SHELL = "configured-shell";
+    try {
+      await runPeerLinkController({
+        runId: "run-123", runDir, runsDir, namespaceId: "default", orgId: "default", managerSession: "link-test",
+        workspacePath: root, task: "review", agent1Name: "One", agent2Name: "Two", maxRounds: 1,
+      }, { transport, sleep: async () => {}, relay: (_command, capture) => capture });
+    } finally {
+      for (const [key, value] of Object.entries(previousEnv)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
 
     expect(spawned).toHaveLength(2);
+    expect(spawnCommands).toEqual([configuredShell, configuredShell]);
     expect(sent.some(([, text]) => text.includes("peer-manager"))).toBe(false);
     expect(removed).toEqual(spawned);
     expect(readRunJson(join(runDir, "run.json"))).toMatchObject({ status: "completed", rounds: 1 });
