@@ -22,6 +22,10 @@ import {
 import { runRoutedLaunchJob } from "@/lib/runner-v2/launch-job-runner";
 import { createRunRecord, updateRunJson } from "@/lib/runner-v2/run-state";
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
 function singleTargetFixture(runId: string) {
   const runDir = mkdtempSync(join(tmpdir(), "routed-launch-phase-restart-"));
   const runJsonPath = join(runDir, "run.json");
@@ -524,16 +528,25 @@ describe("routing-driven revisit of a terminal-attempt agent", () => {
     // Simulate the replay window: the worker died after the revisit attempt was
     // durably terminal but before the job completed, so the reconciler requeues
     // the SAME job id. It must not bootstrap a third occurrence.
-    updateRunJson(runJsonPath, (run) => ({
-      ...run!,
-      runnerV2: {
-        ...run!.runnerV2,
-        launchJobs: {
-          ...run!.runnerV2?.launchJobs,
-          [job.id]: { ...readRoutedLaunchJob(runJsonPath, job.id)!, status: "queued", lease: undefined },
+    updateRunJson(runJsonPath, (run) => {
+      if (!run) throw new Error("run.json not found");
+      const runnerV2 = run.runnerV2;
+      if (!isRecord(runnerV2)) throw new Error("runnerV2 state missing from run fixture");
+      const launchJobs = runnerV2.launchJobs;
+      if (!isRecord(launchJobs)) throw new Error("launchJobs state missing from run fixture");
+      const currentJob = launchJobs[job.id];
+      if (!isRecord(currentJob)) throw new Error("launch job missing from run fixture");
+      return {
+        ...run,
+        runnerV2: {
+          ...runnerV2,
+          launchJobs: {
+            ...launchJobs,
+            [job.id]: { ...currentJob, status: "queued", lease: undefined },
+          },
         },
-      },
-    }));
+      };
+    });
     const replay = await runRoutedLaunchJob({
       runJsonPath,
       jobId: job.id,
