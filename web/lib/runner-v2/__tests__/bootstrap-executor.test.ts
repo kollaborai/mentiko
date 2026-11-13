@@ -9,6 +9,7 @@ import {
   resolveRunnerV2LaunchEnv,
 } from "@/lib/runner-v2/bootstrap-executor";
 import { startLaunch } from "@/lib/runner-v2/adapters";
+import { buildAgentBootstrapPlan } from "@/lib/runner-v2/agent-bootstrap-plan";
 import { authorizeTypedRelaunch } from "@/lib/runner-v2/error-handling";
 import { claimRoutedLaunchJob, persistRoutedLaunchJob } from "@/lib/runner-v2/launch-job";
 import { transitionAgentAttempt } from "@/lib/runner-v2/agent-attempt";
@@ -43,6 +44,7 @@ function plan(root: string): AgentBootstrapPlan {
   return {
     agentId: "writer",
     agentName: "Writer",
+    cli: "claude",
     sessionPrefix: "writer",
     sessionName: "workspace-writer-run-1",
     monitorSessionName: "monitor-workspace-writer-run-1",
@@ -327,7 +329,15 @@ describe("runner-v2 bootstrap executor", () => {
 
   it("creates local pty session and sends start script plus existing instruction pointer", async () => {
     const root = tempDir();
-    writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
+    const chainPath = join(root, "chain.json");
+    const workspacePath = join(root, "workspace");
+    const profilesDir = join(root, "profiles");
+    mkdirSync(workspacePath, { recursive: true });
+    mkdirSync(profilesDir, { recursive: true });
+    writeFileSync(chainPath, JSON.stringify({
+      config: { cli: "chain-cli", project_root: workspacePath },
+      agents: [{ id: "writer", name: "Writer", cli: "codex", emits: "done" }],
+    }));
     const calls: Array<{ op: string; args: unknown[] }> = [];
     let instructionPointerSent = false;
     const executor = {
@@ -345,7 +355,20 @@ describe("runner-v2 bootstrap executor", () => {
     };
     const runJsonPath = seedRunJson(root);
 
-    const typedPlan = plan(root);
+    const typedPlan = buildAgentBootstrapPlan({
+      chainPath,
+      runDir: root,
+      runId: "run-1",
+      agentId: "writer",
+      workspacePath,
+      env: {
+        ...context(root).env,
+        AGENT_PROFILES_DIR: profilesDir,
+        EVENTS_DIR: join(root, "events"),
+        STATE_DIR: join(root, "state"),
+        MENTIKO_CLI: "environment-cli",
+      },
+    });
     typedPlan.runContextExports.TASK_ID = "TASK-12";
     typedPlan.runContextExports.TASK_CONTEXT = "TASK ID: TASK-12\nTITLE: Typed task";
     await executeLocalBootstrap(typedPlan, {
@@ -373,7 +396,7 @@ describe("runner-v2 bootstrap executor", () => {
     expect(instructions).toContain(`Artifact root: ARTIFACTS_DIR=${join(root, "artifacts")}`);
     expect(instructions).toContain(join(root, "artifacts", "writer-summary.json"));
     expect(instructions).toContain(join(root, "artifacts", "writer-summary.md"));
-    expect(instructions).toContain("'/repo/bin/mentiko' emit 'done'");
+    expect(instructions).toContain(`'${typedPlan.runContextExports.MENTIKO_BIN}' emit 'done'`);
     expect(instructions).toContain("Do NOT hand-write any .event file.");
     expect(instructions).toContain("Typed task context:");
     expect(instructions).toContain("TASK ID: TASK-12\nTITLE: Typed task");
@@ -386,11 +409,11 @@ describe("runner-v2 bootstrap executor", () => {
     expect(instructions).not.toContain("ensure-event-file");
     expect(instructions).not.toContain("monitor-chain-agent");
     const startScript = readFileSync(join(root, "artifacts", "writer-start.sh"), "utf8");
-    expect(startScript).toContain("runner-agent-profile.js");
-    expect(startScript).toContain("export PATH='/repo/bin:/bin'");
-    expect(startScript).toContain("export MENTIKO_BIN='/repo/bin/mentiko'");
+    expect(startScript).toContain(`export PATH='${typedPlan.runContextExports.PATH}'`);
+    expect(startScript).toContain(`export MENTIKO_BIN='${typedPlan.runContextExports.MENTIKO_BIN}'`);
     expect(startScript).toContain("export MENTIKO_RUN_ID='run-1'");
     expect(startScript).toContain("export MENTIKO_AGENT_ID='writer'");
+    expect(startScript).toContain("exec 'codex'");
     expect(startScript).not.toContain("SECRET_THAT_MUST_NOT_BE_IN_SCRIPT");
     expect(startScript).not.toContain("chain-runner.sh");
     expect(calls.map((call) => call.op)).toEqual(["remove", "spawn", "sendKeys", "sendKeys", "remove", "spawn"]);
@@ -410,8 +433,8 @@ describe("runner-v2 bootstrap executor", () => {
         env: expect.objectContaining({
           MENTIKO_RUNNER_V2_ACTIVE: "1",
           MENTIKO_RUNNER_V2_MODE: "typed-plan",
-          PATH: "/repo/bin:/bin",
-          MENTIKO_BIN: "/repo/bin/mentiko",
+          PATH: typedPlan.runContextExports.PATH,
+          MENTIKO_BIN: typedPlan.runContextExports.MENTIKO_BIN,
           MENTIKO_RUN_ID: "run-1",
           MENTIKO_AGENT_ID: "writer",
           MENTIKO_AGENT_ATTEMPT_ID: "run-1:writer:1",
@@ -440,15 +463,18 @@ describe("runner-v2 bootstrap executor", () => {
       sessions: ["workspace-writer-run-1"],
       agents: [{ id: "writer", status: "running", session: "workspace-writer-run-1" }],
     });
-    expect(executor.spawn).toHaveBeenLastCalledWith(
-      "monitor-workspace-writer-run-1",
-      bootstrapShell,
-      ["-c", "export MENTIKO_AGENT_ATTEMPT_ID='run-1:writer:1'; monitor-chain-agent workspace-writer-run-1"],
-      expect.objectContaining({
-        cwd: join(root, "workspace"),
-        env: expect.objectContaining({ MENTIKO_AGENT_ATTEMPT_ID: "run-1:writer:1" }),
-      }),
-    );
+    const monitorSpawn = executor.spawn.mock.calls[executor.spawn.mock.calls.length - 1];
+    const monitorShellArgs = monitorSpawn[2] as string[];
+    expect(monitorSpawn[0]).toBe("monitor-workspace-writer-run-1");
+    expect(monitorSpawn[1]).toBe(bootstrapShell);
+    expect(monitorShellArgs[0]).toBe("-c");
+    expect(monitorShellArgs[1]).toContain("export MENTIKO_AGENT_ATTEMPT_ID='run-1:writer:1'");
+    expect(monitorShellArgs[1]).toContain("exec node ");
+    expect(monitorShellArgs[1]).toContain("monitor-v2.js");
+    expect(monitorSpawn[3]).toMatchObject({
+      cwd: join(root, "workspace"),
+      env: expect.objectContaining({ MENTIKO_AGENT_ATTEMPT_ID: "run-1:writer:1" }),
+    });
   });
 
   it("launches a Git-backed agent in its run-owned worktree with baseline evidence", async () => {
@@ -1323,6 +1349,76 @@ describe("runner-v2 bootstrap executor", () => {
     expect(executor.sendRaw).toHaveBeenCalledWith("workspace-writer-run-1", "\r");
     const attempts = (JSON.parse(readFileSync(runJsonPath, "utf8")).runnerV2 || {}).attempts || [];
     expect(attempts[0]?.phase).toBe("instructions_submitted");
+  });
+
+  it("confirms Codex instruction delivery from the attempt's transcript user message", async () => {
+    const root = tempDir();
+    writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
+    const runJsonPath = seedRunJson(root);
+    const transcriptRoot = join(root, "codex-logs");
+    mkdirSync(transcriptRoot, { recursive: true });
+    const profilePath = join(root, "codex-profile.json");
+    const transcriptPath = join(transcriptRoot, "codex.jsonl");
+    writeFileSync(profilePath, JSON.stringify({ log_path: transcriptRoot }));
+    const bootstrapPlan = plan(root);
+    bootstrapPlan.runContextExports.MENTIKO_AGENT_PROFILE_PATH = profilePath;
+    let instructionPointerSent = false;
+    const executor = {
+      remove: jest.fn(async () => {}),
+      list: jest.fn(async () => []),
+      spawn: jest.fn(async (name: string) => ({ name, pid: 123 })),
+      sendKeys: jest.fn(async (_name: string, text: string) => {
+        if (!text.includes(bootstrapPlan.instructionPath)) return;
+        instructionPointerSent = true;
+        const timestamp = new Date().toISOString();
+        writeFileSync(transcriptPath, [
+          { type: "session_meta", timestamp, payload: { cwd: bootstrapPlan.projectRoot } },
+          { type: "event_msg", timestamp, payload: { type: "user_message", message: text } },
+        ].map((record) => JSON.stringify(record)).join("\n") + "\n");
+      }),
+      sendRaw: jest.fn(async () => {}),
+      capture: jest.fn(async () => instructionPointerSent ? "› Ask Codex to do anything" : "claude ready >"),
+    };
+
+    await executeLocalBootstrap(bootstrapPlan, context(root), executor);
+
+    expect(executor.sendRaw).not.toHaveBeenCalled();
+    const attempts = (JSON.parse(readFileSync(runJsonPath, "utf8")).runnerV2 || {}).attempts || [];
+    expect(attempts[0]?.phase).toBe("instructions_submitted");
+  });
+
+  it("ignores a prior attempt's Codex transcript when confirming the current pointer", async () => {
+    const root = tempDir();
+    writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
+    const runJsonPath = seedRunJson(root);
+    const transcriptRoot = join(root, "codex-logs");
+    mkdirSync(transcriptRoot, { recursive: true });
+    const profilePath = join(root, "codex-profile.json");
+    writeFileSync(profilePath, JSON.stringify({ log_path: transcriptRoot }));
+    const bootstrapPlan = plan(root);
+    bootstrapPlan.runContextExports.MENTIKO_AGENT_PROFILE_PATH = profilePath;
+    const oldTimestamp = new Date(Date.now() - 60_000).toISOString();
+    writeFileSync(join(transcriptRoot, "prior-attempt.jsonl"), [
+      { type: "session_meta", timestamp: oldTimestamp, payload: { cwd: bootstrapPlan.projectRoot } },
+      { type: "event_msg", timestamp: oldTimestamp, payload: { type: "user_message", message: bootstrapPlan.instructionPointer } },
+    ].map((record) => JSON.stringify(record)).join("\n") + "\n");
+    let instructionPointerSent = false;
+    const executor = {
+      remove: jest.fn(async () => {}),
+      list: jest.fn(async () => []),
+      spawn: jest.fn(async (name: string) => ({ name, pid: 123 })),
+      sendKeys: jest.fn(async (_name: string, text: string) => {
+        if (text.includes(bootstrapPlan.instructionPath)) instructionPointerSent = true;
+      }),
+      sendRaw: jest.fn(async () => {}),
+      capture: jest.fn(async () => instructionPointerSent ? "› Ask Codex to do anything" : "claude ready >"),
+    };
+
+    await executeLocalBootstrap(bootstrapPlan, context(root), executor);
+
+    const attempts = (JSON.parse(readFileSync(runJsonPath, "utf8")).runnerV2 || {}).attempts || [];
+    expect(attempts[0]?.phase).toBe("stuck");
+    expect(attempts[0]?.terminalReason).toBe("instruction_submission_unconfirmed");
   });
 
   it("does not record submission while the composer is absent during startup", async () => {

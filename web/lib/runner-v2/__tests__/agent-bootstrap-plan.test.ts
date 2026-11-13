@@ -32,6 +32,57 @@ function writeJson(path: string, value: unknown) {
 }
 
 describe("runner-v2 agent bootstrap plan", () => {
+  it.each([
+    {
+      name: "per-agent CLI wins over chain and environment values",
+      configCli: "chain-cli",
+      agentCli: "agent-cli",
+      environmentCli: "environment-cli",
+      expectedCli: "agent-cli",
+    },
+    {
+      name: "chain CLI wins over the environment value",
+      configCli: "chain-cli",
+      environmentCli: "environment-cli",
+      expectedCli: "chain-cli",
+    },
+    {
+      name: "MENTIKO_CLI wins when the chain has no CLI",
+      environmentCli: "environment-cli",
+      expectedCli: "environment-cli",
+    },
+    {
+      name: "claude is the default when no CLI is configured",
+      expectedCli: "claude",
+    },
+  ])("uses the $name in the generated start command", ({ configCli, agentCli, environmentCli, expectedCli }) => {
+    const root = tempDir();
+    const runDir = join(root, "runs", "run-cli-precedence");
+    const profilesDir = join(root, "profiles");
+    mkdirSync(runDir, { recursive: true });
+    mkdirSync(profilesDir, { recursive: true });
+    const chainPath = join(runDir, "chain.json");
+    writeJson(chainPath, {
+      config: configCli ? { cli: configCli } : {},
+      agents: [{ id: "writer", ...(agentCli ? { cli: agentCli } : {}) }],
+    });
+
+    const plan = buildAgentBootstrapPlan({
+      chainPath,
+      runDir,
+      runId: "run-cli-precedence",
+      agentId: "writer",
+      env: {
+        AGENT_PROFILES_DIR: profilesDir,
+        PATH: "/bin",
+        ...(environmentCli ? { MENTIKO_CLI: environmentCli } : {}),
+      },
+    });
+
+    expect(plan.cli).toBe(expectedCli);
+    expect(plan.localStartCommand).toContain(`exec '${expectedCli}'`);
+  });
+
   it("plans local profile-backed bootstrap context for the selected first agent", () => {
     const root = tempDir();
     const runDir = join(root, "runs", "run-123");
