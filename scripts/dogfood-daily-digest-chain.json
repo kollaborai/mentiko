@@ -10,12 +10,15 @@
   "agents": [
     {
       "id": "collector",
+      "name": "Collector",
       "cli": "claude",
+      "triggers": ["manual-start"],
       "task": "Run: for repo in mentiko mentiko-control-plane mentiko-www mentiko-marketplace mentiko-ai-gateway; do (cd ~/dev/platform/$repo && git log --since='24 hours ago' --oneline --all 2>/dev/null); done. Write the combined output to commits.txt. Then emit event commits-collected.",
       "emits": "commits-collected"
     },
     {
       "id": "grouper",
+      "name": "Grouper",
       "cli": "claude",
       "triggers": ["commits-collected"],
       "task": "Read commits.txt. Group commits into buckets: feat, fix, chore, docs, test. Write groups.md with one section per bucket, bullets per commit. Emit grouped.",
@@ -23,6 +26,7 @@
     },
     {
       "id": "writer",
+      "name": "Writer",
       "cli": "claude",
       "triggers": ["grouped"],
       "task": "Read groups.md. Write a 200-word narrative summary to digest.md: what shipped, what was fixed, what's in-flight. Prepend the date. Emit digest-ready.",
