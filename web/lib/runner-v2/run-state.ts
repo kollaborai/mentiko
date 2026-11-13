@@ -134,6 +134,38 @@ export function updateRunJson(
   }, onLockTimeout);
 }
 
+/**
+ * Mutate a legacy or mixed-schema run record under the same lock and idle
+ * incident invalidation used by typed run writes. Prefer updateRunJson when
+ * the caller requires the current RunRecord schema to validate.
+ */
+export function updateRunJsonRecord(
+  runJsonPath: string,
+  update: (run: Record<string, unknown> | undefined) => Record<string, unknown>,
+): Record<string, unknown> {
+  return withRunJsonLock(runJsonPath, () => {
+    let current: Record<string, unknown> | undefined;
+    if (existsSync(runJsonPath)) {
+      const parsed: unknown = JSON.parse(readFileSync(runJsonPath, "utf-8"));
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error(`Invalid run.json object: ${runJsonPath}`);
+      }
+      current = parsed as Record<string, unknown>;
+    }
+    const next = clearIdleIncidentOnActivity(
+      current as RunRecord | undefined,
+      update(current) as unknown as RunRecord,
+    ) as Record<string, unknown>;
+    if (current && current.id !== next.id) {
+      throw new Error(`run.json mutation cannot change id from ${String(current.id)} to ${String(next.id)}`);
+    }
+    if (current && next === current) return current;
+    if (current) writeRunJsonAtomic(runJsonPath, next);
+    else writeRunJsonExclusive(runJsonPath, next);
+    return next;
+  });
+}
+
 export function updateRunStatus(
   runJsonPath: string,
   status: RunStatus,

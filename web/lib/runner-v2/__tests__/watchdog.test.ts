@@ -119,6 +119,47 @@ describe("typed runner watchdog", () => {
     expect(existsSync(join(root, "events"))).toBe(false);
   });
 
+  it("warns when an old terminal agent has no completion timestamp", async () => {
+    const root = tempRoot();
+    const run = runRecord(now, { agents: [
+      { id: "writer", name: "Writer", status: "complete", session: "" },
+    ] });
+    const runPath = writeRun(root, run);
+    const result = await runTypedWatchdogScan({ runsDir: join(root, "runs"), eventsDir: join(root, "events"),
+      stateDir: join(root, "state"), now, reapOrphans: false,
+      dependencies: { transport: new FakeTransport(), dispatchHooks: () => {} } });
+
+    expect(result.errors).toEqual([]);
+    expect(result.stalled).toEqual([run.id]);
+    expect(JSON.parse(readFileSync(runPath, "utf8"))).toMatchObject({
+      status: "running",
+      runnerV2: { idleIncident: { status: "open", reason: expect.stringContaining("completion timestamp is missing") } },
+    });
+  });
+
+  it("warns when an old unfinished launch job has no update timestamp", async () => {
+    const root = tempRoot();
+    const run = runRecord(now, {
+      agents: [{ id: "writer", name: "Writer", status: "complete", session: "", completed: new Date(now.getTime() - 600_000).toISOString() }],
+      runnerV2: { launchJobs: { "job-1": {
+        version: 1, id: "job-1", occurrenceId: "occurrence-1", runId: "run-1", runDir: "/tmp/run",
+        chainPath: "/tmp/chain", targets: [{ agentId: "writer" }], environment: {},
+        status: "queued", attemptCount: 0, createdAt: new Date(now.getTime() - 600_000).toISOString(),
+      } } },
+    });
+    const runPath = writeRun(root, run);
+    const result = await runTypedWatchdogScan({ runsDir: join(root, "runs"), eventsDir: join(root, "events"),
+      stateDir: join(root, "state"), now, reapOrphans: false,
+      dependencies: { transport: new FakeTransport(), dispatchHooks: () => {} } });
+
+    expect(result.errors).toEqual([]);
+    expect(result.stalled).toEqual([run.id]);
+    expect(JSON.parse(readFileSync(runPath, "utf8"))).toMatchObject({
+      status: "running",
+      runnerV2: { idleIncident: { status: "open", reason: expect.stringContaining("launch job update timestamp is missing") } },
+    });
+  });
+
   it("flags the issue 21 two-completed-agent run shape", async () => {
     const root = tempRoot();
     const run = runRecord(now, {
@@ -194,7 +235,6 @@ describe("typed runner watchdog", () => {
     const recent = new Date(now.getTime() - 60_000).toISOString();
     const cases: Partial<RunRecord>[] = [
       { agents: [{ id: "a", name: "A", status: "complete", session: "", completed: recent }] },
-      { agents: [{ id: "a", name: "A", status: "complete", session: "" }] },
       { agents: [{ id: "a", name: "A", status: "complete", session: "", completed: old }], runnerV2: { launchJobs: { job: { version: 1, id: "job", occurrenceId: "occ", runId: "run-1", runDir: "/tmp/run", chainPath: "/tmp/chain", targets: [{ agentId: "a" }], environment: {}, status: "queued", attemptCount: 0, createdAt: old, updatedAt: recent } } } },
       { agents: [{ id: "a", name: "A", status: "complete", session: "", completed: old }], runnerV2: { pendingHandoffs: [{ pid: 4321, targetAgentIds: ["a"], startedAt: recent }] } },
       { agents: [{ id: "a", name: "A", status: "complete", session: "", completed: old }], runnerV2: { attempts: [{ id: "attempt-a", runId: "run-1", agentId: "a", phase: "instructions_submitted", instructionLedger: [], recoveryDecisionCount: 0, createdAt: recent, updatedAt: recent, transitions: [] }] } },

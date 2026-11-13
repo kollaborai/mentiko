@@ -29,7 +29,7 @@ export interface RoutedLaunchJob {
   lease?: RoutedLaunchJobLease;
   attemptCount: number;
   createdAt: string;
-  updatedAt: string;
+  updatedAt?: string;
   completedAt?: string;
   blockedAt?: string;
   lastError?: string;
@@ -380,7 +380,7 @@ function parseLaunchJob(value: unknown): RoutedLaunchJob {
     || !["queued", "leased", "completed", "blocked"].includes(String(job.status))
     || !Number.isSafeInteger(job.attemptCount)
     || typeof job.createdAt !== "string"
-    || typeof job.updatedAt !== "string") {
+    || (job.updatedAt !== undefined && typeof job.updatedAt !== "string")) {
     throw new Error("corrupt routed launch job record");
   }
   if (job.status === "leased") {

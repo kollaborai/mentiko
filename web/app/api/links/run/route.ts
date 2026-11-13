@@ -24,6 +24,7 @@ import {
   resolveLinkRunPaths,
   resolveLinkRunSecret,
 } from "@/lib/links/link-run-runtime";
+import { createRunRecordFile, type RunRecord } from "@/lib/runs/run-record";
 
 export const dynamic = "force-dynamic";
 
@@ -81,13 +82,12 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
 
   // create run directory with run.json
   const runId = `run-${Date.now()}`;
-  const { runsDir, runDir } = resolveLinkRunPaths(namespaceId, orgId, runId);
-  mkdirSync(runDir, { recursive: true });
+  const { runsDir } = resolveLinkRunPaths(namespaceId, orgId, runId);
 
   const agent1Name = resolveLinkAgentName(link.agents.agent1, namespaceId, orgId);
   const agent2Name = resolveLinkAgentName(link.agents.agent2, namespaceId, orgId);
 
-  const runObject = {
+  const runObject: RunRecord = {
     id: runId,
     type: "link",
     namespaceId,
@@ -110,7 +110,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     escalations: [],
   };
 
-  writeFileSync(join(runDir, "run.json"), JSON.stringify(runObject, null, 2));
+  const { runDir } = createRunRecordFile(runsDir, runObject);
 
   const authSecret = resolveLinkRunSecret();
   const effectiveGoal = specFile

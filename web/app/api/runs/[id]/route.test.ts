@@ -25,10 +25,10 @@ jest.mock("@/lib/tasks/task-store", () => ({ taskMergeMeta: jest.fn() }));
 jest.mock("@/lib/system/system-logger", () => ({ writeLog: jest.fn() }));
 jest.mock("@/lib/pty/pty-client", () => ({ pty: { remove: jest.fn() } }));
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { GET } from "./route";
+import { GET, PATCH } from "./route";
 
 declare global {
   var __MENTIKO_RUN_DETAIL_ROUTE_TEST_DIR__: string;
@@ -45,6 +45,16 @@ function writeRun(record: Record<string, unknown> | string): void {
 
 async function getRun(): Promise<Response> {
   return GET(new Request("http://localhost/api/runs/run-123") as never, {
+    params: Promise.resolve({ id: "run-123" }),
+  });
+}
+
+async function cancelRun(): Promise<Response> {
+  return PATCH(new Request("http://localhost/api/runs/run-123", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "cancel" }),
+  }) as never, {
     params: Promise.resolve({ id: "run-123" }),
   });
 }
@@ -135,5 +145,30 @@ describe("GET /api/runs/[id] canonical record reads", () => {
     expect(body.data.run.agents[0].durableOutput).toBe(
       "# Readiness Probe\n\nCompleted successfully.",
     );
+  });
+
+  it("cancels under the run JSON lock and clears an open idle incident", async () => {
+    writeRun({
+      id: "run-123",
+      chain: "cancel-idle-run",
+      goal: "cancel through the route",
+      started: "2026-07-15T12:00:00.000Z",
+      status: "running",
+      sessions: ["session-123"],
+      agents: [{ id: "writer", name: "Writer", session: "session-123", status: "running" }],
+      runnerV2: { idleIncident: { id: "incident-1", status: "open", detectedAt: "2026-07-15T12:10:00.000Z" } },
+    });
+
+    const response = await cancelRun();
+    const path = join(globalThis.__MENTIKO_RUN_DETAIL_ROUTE_TEST_DIR__, "run-123", "run.json");
+    const persisted = JSON.parse(readFileSync(path, "utf8")) as {
+      status: string;
+      runnerV2?: { idleIncident?: { status?: string; clearReason?: string } };
+    };
+
+    expect(response.status).toBe(200);
+    expect(persisted.status).toBe("cancelled");
+    expect(persisted.runnerV2?.idleIncident).toMatchObject({ status: "cleared", clearReason: "run state changed" });
+    expect(existsSync(`${path}.lock`)).toBe(false);
   });
 });

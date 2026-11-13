@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync } from "fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import {
@@ -7,6 +7,7 @@ import {
   readRunJson,
   updateRunAgent,
   updateRunJson,
+  updateRunJsonRecord,
   updateRunStatus,
 } from "../run-state";
 
@@ -55,6 +56,23 @@ describe("runner-v2 run-state", () => {
       extra: "kept",
     });
     expect(readFileSync(file, "utf-8")).toContain('"status": "running"');
+  });
+
+  it("locks legacy run mutations and clears an open idle incident", () => {
+    const file = runPath();
+    writeFileSync(file, JSON.stringify({
+      id: "run-legacy",
+      status: "running",
+      agents: [],
+      runnerV2: { idleIncident: { id: "incident-1", status: "open", detectedAt: "2026-07-15T12:00:00.000Z" } },
+    }));
+
+    const updated = updateRunJsonRecord(file, (current) => ({ ...current!, status: "stopped" }));
+
+    expect(updated.status).toBe("stopped");
+    expect(updated.runnerV2).toMatchObject({
+      idleIncident: { status: "cleared", clearReason: "run state changed" },
+    });
   });
 
   it("marks terminal run status with completed once and keeps existing completion time", () => {

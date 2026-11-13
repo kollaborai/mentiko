@@ -18,6 +18,19 @@ jest.mock("fs", () => ({
   writeFileSync: (...args: unknown[]) => mockWriteFileSync(...args),
 }));
 
+jest.mock("@/lib/runner-v2/run-state", () => {
+  const actual = jest.requireActual("@/lib/runner-v2/run-state");
+  return {
+    ...actual,
+    updateRunJsonRecord: (path: string, update: (run: Record<string, unknown> | undefined) => Record<string, unknown>) => {
+      const current = JSON.parse(mockReadFileSync(path, "utf-8") as string) as Record<string, unknown>;
+      const next = update(current);
+      mockWriteFileSync(path, JSON.stringify(next, null, 2));
+      return next;
+    },
+  };
+});
+
 jest.mock("path", () => jest.requireActual("path"));
 
 const mockTaskList = jest.fn();

@@ -462,7 +462,7 @@ function assessCompletedIdleRun(
   const ignorableSessions = new Set<string>();
   for (const agent of agents) {
     const name = stringValue(agent.session);
-    const completed = timestampMs(agent.completed);
+    const completed = timestampMs(agent.completed) ?? runStartedMs(run);
     if (!name || name.startsWith("monitor-") || name.startsWith("complete-")
       || !terminalStatuses.has(agent.status) || completed === undefined
       || now.getTime() - completed < RECENT_COMPLETION_HANDOFF_GRACE_MS) continue;
@@ -490,11 +490,20 @@ function assessCompletedIdleRun(
     || sessions.get(`monitor-${name}`)?.alive
     || hasLiveCompletionHandler(sessions, name)
   ))) return undefined;
-  if (base.outcome === "skip" && agents.some((agent) => !terminalStatuses.has(agent.status) || timestampMs(agent.completed) === undefined)) return undefined;
-  // For an empty agent list, the run start is the only known age evidence.
-  const completionMs = base.outcome === "stalled" ? timestampMs(run.started) : agents.length ? latestAgentCompletionMs(agents) : timestampMs(run.started);
+  if (base.outcome === "skip" && agents.some((agent) => !terminalStatuses.has(agent.status))) return undefined;
+  // Missing completion times are themselves useful idle evidence. Fall back to
+  // the newest known completion, then the run start, so old records with an
+  // incomplete timestamp set can still pass the grace window conservatively.
+  const completionMs = base.outcome === "stalled"
+    ? runStartedMs(run)
+    : agents.length
+      ? latestAgentCompletionMs(agents) ?? runStartedMs(run)
+      : runStartedMs(run);
   if (completionMs === undefined) return undefined;
   if (now.getTime() - completionMs < RECENT_COMPLETION_HANDOFF_GRACE_MS) return undefined;
+  const missingAgentCompletion = agents.some((agent) => (
+    terminalStatuses.has(agent.status) && timestampMs(agent.completed) === undefined
+  ));
   const oldEnough = (value: unknown) => {
     const timestamp = timestampMs(value) ?? completionMs;
     return now.getTime() - timestamp >= RECENT_COMPLETION_HANDOFF_GRACE_MS;
@@ -522,15 +531,20 @@ function assessCompletedIdleRun(
   for (const value of Object.values(jobs)) {
     const job = objectValue(value);
     if (job.status === "completed") continue;
-    const changed = timestampMs(job.updatedAt);
-    if (changed === undefined || now.getTime() - changed < RECENT_COMPLETION_HANDOFF_GRACE_MS) return undefined;
-    if (job.status === "blocked") recoveryProblem = "a launch job is blocked";
-    else if (job.status === "queued") recoveryProblem = "a launch job remains queued beyond the grace window";
+    const updatedAt = timestampMs(job.updatedAt);
+    const createdAt = timestampMs(job.createdAt);
+    const changed = updatedAt ?? createdAt ?? completionMs;
+    if (now.getTime() - changed < RECENT_COMPLETION_HANDOFF_GRACE_MS) return undefined;
+    const missingUpdateTimestamp = updatedAt === undefined;
+    const missingTimestampPrefix = missingUpdateTimestamp ? "a launch job update timestamp is missing; " : "";
+    if (job.status === "blocked") recoveryProblem = `${missingTimestampPrefix}a launch job is blocked`;
+    else if (job.status === "queued") recoveryProblem = `${missingTimestampPrefix}a launch job remains queued beyond the grace window`;
     else if (job.status === "leased") {
       const lease = objectValue(job.lease);
       const expires = timestampMs(lease.expiresAt);
-      if (expires === undefined || now.getTime() - expires < RECENT_COMPLETION_HANDOFF_GRACE_MS) return undefined;
-      recoveryProblem = `a launch job lease expired; owner ${Number.isInteger(lease.pid) && Number(lease.pid) > 0 ? (isProcessAlive(Number(lease.pid)) ? "process is alive" : "process is absent") : "is unknown"}`;
+      if (expires !== undefined && now.getTime() - expires < RECENT_COMPLETION_HANDOFF_GRACE_MS) return undefined;
+      const expiry = expires === undefined ? "lease expiry timestamp is missing; " : "lease expired; ";
+      recoveryProblem = `${missingTimestampPrefix}a launch job ${expiry}owner ${Number.isInteger(lease.pid) && Number(lease.pid) > 0 ? (isProcessAlive(Number(lease.pid)) ? "process is alive" : "process is absent") : "is unknown"}`;
     } else return undefined;
   }
   if (Array.isArray(state.attempts)) for (const value of state.attempts) {
@@ -546,7 +560,8 @@ function assessCompletedIdleRun(
     assessment: {
       outcome: "stalled", runId: run.id, lastAgent: agents[agents.length - 1]?.id || "unknown",
       lastAgentStatus: agents[agents.length - 1]?.status || "unknown", pendingAgents: [],
-      reason: recoveryProblem || "no active agents or pending handoffs after completion grace",
+      reason: recoveryProblem
+        || (missingAgentCompletion ? "an agent completion timestamp is missing; run age was used as the grace fallback" : "no active agents or pending handoffs after completion grace"),
     },
   };
 }
