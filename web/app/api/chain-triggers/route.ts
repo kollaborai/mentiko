@@ -1,10 +1,11 @@
 import { NextRequest } from "next/server";
-import { readdirSync, readFileSync, existsSync, writeFileSync, mkdirSync } from "fs";
+import { readdirSync, readFileSync, existsSync, mkdirSync } from "fs";
 import { join } from "path";
 import { config } from "@/lib/config";
 import { requirePermission } from "@/lib/auth/rbac-auth";
 import { BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
+import { emitRunnerEvent } from "@/lib/runner-v2/event-emitter";
 import { serializeRunnerEvent } from "@/lib/runner-v2/events";
 
 export const dynamic = "force-dynamic";
@@ -91,24 +92,42 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   const eventsDir = config.eventsDir;
   mkdirSync(eventsDir, { recursive: true });
 
-  const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-  const filename = `${timestamp}-${eventName}.event`;
-  const filePath = join(eventsDir, filename);
+  const timestamp = new Date().toISOString();
+  const filenameTimestamp = timestamp.replace(/[:.]/g, "-").slice(0, 19);
+  const filename = `${filenameTimestamp}-${eventName}.event`;
+  const runId = typeof body.runId === "string" ? body.runId : "";
 
-  let content: string;
   try {
-    content = serializeRunnerEvent({
+    serializeRunnerEvent({
       event: eventName,
       source,
-      runId: typeof body.runId === "string" ? body.runId : "",
-      timestamp: new Date().toISOString(),
+      runId,
+      timestamp,
       data,
     });
   } catch (error) {
     throw new BadRequest(error instanceof Error ? error.message : "Invalid runner event");
   }
 
-  writeFileSync(filePath, content, "utf-8");
+  let emitted;
+  try {
+    emitted = emitRunnerEvent({
+      event: eventName,
+      source,
+      runId,
+      scope: runId ? "run" : "ingress",
+      filenameMode: "api",
+      filename,
+      timestamp,
+      eventsDir,
+      data,
+    });
+  } catch (error) {
+    if (error instanceof Error && /run lifecycle event .* cannot use ingress scope/.test(error.message)) {
+      throw new BadRequest(error.message);
+    }
+    throw error;
+  }
 
-  return apiSuccess({ success: true, filename, path: filePath });
+  return apiSuccess({ success: true, filename: emitted.filename, path: emitted.path });
 });

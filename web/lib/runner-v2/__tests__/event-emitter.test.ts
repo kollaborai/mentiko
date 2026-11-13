@@ -58,11 +58,35 @@ describe("typed runner event emitter occurrence identity", () => {
     expect(parseRunnerEvent(readFileSync(first.path, "utf8")).fields).toMatchObject({
       idempotency_key: "operation-a",
       completion_occurrence_id: "completion-a",
+      occurrence_id: first.occurrenceId,
+      content_sha256: first.contentSha256,
     });
     expect(parseRunnerEvent(readFileSync(later.path, "utf8")).fields).toMatchObject({
       idempotency_key: "operation-b",
       completion_occurrence_id: "completion-b",
+      occurrence_id: later.occurrenceId,
     });
+  });
+
+  it("gives identical unkeyed emissions distinct occurrence ids and paths", () => {
+    const eventsDir = mkdtempSync(join(tmpdir(), "runner-event-emitter-distinct-"));
+    const first = emitRunnerEvent(input(eventsDir));
+    const second = emitRunnerEvent(input(eventsDir));
+
+    expect(first.occurrenceId).not.toBe(second.occurrenceId);
+    expect(first.path).not.toBe(second.path);
+    expect(parseRunnerEvent(readFileSync(first.path, "utf8")).data).toBe("terminal");
+    expect(parseRunnerEvent(readFileSync(second.path, "utf8")).data).toBe("terminal");
+    expect(readdirSync(eventsDir).filter((name) => name.endsWith(".event"))).toHaveLength(2);
+  });
+
+  it("rejects reuse of an idempotency key with changed logical content", () => {
+    const eventsDir = mkdtempSync(join(tmpdir(), "runner-event-emitter-key-conflict-"));
+    const base = { ...input(eventsDir), idempotencyKey: "one-operation" };
+    emitRunnerEvent(base);
+
+    expect(() => emitRunnerEvent({ ...base, data: "changed" }))
+      .toThrow(/idempotency key was reused with different content/);
   });
 
   it("rejects a relative event root before creating any file", () => {

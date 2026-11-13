@@ -53,14 +53,37 @@ describe("POST /api/events/emit", () => {
     });
 
     expect(response.status).toBe(200);
-    const files = readdirSync(eventsDir);
+    const files = readdirSync(eventsDir).filter((file) => file.endsWith(".event"));
     expect(files).toEqual(["reviewer-review-approved.event"]);
     expect(parseRunnerEvent(readFileSync(join(eventsDir, files[0]), "utf8"))).toMatchObject({
       event: "review-approved",
       source: "reviewer",
       runId: "run-123",
       data: "approved",
+      fields: {
+        occurrence_id: expect.any(String),
+        content_sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      },
     });
+  });
+
+  it("keeps byte-identical unkeyed emissions as distinct occurrences", async () => {
+    const body = {
+      event: "review-approved",
+      source: "reviewer",
+      runId: "run-123",
+      data: "approved",
+    };
+    const first = await emit(body);
+    const second = await emit(body);
+    const files = readdirSync(eventsDir).filter((file) => file.endsWith(".event"));
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(files).toHaveLength(2);
+    const records = files.map((file) => parseRunnerEvent(readFileSync(join(eventsDir, file), "utf8")));
+    expect(new Set(records.map((record) => record.fields.occurrence_id)).size).toBe(2);
+    expect(new Set(records.map((record) => record.fields.content_sha256)).size).toBe(1);
   });
 
   it("returns 400 and writes nothing for multiline physical fields", async () => {

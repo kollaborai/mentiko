@@ -85,7 +85,8 @@ describe("webhook receive auth (regression: finding #6)", () => {
       "x-hub-signature-256": sig,
     });
     expect(res.status).not.toBe(401);
-    const files = readdirSync("/tmp/mentiko-webhook-test-events");
+    const files = readdirSync("/tmp/mentiko-webhook-test-events")
+      .filter((file) => file.endsWith(".event"));
     expect(files).toHaveLength(1);
     expect(validateRawRunnerEvent(readFileSync(join("/tmp/mentiko-webhook-test-events", files[0]), "utf8"))).toMatchObject({
       valid: true,

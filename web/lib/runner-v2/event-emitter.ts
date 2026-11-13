@@ -1,11 +1,22 @@
-import { linkSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  linkSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { basename, join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import config from "@/lib/config";
 import { requireConfiguredEventsDir } from "@/lib/runner-v2/event-lifecycle";
+import { withEventSourceClaim } from "@/lib/runner-v2/event-source-claim";
 import { parseRunnerEvent, serializeRunnerEvent, type RunnerEventRecord } from "@/lib/runner-v2/events";
 
-export type RunnerEventFilenameMode = "canonical" | "diagnostic";
+export type RunnerEventFilenameMode = "canonical" | "diagnostic" | "api";
 export type RunnerEventScope = "run" | "ingress";
 
 const RUN_LIFECYCLE_EVENTS = new Set([
@@ -36,6 +47,8 @@ export interface EmitRunnerEventInput {
   eventsDir?: string;
   /** Stable identity for one completion operation across process replay. */
   idempotencyKey?: string;
+  /** Existing direct filename retained by compatibility producers. */
+  filename?: string;
   /** Distinguishes legitimate later attempts or loop visits. */
   occurrenceId?: string;
   diagnosticAgent?: string;
@@ -47,6 +60,8 @@ export interface EmitRunnerEventInput {
 export interface EmitRunnerEventResult {
   path: string;
   filename: string;
+  occurrenceId: string;
+  contentSha256: string;
   record: RunnerEventRecord;
 }
 
@@ -62,6 +77,16 @@ export function emitRunnerEvent(input: EmitRunnerEventInput): EmitRunnerEventRes
 
   const eventsDir = requireConfiguredEventsDir(input.eventsDir || config.eventsDir);
   const timestamp = input.timestamp ?? new Date().toISOString();
+  const semanticExtensions = eventExtensionFields(input);
+  const contentSha256 = eventContentSha256({
+    scope: input.scope,
+    event: input.event,
+    source: input.source,
+    runId: input.runId,
+    data: input.data,
+    extensionFields: semanticExtensions,
+  });
+  const occurrenceId = buildOccurrenceId(input, contentSha256);
   const content = serializeRunnerEvent({
     event: input.event,
     source: input.source,
@@ -69,30 +94,50 @@ export function emitRunnerEvent(input: EmitRunnerEventInput): EmitRunnerEventRes
     timestamp,
     processed: false,
     data: input.data,
-    extensionFields: eventExtensionFields(input),
+    extensionFields: {
+      ...semanticExtensions,
+      occurrence_id: occurrenceId,
+      content_sha256: contentSha256,
+    },
   });
-  const requestedFilename = buildRunnerEventFilename(input, timestamp);
-  const temporaryPath = join(
-    eventsDir,
-    `.${basename(requestedFilename)}.${process.pid}.${randomUUID()}.tmp`,
-  );
+  const requestedFilename = input.filename || buildRunnerEventFilename(input, timestamp);
+  const logicalSource = input.filenameMode === "diagnostic"
+    ? input.diagnosticAgent!
+    : input.source;
 
-  writeFileSync(temporaryPath, content, { encoding: "utf8", flag: "wx" });
-  try {
-    return persistWithoutClobber({
+  return withEventSourceClaim(eventsDir, {
+    scope: input.scope,
+    runId: input.runId,
+    source: logicalSource,
+  }, () => {
+    const existing = input.idempotencyKey
+      ? findIdempotentOccurrence(eventsDir, input, contentSha256)
+      : undefined;
+    if (existing) return existing;
+
+    const temporaryPath = join(
       eventsDir,
-      requestedFilename,
-      temporaryPath,
-      content,
-      idempotencyKey: input.idempotencyKey,
-    });
-  } finally {
+      `.${basename(requestedFilename)}.${process.pid}.${randomUUID()}.tmp`,
+    );
+    writeFileSync(temporaryPath, content, { encoding: "utf8", flag: "wx" });
     try {
-      unlinkSync(temporaryPath);
-    } catch {
-      // The hard-link claim may already have consumed cleanup in another branch.
+      return persistWithoutClobber({
+        eventsDir,
+        requestedFilename,
+        temporaryPath,
+        content,
+        occurrenceId,
+        contentSha256,
+        idempotencyKey: input.idempotencyKey,
+      });
+    } finally {
+      try {
+        unlinkSync(temporaryPath);
+      } catch {
+        // The hard-link publish consumed the temporary path, or the write failed.
+      }
     }
-  }
+  });
 }
 
 export function diagnosticEventData(input: {
@@ -110,6 +155,13 @@ export function diagnosticEventData(input: {
 }
 
 function assertModeRequirements(input: EmitRunnerEventInput): void {
+  if (input.filename !== undefined
+    && (basename(input.filename) !== input.filename || !input.filename.endsWith(".event"))) {
+    throw new Error("Runner event filename must be a direct *.event filename.");
+  }
+  if (input.idempotencyKey !== undefined && !input.idempotencyKey.trim()) {
+    throw new Error("Event idempotency key must not be empty.");
+  }
   if (input.scope === "run" && !input.runId) {
     throw new Error("run-scoped events require a run id.");
   }
@@ -156,71 +208,163 @@ function persistWithoutClobber(input: {
   requestedFilename: string;
   temporaryPath: string;
   content: string;
+  occurrenceId: string;
+  contentSha256: string;
   idempotencyKey?: string;
 }): EmitRunnerEventResult {
   const requestedPath = join(input.eventsDir, input.requestedFilename);
   try {
     linkSync(input.temporaryPath, requestedPath);
-    return resultFor(requestedPath, input.requestedFilename, input.content);
+    return resultFor(requestedPath, input.content);
   } catch (error) {
     if (!isAlreadyExists(error)) throw error;
   }
 
-  const existingContent = readFileSync(requestedPath, "utf8");
-  if (eventsAreSemanticallyIdentical(existingContent, input.content)) {
-    return resultFor(requestedPath, input.requestedFilename, existingContent);
-  }
+  const existing = readExistingEvent(requestedPath);
+  if (existing && isSameOccurrence(existing.record, input)) return resultFor(requestedPath, existing.content);
 
-  for (let attempt = 0;; attempt += 1) {
-    const collisionFilename = collisionSafeFilename(
-      input.requestedFilename,
-      attempt === 0 ? input.idempotencyKey : undefined,
-    );
+  for (let attempt = 0; ; attempt += 1) {
+    if (input.idempotencyKey && attempt > 0) {
+      throw new Error(`Event occurrence path is occupied by different content: ${requestedPath}`);
+    }
+    const collisionFilename = collisionSafeFilename(input.requestedFilename, input.occurrenceId, attempt > 0);
     const collisionPath = join(input.eventsDir, collisionFilename);
     try {
       linkSync(input.temporaryPath, collisionPath);
-      return resultFor(collisionPath, collisionFilename, input.content);
+      return resultFor(collisionPath, input.content);
     } catch (error) {
       if (!isAlreadyExists(error)) throw error;
     }
-    const collisionContent = readFileSync(collisionPath, "utf8");
-    if (eventsAreSemanticallyIdentical(collisionContent, input.content)) {
-      return resultFor(collisionPath, collisionFilename, collisionContent);
-    }
+    const collision = readExistingEvent(collisionPath);
+    if (collision && isSameOccurrence(collision.record, input)) return resultFor(collisionPath, collision.content);
   }
 }
 
-function resultFor(path: string, filename: string, content: string): EmitRunnerEventResult {
+function resultFor(path: string, content: string): EmitRunnerEventResult {
+  const record = parseRunnerEvent(content);
   return {
     path,
-    filename,
-    record: { ...parseRunnerEvent(content), path },
+    filename: basename(path),
+    occurrenceId: record.fields.occurrence_id || "",
+    contentSha256: record.fields.content_sha256 || "",
+    record: { ...record, path },
   };
 }
 
-function eventsAreSemanticallyIdentical(left: string, right: string): boolean {
+function findIdempotentOccurrence(
+  eventsDir: string,
+  input: EmitRunnerEventInput,
+  contentSha256: string,
+): EmitRunnerEventResult | undefined {
+  for (const root of [eventsDir, join(eventsDir, "archive")]) {
+    let entries: import("node:fs").Dirent[];
+    try {
+      entries = readdirSync(root, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith(".event")) continue;
+      const path = join(root, entry.name);
+      const existing = readExistingEvent(path);
+      if (!existing || !sameLogicalSource(existing.record, input)) continue;
+      if (existing.record.fields.idempotency_key !== input.idempotencyKey) continue;
+      if (existing.record.fields.content_sha256 === contentSha256
+        || eventContentSha256FromRecord(existing.record, input.scope) === contentSha256) {
+        return resultFor(path, existing.content);
+      }
+      throw new Error(`Event idempotency key was reused with different content: ${input.idempotencyKey}`);
+    }
+  }
+  return undefined;
+}
+
+function readExistingEvent(path: string): { content: string; record: RunnerEventRecord } | undefined {
+  let descriptor: number;
   try {
-    const leftEvent = parseRunnerEvent(left);
-    const rightEvent = parseRunnerEvent(right);
-    return semanticEventFields(leftEvent) === semanticEventFields(rightEvent);
+    descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   } catch {
-    return false;
+    return undefined;
+  }
+  try {
+    if (!fstatSync(descriptor).isFile()) return undefined;
+    const content = readFileSync(descriptor, "utf8");
+    return { content, record: parseRunnerEvent(content) };
+  } catch {
+    return undefined;
+  } finally {
+    closeSync(descriptor);
   }
 }
 
-function semanticEventFields(event: RunnerEventRecord): string {
-  return JSON.stringify(Object.entries(event.fields)
-    .filter(([field]) => field !== "timestamp")
+function isSameOccurrence(
+  event: RunnerEventRecord,
+  input: { occurrenceId: string; contentSha256: string; idempotencyKey?: string },
+): boolean {
+  return event.fields.occurrence_id === input.occurrenceId
+    && event.fields.content_sha256 === input.contentSha256
+    && event.fields.idempotency_key === input.idempotencyKey;
+}
+
+function sameLogicalSource(event: RunnerEventRecord, input: EmitRunnerEventInput): boolean {
+  return event.event === input.event
+    && event.source === input.source
+    && event.runId === input.runId;
+}
+
+function eventContentSha256(input: {
+  scope: RunnerEventScope;
+  event: string;
+  source: string;
+  runId: string;
+  data: string;
+  extensionFields?: Record<string, string>;
+}): string {
+  const extensionFields = Object.fromEntries(Object.entries(input.extensionFields || {})
+    .filter(([field]) => field !== "idempotency_key")
     .sort(([left], [right]) => left.localeCompare(right)));
+  return createHash("sha256").update(JSON.stringify({
+    scope: input.scope,
+    event: input.event,
+    source: input.source,
+    runId: input.runId,
+    data: input.data,
+    extensionFields,
+  })).digest("hex");
 }
 
-function collisionSafeFilename(filename: string, idempotencyKey?: string): string {
+function eventContentSha256FromRecord(event: RunnerEventRecord, scope: RunnerEventScope): string {
+  const extensionFields = Object.fromEntries(Object.entries(event.fields)
+    .filter(([field]) => !["event", "source", "run_id", "timestamp", "processed", "data", "idempotency_key", "occurrence_id", "content_sha256"].includes(field))
+    .sort(([left], [right]) => left.localeCompare(right)));
+  return eventContentSha256({
+    scope,
+    event: event.event,
+    source: event.source,
+    runId: event.runId,
+    data: event.data,
+    extensionFields,
+  });
+}
+
+function buildOccurrenceId(input: EmitRunnerEventInput, contentSha256: string): string {
+  if (!input.idempotencyKey) return randomUUID();
+  return createHash("sha256").update(JSON.stringify([
+    input.scope,
+    input.runId,
+    input.source,
+    input.idempotencyKey,
+    contentSha256,
+  ])).digest("hex");
+}
+
+function collisionSafeFilename(filename: string, occurrenceId: string, randomSuffix: boolean): string {
   const stem = filename.endsWith(".event") ? filename.slice(0, -".event".length) : filename;
-  if (idempotencyKey) {
-    const digest = createHash("sha256").update(idempotencyKey).digest("hex").slice(0, 20);
-    return `${stem}-occurrence-${digest}.event`;
-  }
-  return `${stem}-collision-${process.pid}-${randomUUID()}.event`;
+  const suffix = randomSuffix ? `-${process.pid}-${randomUUID()}` : `-${occurrenceId}`;
+  const preferred = `${stem}-occurrence${suffix}.event`;
+  return Buffer.byteLength(preferred, "utf8") <= 255
+    ? preferred
+    : `event-occurrence-${occurrenceId}${randomSuffix ? `-${randomUUID()}` : ""}.event`;
 }
 
 function isAlreadyExists(error: unknown): boolean {
@@ -237,6 +381,7 @@ function buildRunnerEventFilename(input: EmitRunnerEventInput, timestamp: string
     const agent = filenameComponent(input.diagnosticAgent!);
     return `${filenameTimestamp(timestamp)}-${runId}${agent}-${event}.event`;
   }
+  if (input.filenameMode === "api") return `${source}-${event}.event`;
   return `${runId}${source}-${event}.event`;
 }
 

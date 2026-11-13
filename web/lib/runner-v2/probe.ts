@@ -1,8 +1,8 @@
-import { existsSync, mkdirSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync } from "fs";
 import { join } from "path";
 import { applyTypedExecutorPlan, type AdapterResult } from "@/lib/runner-v2/adapters";
 import { runCompletionPipeline } from "@/lib/runner-v2/completion-pipeline";
-import { parseRunnerEvent, serializeRunnerEvent } from "@/lib/runner-v2/events";
+import { emitRunnerEvent } from "@/lib/runner-v2/event-emitter";
 import { buildTypedExecutorPlan, type TypedExecutorPlan } from "@/lib/runner-v2/executor";
 import { dispatchExternalEffects, type ExternalEffectsDispatchResult } from "@/lib/runner-v2/external-effects";
 import { isRunnerV2Enabled } from "@/lib/runner-v2/flags";
@@ -39,20 +39,20 @@ export function runSyntheticRunnerV2Probe(input: RunnerV2ProbeInput): RunnerV2Pr
 
   const runJsonPath = join(input.runDir, "run.json");
   const eventsDir = input.eventsDir || input.env?.EVENTS_DIR || config.eventsDir;
-  const eventPath = join(eventsDir, "run-probe-writer-draft-ready.event");
-  const eventContent = serializeRunnerEvent({
+  mkdirSync(input.runDir, { recursive: true });
+  mkdirSync(eventsDir, { recursive: true });
+  const emittedEvent = emitRunnerEvent({
     event: "draft-ready",
     source: "writer-run-probe",
     runId: "run-probe",
-    timestamp: new Date().toISOString(),
+    scope: "run",
+    filenameMode: "canonical",
+    filename: "run-probe-writer-draft-ready.event",
+    eventsDir,
+    idempotencyKey: "runner-v2-probe:writer-draft-ready",
     data: "",
   });
-  const event = { ...parseRunnerEvent(eventContent), path: eventPath };
-  mkdirSync(input.runDir, { recursive: true });
-  mkdirSync(eventsDir, { recursive: true });
-  if (!existsSync(eventPath)) {
-    writeFileSync(eventPath, eventContent);
-  }
+  const event = emittedEvent.record;
 
   if (!existsSync(runJsonPath)) {
     const run = createRunRecord({ chainName: "Probe Chain", goal: "probe" });

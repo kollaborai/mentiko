@@ -11,15 +11,14 @@
 
 import { NextRequest } from "next/server";
 import { createHmac } from "crypto";
-import { writeFileSync, mkdirSync } from "fs";
-import { join } from "path";
+import { mkdirSync } from "fs";
 import { getWebhookById, logWebhookEvent } from "@/lib/webhooks/webhook-storage";
 import type { WebhookEvent, WebhookEventType, WebhookSource } from "@/lib/webhooks/webhook-types";
 import { config } from "@/lib/config";
 import { timingSafeEqual } from "@/lib/auth/security";
 import { BadRequest, NotFound, Forbidden, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { serializeRunnerEvent } from "@/lib/runner-v2/events";
+import { emitRunnerEvent } from "@/lib/runner-v2/event-emitter";
 
 export const dynamic = "force-dynamic";
 
@@ -146,20 +145,21 @@ function emitEventFile(eventName: string, source: string, data: string): string 
   const eventsDir = config.eventsDir;
   mkdirSync(eventsDir, { recursive: true });
 
-  const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-  const filename = `${timestamp}-${eventName}.event`;
-  const filePath = join(eventsDir, filename);
-
-  const content = serializeRunnerEvent({
+  const timestamp = new Date().toISOString();
+  const filenameTimestamp = timestamp.replace(/[:.]/g, "-").slice(0, 19);
+  const filename = `${filenameTimestamp}-${eventName}.event`;
+  const emitted = emitRunnerEvent({
     event: eventName,
     source,
     runId: "",
-    timestamp: new Date().toISOString(),
+    scope: "ingress",
+    filenameMode: "api",
+    filename,
+    timestamp,
+    eventsDir,
     data,
   });
-
-  writeFileSync(filePath, content, "utf-8");
-  return filename;
+  return emitted.filename;
 }
 
 export const POST = withErrorHandling(async (
