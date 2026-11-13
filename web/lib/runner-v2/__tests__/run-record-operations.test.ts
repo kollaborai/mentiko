@@ -77,21 +77,24 @@ describe("typed Run Record operations", () => {
     const { runsDir, runJsonPath } = fixture({
       status: "pending",
       agents: [
-        { id: "agent1", name: "Peer one", session: "", status: "pending" },
-        { id: "agent2", name: "Peer two", session: "", status: "pending" },
+        { id: "agent1", name: "Peer one", session: "", status: "pending", lastMessage: "queued: waiting for an active agent slot" },
+        { id: "agent2", name: "Peer two", session: "", status: "pending", lastMessage: "queued: waiting for an active agent slot" },
       ],
     });
-    startPeerRun(runJsonPath, "peer-one", "peer-two");
-    completePeerRun(runJsonPath, 4, new Date("2026-07-15T00:04:00Z"));
-    expect(readRunRecordAt(runsDir, "run-1")).toMatchObject({
+    const started = startPeerRun(runJsonPath, "peer-one", "peer-two");
+    expect(started.agents.map((agent) => agent.lastMessage)).toEqual([undefined, undefined]);
+
+    const completed = completePeerRun(runJsonPath, 4, new Date("2026-07-15T00:04:00Z"));
+    expect(completed).toMatchObject({
       status: "completed",
       sessions: ["peer-one", "peer-two"],
       rounds: 4,
       agents: [
-        { id: "agent1", session: "peer-one", status: "complete" },
-        { id: "agent2", session: "peer-two", status: "complete" },
+        { id: "agent1", session: "peer-one", status: "complete", lastMessage: undefined },
+        { id: "agent2", session: "peer-two", status: "complete", lastMessage: undefined },
       ],
     });
+    expect(readRunRecordAt(runsDir, "run-1").agents.map((agent) => agent.lastMessage)).toEqual([undefined, undefined]);
   });
 
   it("preserves unrelated legacy artifacts and replaces only owned activity entries", () => {

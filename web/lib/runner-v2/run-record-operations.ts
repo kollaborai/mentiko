@@ -178,8 +178,12 @@ export function startPeerRun(
     const current = requireCurrent(value, runJsonPath);
     if (current.agents.length < 2) throw new Error("peer run requires at least two agents");
     const agents = [...current.agents];
-    agents[0] = { ...agents[0], session: firstSession, status: "running" };
-    agents[1] = { ...agents[1], session: secondSession, status: "running" };
+    agents[0] = {
+      ...agents[0], session: firstSession, status: "running", lastMessage: undefined,
+    };
+    agents[1] = {
+      ...agents[1], session: secondSession, status: "running", lastMessage: undefined,
+    };
     return {
       ...current,
       status: "running",
@@ -201,8 +205,12 @@ export function completePeerRun(
     const current = requireCurrent(value, runJsonPath);
     if (current.agents.length < 2) throw new Error("peer run requires at least two agents");
     const agents = [...current.agents];
-    agents[0] = { ...agents[0], status: "complete", completed: agents[0].completed || timestamp };
-    agents[1] = { ...agents[1], status: "complete", completed: agents[1].completed || timestamp };
+    agents[0] = {
+      ...agents[0], status: "complete", completed: agents[0].completed || timestamp, lastMessage: undefined,
+    };
+    agents[1] = {
+      ...agents[1], status: "complete", completed: agents[1].completed || timestamp, lastMessage: undefined,
+    };
     return { ...current, status: "completed", completed: timestamp, agents, rounds };
   });
 }
