@@ -477,22 +477,24 @@ export async function startDurableDecisionPhaseOnce<T extends DurableDecisionPha
   };
 }
 
+interface DecisionPostOptions {
+  authToken?: string;
+  baseUrl?: string;
+  fetchImpl?: typeof fetch;
+}
+
 function internalDecisionPost(
   namespaceId: string,
   orgId: string,
   path: string,
   workspacePath?: string,
   body?: unknown,
-  // Route-specific auth override. Most internal nudges hit routes guarded by
-  // checkAuth's service-secret bypass (raw BETTER_AUTH_SECRET); the import
-  // route guards with requireInternalAuth("decision-import"), which needs the
-  // HMAC-derived token instead -- callers targeting it must pass one.
-  authToken?: string,
-  baseUrl?: string,
+  options: DecisionPostOptions = {},
 ): void {
   const port = process.env.WEB_PORT || process.env.PORT || 3000;
-  const secret = authToken ?? (process.env.BETTER_AUTH_SECRET || "");
-  const origin = baseUrl || `http://localhost:${port}`;
+  const secret = options.authToken ?? (process.env.BETTER_AUTH_SECRET || "");
+  const origin = options.baseUrl || `http://localhost:${port}`;
+  const fetchImpl = options.fetchImpl ?? globalThis.fetch;
   const qs = workspacePath ? `?workspace=${encodeURIComponent(workspacePath)}` : "";
   const key = `${namespaceId}:${orgId}:${path}:${workspacePath ?? ""}:${JSON.stringify(body ?? {})}`;
   if (inFlightDecisionNudges.has(key)) return;
@@ -503,7 +505,7 @@ function internalDecisionPost(
     let lastError: Error | undefined;
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        const response = await fetch(`${origin}${path}${qs}`, {
+        const response = await fetchImpl(`${origin}${path}${qs}`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -585,6 +587,7 @@ export function triggerDecisionImportReplay(input: {
   selectedOptionId?: string;
   runDir?: string;
   webUrl?: string;
+  fetchImpl?: typeof fetch;
 }): void {
   const token = (input.runDir && readRunScopedDecisionImportToken(input.runDir))
     || resolveInternalAuthSecret("decision-import");
@@ -598,8 +601,11 @@ export function triggerDecisionImportReplay(input: {
       runId: input.runId,
       ...(input.selectedOptionId ? { selectedOptionId: input.selectedOptionId } : {}),
     },
-    token,
-    input.webUrl,
+    {
+      authToken: token,
+      baseUrl: input.webUrl,
+      fetchImpl: input.fetchImpl,
+    },
   );
 }
 
@@ -625,8 +631,9 @@ export function advanceDecisionAfterPhase(input: {
   namespaceId: string;
   orgId: string;
   decision: Decision;
+  fetchImpl?: typeof fetch;
 }): void {
-  const { namespaceId, orgId, decision } = input;
+  const { namespaceId, orgId, decision, fetchImpl } = input;
   if (
     decision.resolution
     || decision.status === "approved"
@@ -666,6 +673,7 @@ export function advanceDecisionAfterPhase(input: {
       path,
       ws,
       body,
+      { fetchImpl },
     );
     return;
   }
@@ -678,12 +686,13 @@ export function advanceDecisionAfterPhase(input: {
       runId: recovery.pointer.runId,
       workspacePath: ws,
       selectedOptionId: recovery.selectedOptionId,
+      fetchImpl,
     });
     return;
   }
 
   if (decision.status === "briefed" && (!gf || !gf.round1 || gf.round1.status === "pending")) {
-    internalDecisionPost(namespaceId, orgId, `/api/decisions/${decision.id}/guided/questions`, ws);
+    internalDecisionPost(namespaceId, orgId, `/api/decisions/${decision.id}/guided/questions`, ws, undefined, { fetchImpl });
     return;
   }
 
@@ -694,7 +703,7 @@ export function advanceDecisionAfterPhase(input: {
     gf.round1.questions.length > 0 &&
     gf.round2.status === "pending"
   ) {
-    internalDecisionPost(namespaceId, orgId, `/api/decisions/${decision.id}/guided/options`, ws);
+    internalDecisionPost(namespaceId, orgId, `/api/decisions/${decision.id}/guided/options`, ws, undefined, { fetchImpl });
     return;
   }
 
@@ -728,6 +737,7 @@ export function advanceDecisionAfterPhase(input: {
           : "Resolved from the explicitly selected option once its plan completed.",
         ...(policyApproved ? { autoApprovedByWorkspacePolicy: true } : {}),
       },
+      { fetchImpl },
     );
     return;
   }
@@ -743,6 +753,7 @@ export function advanceDecisionAfterPhase(input: {
       `/api/decisions/${decision.id}/guided/plan`,
       ws,
       { selectedOptionId: recommendedOptionId },
+      { fetchImpl },
     );
     return;
   }

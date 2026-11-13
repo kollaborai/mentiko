@@ -939,7 +939,7 @@ describe("runner-v2 bootstrap executor", () => {
     expect(executor.spawn.mock.calls.length).toBe(spawnsAfterFirst); // refused: nothing new spawned
   });
 
-  it("keeps one authorization per agent so a retry and a routed revisit coexist in the same run", async () => {
+  it("keeps separate authorizations for different agents in the same run", async () => {
     const root = tempDir();
     writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }, { id: "designer" }] }));
     const runJsonPath = seedRunJson(root, "running");
@@ -1000,6 +1000,106 @@ describe("runner-v2 bootstrap executor", () => {
       .map((attempt: { id: string }) => attempt.id);
     expect(attempts).toEqual(expect.arrayContaining(["run-1:writer:2", "run-1:designer:2"])); // both admitted
     expect(executor.spawn.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  describe("same-agent retry and routed revisit authorizations coexist (#25)", () => {
+    const terminalWriter = {
+      id: "run-1:writer:1",
+      runId: "run-1",
+      agentId: "writer",
+      phase: "completed",
+      desiredPhase: "completed",
+      observedPhase: "completed",
+      terminalReason: "completed_from_event",
+      instructionLedger: [],
+      recoveryDecisionCount: 0,
+      createdAt: "2026-07-15T00:00:00.000Z",
+      updatedAt: "2026-07-15T00:01:00.000Z",
+      transitions: [],
+    };
+
+    function seedSameAgentRun() {
+      const root = tempDir();
+      writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
+      const runJsonPath = seedRunJson(root, "running");
+      const job = persistRoutedLaunchJob({
+        runJsonPath,
+        occurrenceId: "run-1:writer:writer-done",
+        runId: "run-1",
+        runDir: root,
+        chainPath: join(root, "chain.json"),
+        targetAgentIds: ["writer"],
+      });
+      claimRoutedLaunchJob({ runJsonPath, jobId: job.id, ownerId: "gate-owner", pid: process.pid, leaseMs: 60_000 });
+      updateRunJson(runJsonPath, (run) => ({
+        ...run!,
+        runnerV2: { ...(run!.runnerV2 as object), attempts: [terminalWriter] },
+      }));
+      const routedContext = {
+        ...context(root),
+        env: {
+          ...context(root).env,
+          MENTIKO_LAUNCH_JOB_ID: job.id,
+          MENTIKO_LAUNCH_JOB_OWNER_ID: "gate-owner",
+          MENTIKO_COMPLETION_OCCURRENCE_ID: job.occurrenceId,
+        },
+      };
+      return { root, runJsonPath, job, routedContext };
+    }
+
+    function writerAttemptIds(runJsonPath: string) {
+      return (JSON.parse(readFileSync(runJsonPath, "utf8")).runnerV2.attempts as Array<{ id: string; launchJobId?: string }>)
+        .filter((attempt) => attempt.id.startsWith("run-1:writer:"))
+        .map((attempt) => [attempt.id, attempt.launchJobId ?? null]);
+    }
+
+    it("scenario A: a retry authorization is not overwritten by a later routed revisit", async () => {
+      const { root, runJsonPath, job, routedContext } = seedSameAgentRun();
+      authorizeTypedRelaunch(runJsonPath, "run-1", { agentId: "writer" });
+      authorizeTypedRelaunch(runJsonPath, "run-1", { agentId: "writer", launchJobId: job.id });
+
+      const stored = JSON.parse(readFileSync(runJsonPath, "utf8")).relaunchAuthorizations.writer;
+      expect(Object.keys(stored).sort()).toEqual(["direct", `job:${job.id}`]);
+
+      const executor = executorWithCapture("claude ready >");
+      await executeLocalBootstrap(plan(root), context(root), executor);
+      transitionAgentAttempt({ runJsonPath, attemptId: "run-1:writer:2", to: "completed" });
+      await executeLocalBootstrap(plan(root), routedContext, executor);
+      transitionAgentAttempt({ runJsonPath, attemptId: "run-1:writer:3", to: "completed" });
+
+      expect(writerAttemptIds(runJsonPath)).toEqual([
+        ["run-1:writer:1", null],
+        ["run-1:writer:2", null],
+        ["run-1:writer:3", job.id],
+      ]);
+      await expect(executeLocalBootstrap(plan(root), context(root), executor)).rejects.toThrow(
+        "agent writer has terminal attempt run-1:writer:3 (completed)",
+      );
+    });
+
+    it("scenario B: a routed authorization is not overwritten by a later retry", async () => {
+      const { root, runJsonPath, job, routedContext } = seedSameAgentRun();
+      authorizeTypedRelaunch(runJsonPath, "run-1", { agentId: "writer", launchJobId: job.id });
+      authorizeTypedRelaunch(runJsonPath, "run-1", { agentId: "writer" });
+
+      const stored = JSON.parse(readFileSync(runJsonPath, "utf8")).relaunchAuthorizations.writer;
+      expect(Object.keys(stored).sort()).toEqual(["direct", `job:${job.id}`]);
+
+      const executor = executorWithCapture("claude ready >");
+      await executeLocalBootstrap(plan(root), routedContext, executor);
+      transitionAgentAttempt({ runJsonPath, attemptId: "run-1:writer:2", to: "completed" });
+      await executeLocalBootstrap(plan(root), context(root), executor);
+      transitionAgentAttempt({ runJsonPath, attemptId: "run-1:writer:3", to: "completed" });
+
+      expect(writerAttemptIds(runJsonPath)).toEqual([
+        ["run-1:writer:1", null],
+        ["run-1:writer:2", job.id],
+        ["run-1:writer:3", null],
+      ]);
+      await expect(executeLocalBootstrap(plan(root), routedContext, executor)).rejects.toThrow(
+        "agent writer has terminal attempt run-1:writer:3 (completed)",
+      );
+    });
   });
 
   it("makes two absent fan-out targets durably acceptable through real bootstrap registration", async () => {

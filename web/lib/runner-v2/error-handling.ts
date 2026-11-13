@@ -12,6 +12,8 @@ import {
   runnerAgentStatePath,
   transitionRunnerAgentState,
 } from "@/lib/runner-v2/agent-state";
+import { readRunnerV2AttemptState } from "@/lib/runner-v2/agent-attempt";
+import { withRelaunchAuthorization } from "@/lib/runner-v2/relaunch-authorization";
 import { updateRunJson } from "@/lib/runner-v2/run-state";
 
 export type AgentErrorType = "error" | "timeout";
@@ -235,14 +237,16 @@ function resolveTypedLauncher(bundlePath: string): string {
  * Authorize one fresh typed occurrence for a non-terminal run, scoped to one
  * agent and, when routed, one launch-job occurrence. The typed bootstrap's
  * assertBootstrapLaunchable gate admits a direct relaunch of an agent whose
- * latest attempt is terminal only when a durable authorization matches that
- * agent and occurrence and is newer than the attempt's updatedAt;
- * retry/handler relaunches are detached direct bootstraps (not
- * routed-completion replays), so they need this durable authorization rather
- * than an env occurrence claim. Authorizations live in a per-agent map
- * (relaunchAuthorizations): a retry of one agent and a routed revisit of
- * another in the same run each keep their own entry instead of overwriting
- * each other. They are deliberately not resumedAt: resumedAt also feeds the
+ * latest attempt is terminal when a durable authorization matches that agent
+ * and occurrence and has not yet been consumed by a matching attempt created
+  * at or after the authorization. Retry/handler relaunches are detached direct
+  * bootstraps (not routed-completion replays), so they need this durable
+ * authorization rather than an env occurrence claim. Authorizations live in
+ * a per-agent map
+ * (relaunchAuthorizations[agentId][direct|job:<launchJobId>]): a retry and a
+ * routed revisit of the same agent, or of different agents, each keep their
+ * own occurrence entry instead of overwriting each other. They are deliberately
+ * not resumedAt: resumedAt also feeds the
  * watchdog and reconciler grace windows, so every relaunch would otherwise
  * suspend stall detection. Identity-guarded and best-effort: a missing record
  * or write failure never changes the durable retry/handler decision, and a
@@ -260,13 +264,14 @@ export function authorizeTypedRelaunch(
       if (current.id !== runId) return current; // never authorize a foreign record
       return {
         ...current,
-        relaunchAuthorizations: {
-          ...current.relaunchAuthorizations,
-          [scope.agentId]: {
-            launchJobId: scope.launchJobId,
-            authorizedAt: new Date().toISOString(),
-          },
-        },
+        relaunchAuthorizations: withRelaunchAuthorization({
+          run: current,
+          runId,
+          agentId: scope.agentId,
+          launchJobId: scope.launchJobId,
+          authorizedAt: new Date().toISOString(),
+          attempts: readRunnerV2AttemptState(runJsonPath).attempts,
+        }),
       };
     });
   } catch {
