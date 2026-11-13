@@ -340,15 +340,16 @@ describe("runner-v2 bootstrap executor", () => {
     expect(startScript).not.toContain("SECRET_THAT_MUST_NOT_BE_IN_SCRIPT");
     expect(startScript).not.toContain("chain-runner.sh");
     expect(calls.map((call) => call.op)).toEqual(["remove", "spawn", "sendKeys", "sendKeys", "remove", "spawn"]);
+    const bootstrapShell = executor.spawn.mock.calls[0][1] as string;
     expect(executor.sendKeys).toHaveBeenNthCalledWith(
       1,
       "workspace-writer-run-1",
       // no trailing \r: the daemon appends the return itself (sendKeys sets enter:true)
-      `cd '${join(root, "workspace")}' && bash '${join(root, "artifacts", "writer-start.sh")}' || exit $?`,
+      `exec '${bootstrapShell}' '${join(root, "artifacts", "writer-start.sh")}'`,
     );
     expect(executor.spawn).toHaveBeenCalledWith(
       "workspace-writer-run-1",
-      "zsh",
+      expect.any(String),
       [],
       expect.objectContaining({
         cwd: join(root, "workspace"),
@@ -362,7 +363,7 @@ describe("runner-v2 bootstrap executor", () => {
     );
     expect(executor.spawn).not.toHaveBeenCalledWith(
       "workspace-writer-run-1",
-      "zsh",
+      expect.any(String),
       [],
       expect.objectContaining({
         env: expect.objectContaining({
@@ -384,8 +385,8 @@ describe("runner-v2 bootstrap executor", () => {
     });
     expect(executor.spawn).toHaveBeenLastCalledWith(
       "monitor-workspace-writer-run-1",
-      "bash",
-      ["-lc", "export MENTIKO_AGENT_ATTEMPT_ID='run-1:writer:1'; monitor-chain-agent workspace-writer-run-1"],
+      bootstrapShell,
+      ["-c", "export MENTIKO_AGENT_ATTEMPT_ID='run-1:writer:1'; monitor-chain-agent workspace-writer-run-1"],
       expect.objectContaining({
         cwd: join(root, "workspace"),
         env: expect.objectContaining({ MENTIKO_AGENT_ATTEMPT_ID: "run-1:writer:1" }),
@@ -606,7 +607,7 @@ describe("runner-v2 bootstrap executor", () => {
     );
     expect(executor.spawn).toHaveBeenCalledWith(
       "workspace-writer-run-1",
-      "zsh",
+      expect.any(String),
       [],
       expect.anything(),
     );
@@ -746,7 +747,7 @@ describe("runner-v2 bootstrap executor", () => {
 
     expect(executor.spawn).toHaveBeenCalledWith(
       "workspace-writer-run-1",
-      "zsh",
+      expect.any(String),
       [],
       expect.objectContaining({ cwd: join(root, "workspace") }),
     );
@@ -815,7 +816,7 @@ describe("runner-v2 bootstrap executor", () => {
 
     expect(executor.spawn).toHaveBeenCalledWith(
       "workspace-writer-run-1",
-      "zsh",
+      expect.any(String),
       [],
       expect.objectContaining({ cwd: join(root, "workspace") }),
     );
@@ -1201,7 +1202,7 @@ describe("runner-v2 bootstrap executor", () => {
 
     expect(executor.spawn).toHaveBeenCalledWith(
       "workspace-writer-run-1",
-      "zsh",
+      expect.any(String),
       [],
       expect.objectContaining({ cwd: join(root, "workspace") }),
     );
@@ -1329,8 +1330,8 @@ describe("runner-v2 bootstrap executor", () => {
     expect(executor.remove).toHaveBeenCalledTimes(2); // only the pre-spawn idempotent removes
     expect(executor.spawn).toHaveBeenLastCalledWith(
       "monitor-workspace-writer-run-1",
-      "bash",
-      ["-lc", "export MENTIKO_AGENT_ATTEMPT_ID='run-1:writer:1'; monitor-chain-agent workspace-writer-run-1"],
+      expect.any(String),
+      ["-c", "export MENTIKO_AGENT_ATTEMPT_ID='run-1:writer:1'; monitor-chain-agent workspace-writer-run-1"],
       expect.anything(),
     );
   });
@@ -1374,8 +1375,8 @@ describe("runner-v2 bootstrap executor", () => {
       expect(attempts[0]?.phase).toBe("stuck");
       expect(executor.spawn).toHaveBeenLastCalledWith(
         "monitor-workspace-writer-run-1",
-        "bash",
-        ["-lc", "export MENTIKO_AGENT_ATTEMPT_ID='run-1:writer:1'; monitor-chain-agent workspace-writer-run-1"],
+        expect.any(String),
+        ["-c", "export MENTIKO_AGENT_ATTEMPT_ID='run-1:writer:1'; monitor-chain-agent workspace-writer-run-1"],
         expect.anything(),
       );
     } finally {
@@ -1418,8 +1419,8 @@ describe("runner-v2 bootstrap executor", () => {
       expect(attempts[0]?.phase).toBe("stuck");
       expect(executor.spawn).toHaveBeenLastCalledWith(
         "monitor-workspace-writer-run-1",
-        "bash",
-        ["-lc", "export MENTIKO_AGENT_ATTEMPT_ID='run-1:writer:1'; monitor-chain-agent workspace-writer-run-1"],
+        expect.any(String),
+        ["-c", "export MENTIKO_AGENT_ATTEMPT_ID='run-1:writer:1'; monitor-chain-agent workspace-writer-run-1"],
         expect.anything(),
       );
     } finally {
@@ -1665,6 +1666,75 @@ describe("runner-v2 bootstrap executor", () => {
     ]));
   });
 
+  it("prefers the configured executable shell over SHELL", async () => {
+    const fixture = shellBootstrapFixture({
+      installed: ["configured-shell", "user-shell", "bash"],
+      configuredShell: "configured-shell",
+      shell: "user-shell",
+    });
+
+    await executeLocalBootstrap(plan(fixture.root), fixture.context, fixture.executor);
+
+    const agentSpawn = fixture.executor.spawn.mock.calls[0];
+    expect(agentSpawn[1]).toBe(join(fixture.binDir, "configured-shell"));
+    expect(agentSpawn[3]?.env?.SHELL).toBe(join(fixture.binDir, "configured-shell"));
+    expect(fixture.executor.spawn.mock.calls[1][1]).toBe(join(fixture.binDir, "configured-shell"));
+    expect(fixture.executor.sendKeys.mock.calls[0][1]).toBe(
+      `exec '${join(fixture.binDir, "configured-shell")}' '${join(fixture.root, "artifacts", "writer-start.sh")}'`,
+    );
+  });
+
+  it("uses SHELL when the configured shell is missing", async () => {
+    const fixture = shellBootstrapFixture({
+      installed: ["user-shell", "bash"],
+      configuredShell: "missing-configured-shell",
+      shell: "user-shell",
+    });
+
+    await executeLocalBootstrap(plan(fixture.root), fixture.context, fixture.executor);
+
+    expect(fixture.executor.spawn.mock.calls[0][1]).toBe(join(fixture.binDir, "user-shell"));
+  });
+
+  it("skips a non-executable configured shell and falls back to bash", async () => {
+    const fixture = shellBootstrapFixture({
+      installed: ["configured-shell", "bash", "sh"],
+      nonExecutable: ["configured-shell"],
+      configuredShell: "configured-shell",
+      shell: "missing-user-shell",
+    });
+
+    await executeLocalBootstrap(plan(fixture.root), fixture.context, fixture.executor);
+
+    expect(fixture.executor.spawn.mock.calls[0][1]).toBe(join(fixture.binDir, "bash"));
+  });
+
+  it("uses sh when bash and the configured shells are unavailable", async () => {
+    const fixture = shellBootstrapFixture({
+      installed: ["sh"],
+      configuredShell: "missing-configured-shell",
+      shell: "missing-user-shell",
+    });
+
+    await executeLocalBootstrap(plan(fixture.root), fixture.context, fixture.executor);
+
+    expect(fixture.executor.spawn.mock.calls[0][1]).toBe(join(fixture.binDir, "sh"));
+    expect(fixture.executor.spawn.mock.calls[1][1]).toBe(join(fixture.binDir, "sh"));
+  });
+
+  it("fails clearly before spawning when no executable shell is available", async () => {
+    const fixture = shellBootstrapFixture({
+      installed: [],
+      configuredShell: "missing-configured-shell",
+      shell: "missing-user-shell",
+    });
+
+    await expect(executeLocalBootstrap(plan(fixture.root), fixture.context, fixture.executor)).rejects.toThrow(
+      "No executable shell found for runner-v2 bootstrap",
+    );
+    expect(fixture.executor.spawn).not.toHaveBeenCalled();
+  });
+
   it("preserves legacy permissive readiness when the selected profile policy is disabled and fail-closed is off", async () => {
     const previous = process.env.MENTIKO_READINESS_FAIL_CLOSED;
     delete process.env.MENTIKO_READINESS_FAIL_CLOSED;
@@ -1701,6 +1771,43 @@ function context(root: string): RunnerV2LaunchContext {
       MENTIKO_ORG_ROOT: root,
       PATH: "/bin",
     },
+  };
+}
+
+function shellBootstrapFixture(input: {
+  installed: string[];
+  nonExecutable?: string[];
+  configuredShell: string;
+  shell: string;
+}) {
+  const root = tempDir();
+  const binDir = join(root, "bin");
+  mkdirSync(binDir, { recursive: true });
+  const nonExecutable = new Set(input.nonExecutable || []);
+  for (const name of input.installed) {
+    const executable = !nonExecutable.has(name);
+    const mode = executable ? 0o700 : 0o600;
+    const path = join(binDir, name);
+    writeFileSync(path, "#!/bin/sh\nexit 0\n", { mode });
+    chmodSync(path, mode);
+  }
+  writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
+  seedRunJson(root);
+
+  const baseContext = context(root);
+  return {
+    root,
+    binDir,
+    context: {
+      ...baseContext,
+      env: {
+        ...baseContext.env,
+        PATH: binDir,
+        MENTIKO_RUNNER_V2_SHELL: input.configuredShell,
+        SHELL: input.shell,
+      },
+    },
+    executor: executorWithCapture("claude ready >"),
   };
 }
 
