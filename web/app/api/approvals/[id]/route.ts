@@ -5,10 +5,40 @@ import {
   getApprovalRequest,
   updateApprovalRequest,
 } from "@/lib/system/approval-storage";
-import { BadRequest, NotFound } from "@/lib/api-errors";
+import { BadRequest, Forbidden, NotFound, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
+import { getSessionUser } from "@/lib/auth/auth-bridge";
+import type { ApprovalRequest } from "@/lib/system/approval-types";
 
 export const dynamic = "force-dynamic";
+
+type ApprovalActor = NonNullable<ApprovalRequest["approvalActor"]>;
+
+async function requireSessionActor(request: Request): Promise<ApprovalActor> {
+  const session = await getSessionUser(request);
+  if (!session?.id) throw new Unauthorized("Authenticated session user required");
+  return {
+    user_id: session.id,
+    ...(session.sessionId ? { session_id: session.sessionId } : {}),
+    ...(session.role ? { org_role: session.role } : {}),
+  };
+}
+
+function enforceApprover(approval: ApprovalRequest, actor: ApprovalActor): void {
+  const metadataApprovers = Array.isArray(approval.metadata?.approvers)
+    ? approval.metadata.approvers.filter((value): value is string => typeof value === "string")
+    : undefined;
+  const approvers = approval.approvers ?? metadataApprovers;
+  if (approvers?.length && !approvers.includes(actor.user_id)) {
+    throw new Forbidden("Authenticated session user is not an allowed approver");
+  }
+}
+
+function recordActor(approval: ApprovalRequest, actor: ApprovalActor): void {
+  approval.approvedBy = actor.user_id;
+  approval.approvalActor = actor;
+  approval.approvedAt = new Date().toISOString();
+}
 
 export const GET = withErrorHandling(async (
   request: NextRequest,
@@ -37,6 +67,8 @@ export const POST = withErrorHandling(async (
   const perm = await requirePermission(request, "manage_chains");
   if (perm) return perm;
 
+  const actor = await requireSessionActor(request);
+
   const namespaceId = await getNamespaceIdFromRequest(request);
   const orgId = await getOrgIdFromRequest(request);
   const { id } = await context.params;
@@ -57,11 +89,10 @@ export const POST = withErrorHandling(async (
     throw new BadRequest("Request expired");
   }
 
-  const userId = request.headers.get("x-user-id") || "unknown";
+  enforceApprover(approval, actor);
 
   approval.status = "approved";
-  approval.approvedBy = userId;
-  approval.approvedAt = new Date().toISOString();
+  recordActor(approval, actor);
 
   await updateApprovalRequest(namespaceId, orgId, approval);
 
@@ -74,6 +105,8 @@ export const PATCH = withErrorHandling(async (
 ) => {
   const perm = await requirePermission(request, "manage_chains");
   if (perm) return perm;
+
+  const actor = await requireSessionActor(request);
 
   const namespaceId = await getNamespaceIdFromRequest(request);
   const orgId = await getOrgIdFromRequest(request);
@@ -89,14 +122,41 @@ export const PATCH = withErrorHandling(async (
     throw new BadRequest(`Request already ${approval.status}`);
   }
 
+  enforceApprover(approval, actor);
+
   const body = await request.json();
   const { reason } = body as { reason?: string };
 
   approval.status = "rejected";
   approval.rejectionReason = reason;
-  approval.approvedBy = request.headers.get("x-user-id") || "unknown";
-  approval.approvedAt = new Date().toISOString();
+  recordActor(approval, actor);
 
+  await updateApprovalRequest(namespaceId, orgId, approval);
+
+  return apiSuccess({ approval });
+});
+
+export const DELETE = withErrorHandling(async (
+  request: NextRequest,
+  context: { params: Promise<{ id: string }> }
+) => {
+  const perm = await requirePermission(request, "manage_chains");
+  if (perm) return perm;
+
+  const actor = await requireSessionActor(request);
+  const namespaceId = await getNamespaceIdFromRequest(request);
+  const orgId = await getOrgIdFromRequest(request);
+  const { id } = await context.params;
+  const approval = await getApprovalRequest(namespaceId, orgId, id);
+
+  if (!approval) throw new NotFound("Approval request", id);
+  if (approval.status !== "pending") {
+    throw new BadRequest(`Request already ${approval.status}`);
+  }
+
+  enforceApprover(approval, actor);
+  approval.status = "cancelled";
+  recordActor(approval, actor);
   await updateApprovalRequest(namespaceId, orgId, approval);
 
   return apiSuccess({ approval });

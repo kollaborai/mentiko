@@ -9,7 +9,14 @@ import { applyLifecycleEvent, type LifecycleEffectDeps } from "@/lib/orchestrati
 import { hydrateLifecycleState } from "@/lib/orchestration/task-lifecycle-hydrate";
 import type { TaskLifecycleState } from "@/lib/orchestration/task-lifecycle-types";
 import type { TaskRecord } from "@/lib/tasks/task-store-types";
-import type { Decision, ExecutionPlan, Option, TailoredOption } from "@/lib/decisions/decision-types";
+import type {
+  Decision,
+  DecisionActorIdentity,
+  DecisionResolutionChannel,
+  ExecutionPlan,
+  Option,
+  TailoredOption,
+} from "@/lib/decisions/decision-types";
 import { BadRequest, NotFound } from "@/lib/api-errors";
 import { triggerAutoRunScan } from "@/lib/runs/auto-run-service";
 import {
@@ -34,7 +41,8 @@ export interface ResolveDecisionToTasksInput {
   notes?: string;
   workspaceId?: string;
   workspacePath?: string;
-  selectedBy?: string;
+  actor: DecisionActorIdentity;
+  channel: DecisionResolutionChannel;
 }
 
 export interface ResolveDecisionToTasksResult {
@@ -234,8 +242,13 @@ async function resolveDecisionToTasksUnlocked({
   notes,
   workspaceId,
   workspacePath,
-  selectedBy = "user",
+  actor,
+  channel,
 }: ResolveDecisionToTasksInput): Promise<ResolveDecisionToTasksResult> {
+  if (!actor.user_id.trim()) {
+    throw new BadRequest("Session user required to resolve decision");
+  }
+
   const decision = getDecision(namespaceId, orgId, decisionId, workspacePath);
   const resolvedWorkspacePath = workspacePath ?? decision?.workspacePath;
   const taskWorkspaceId = workspaceId ?? resolvedWorkspacePath;
@@ -322,6 +335,7 @@ async function resolveDecisionToTasksUnlocked({
         orgId,
         {
           workspace_id: taskWorkspaceId,
+          created_by: actor.user_id,
           title: planTask.title,
           description: [
             planTask.description,
@@ -373,6 +387,7 @@ async function resolveDecisionToTasksUnlocked({
       orgId,
       {
         workspace_id: taskWorkspaceId,
+        created_by: actor.user_id,
         title: `${decision.title || decision.prompt}: ${option.name}`,
         description: [
           ...descriptionParts,
@@ -397,6 +412,7 @@ async function resolveDecisionToTasksUnlocked({
         orgId,
         {
           workspace_id: taskWorkspaceId,
+          created_by: actor.user_id,
           title: planTask.title,
           description: [
             planTask.description,
@@ -448,6 +464,7 @@ async function resolveDecisionToTasksUnlocked({
       orgId,
       {
         workspace_id: taskWorkspaceId,
+        created_by: actor.user_id,
         title: `${decision.title || decision.prompt}: ${option.name}`,
         description: descriptionParts.join("\n"),
         issue_type: "task",
@@ -523,8 +540,10 @@ async function resolveDecisionToTasksUnlocked({
       status: "approved",
       resolution: {
         selectedOptionId,
-        selectedBy,
+        selectedBy: actor.user_id,
         selectedAt: resolvedAt,
+        actor,
+        channel,
         notes,
         taskId: epicId,
         ...(allTaskIds.length > 1 ? { taskIds: allTaskIds } : {}),
