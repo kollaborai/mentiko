@@ -586,7 +586,11 @@ function transcriptIdentityFromContext(context?: LiveMonitorContext): Transcript
     ? context.env.MENTIKO_TRANSCRIPT_INSTRUCTION_PATH
     : undefined;
  return {
-   workspacePath: typeof run?.workspacePath === "string" ? run.workspacePath : undefined,
+   // The CLI records the cwd it ran in: the attempt's project root, which for an
+   // isolated run is the node worktree, never the registered source workspace.
+   workspacePath: typeof context.env.MENTIKO_PROJECT_ROOT === "string" && context.env.MENTIKO_PROJECT_ROOT
+     ? context.env.MENTIKO_PROJECT_ROOT
+     : typeof run?.workspacePath === "string" ? run.workspacePath : undefined,
     attemptStartedAt: attempt?.createdAt || envAttemptStartedAt,
    runId: context.runId,
     instructionPath: attempt?.instructionLedger.at(-1)?.instructionPath || envInstructionPath,
