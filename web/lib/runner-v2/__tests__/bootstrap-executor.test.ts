@@ -241,6 +241,8 @@ describe("runner-v2 bootstrap executor", () => {
       artifactsDir: join(root, "artifacts"),
       eventsDir: join(root, "events"),
       runContextExports: {
+        PATH: "/repo/bin:/usr/bin:/bin",
+        MENTIKO_BIN: "/repo/bin/mentiko",
         MENTIKO_RUN_ID: "run-1",
         RUN_ID: "run-1",
         MENTIKO_AGENT_ID: "writer",
@@ -251,13 +253,55 @@ describe("runner-v2 bootstrap executor", () => {
     expect(contract).toContain("Run context: RUN_ID=run-1, MENTIKO_AGENT_ID=writer");
     expect(contract).toContain(`- ${join(root, "artifacts", "writer-summary.json")}`);
     expect(contract).toContain(`- ${join(root, "artifacts", "writer-summary.md")}`);
-    expect(contract).toContain("mentiko emit done");
+    expect(contract).toContain("MENTIKO_BIN='/repo/bin/mentiko' MENTIKO_AGENT_ID='writer' MENTIKO_RUN_ID='run-1' PATH='/repo/bin:/usr/bin:/bin' '/repo/bin/mentiko' emit 'done'");
+    expect(contract).toContain("It supplies the runner environment inline in case your command shell does not inherit it");
     expect(contract).toContain("Do NOT hand-write any .event file.");
     expect(contract).toContain("Do not put literal line breaks inside JSON strings");
     expect(contract).toContain("Before emitting completion, validate the summary with: node -e");
     expect(contract).toContain("The final non-empty line must be exactly AGENT_COMPLETE.");
     expect(contract.split("\n")).toContain("The completion marker line must contain exactly the token AGENT_COMPLETE and nothing else.");
     expect(contract.split("\n")).toContain("The final non-empty line must be exactly AGENT_COMPLETE. Do not write anything after it. Do not put AGENT_COMPLETE inside files or earlier in your response.");
+  });
+
+  it("emits completion with runner context when the agent command shell dropped its environment", () => {
+    const root = tempDir();
+    const binDir = join(root, "bin");
+    mkdirSync(binDir, { recursive: true });
+    const mentikoBin = join(binDir, "mentiko");
+    writeFileSync(mentikoBin, [
+      "#!/bin/sh",
+      "printf '%s\\n' \"$MENTIKO_BIN\" \"$MENTIKO_AGENT_ID\" \"$MENTIKO_RUN_ID\" \"$PATH\" \"$*\"",
+      "",
+    ].join("\n"));
+    chmodSync(mentikoBin, 0o700);
+
+    const contract = buildTypedCompletionContract({
+      agentId: "writer",
+      artifactsDir: join(root, "artifacts"),
+      eventsDir: join(root, "events"),
+      runContextExports: {
+        PATH: "/usr/bin:/bin",
+        MENTIKO_BIN: mentikoBin,
+        MENTIKO_RUN_ID: "run-80",
+        MENTIKO_AGENT_ID: "writer",
+        MENTIKO_AGENT_EMITS: "draft-ready",
+      },
+    });
+    const emitCommand = contract.split("\n").find((line) => line.trimStart().startsWith("MENTIKO_BIN="));
+    expect(emitCommand).toBeDefined();
+
+    const output = execFileSync("/bin/sh", ["-c", emitCommand?.trim() || ""], {
+      encoding: "utf8",
+      env: { NODE_ENV: "test", PATH: "/usr/bin:/bin" },
+    });
+
+    expect(output.trim().split("\n")).toEqual([
+      mentikoBin,
+      "writer",
+      "run-80",
+      `${binDir}:/usr/bin:/bin`,
+      "emit draft-ready",
+    ]);
   });
 
   it("keeps generation-result punctuation exact in the core-generation contract", () => {
@@ -267,6 +311,8 @@ describe("runner-v2 bootstrap executor", () => {
       eventsDir: "/run/events",
       coreGenerationChain: true,
       runContextExports: {
+        PATH: "/repo/bin:/usr/bin:/bin",
+        MENTIKO_BIN: "/repo/bin/mentiko",
         MENTIKO_RUN_ID: "run-generation",
         MENTIKO_AGENT_ID: "generator",
         MENTIKO_AGENT_EMITS: "generation-complete",
@@ -275,8 +321,8 @@ describe("runner-v2 bootstrap executor", () => {
 
     expect(contract).toContain("/run/artifacts/generation-result.json.");
     expect(contract).not.toContain("generation-result.json.\",,");
-    expect(contract).toContain("mentiko emit generation-complete");
-    expect(contract).toContain("the generation file remains authoritative.");
+    expect(contract).toContain("'/repo/bin/mentiko' emit 'generation-complete'");
+    expect(contract).toContain("the generation file remains authoritative:");
   });
 
   it("creates local pty session and sends start script plus existing instruction pointer", async () => {
@@ -327,7 +373,7 @@ describe("runner-v2 bootstrap executor", () => {
     expect(instructions).toContain(`Artifact root: ARTIFACTS_DIR=${join(root, "artifacts")}`);
     expect(instructions).toContain(join(root, "artifacts", "writer-summary.json"));
     expect(instructions).toContain(join(root, "artifacts", "writer-summary.md"));
-    expect(instructions).toContain("mentiko emit done");
+    expect(instructions).toContain("'/repo/bin/mentiko' emit 'done'");
     expect(instructions).toContain("Do NOT hand-write any .event file.");
     expect(instructions).toContain("Typed task context:");
     expect(instructions).toContain("TASK ID: TASK-12\nTITLE: Typed task");
@@ -341,6 +387,10 @@ describe("runner-v2 bootstrap executor", () => {
     expect(instructions).not.toContain("monitor-chain-agent");
     const startScript = readFileSync(join(root, "artifacts", "writer-start.sh"), "utf8");
     expect(startScript).toContain("runner-agent-profile.js");
+    expect(startScript).toContain("export PATH='/repo/bin:/bin'");
+    expect(startScript).toContain("export MENTIKO_BIN='/repo/bin/mentiko'");
+    expect(startScript).toContain("export MENTIKO_RUN_ID='run-1'");
+    expect(startScript).toContain("export MENTIKO_AGENT_ID='writer'");
     expect(startScript).not.toContain("SECRET_THAT_MUST_NOT_BE_IN_SCRIPT");
     expect(startScript).not.toContain("chain-runner.sh");
     expect(calls.map((call) => call.op)).toEqual(["remove", "spawn", "sendKeys", "sendKeys", "remove", "spawn"]);
@@ -360,6 +410,9 @@ describe("runner-v2 bootstrap executor", () => {
         env: expect.objectContaining({
           MENTIKO_RUNNER_V2_ACTIVE: "1",
           MENTIKO_RUNNER_V2_MODE: "typed-plan",
+          PATH: "/repo/bin:/bin",
+          MENTIKO_BIN: "/repo/bin/mentiko",
+          MENTIKO_RUN_ID: "run-1",
           MENTIKO_AGENT_ID: "writer",
           MENTIKO_AGENT_ATTEMPT_ID: "run-1:writer:1",
         }),

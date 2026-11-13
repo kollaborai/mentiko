@@ -1,5 +1,5 @@
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "fs";
-import { basename, dirname, join } from "path";
+import { basename, delimiter, dirname, join } from "path";
 import { pty } from "@/lib/pty/pty-client";
 import { shellEscape } from "@/lib/api/audit-exec";
 import config from "@/lib/config";
@@ -95,9 +95,9 @@ export function buildTypedCompletionContract(plan: Pick<AgentBootstrapPlan, "age
   const runId = plan.runContextExports.MENTIKO_RUN_ID || plan.runContextExports.RUN_ID || "unknown";
   const agentId = plan.agentId || plan.runContextExports.MENTIKO_AGENT_ID || "unknown";
   const emits = plan.runContextExports.MENTIKO_AGENT_EMITS || "";
+  const emitCommand = emits ? buildRunnerEmitCommand(plan, emits) : "";
   const summaryJson = join(plan.artifactsDir, `${agentId}-summary.json`);
   const summaryMarkdown = join(plan.artifactsDir, `${agentId}-summary.md`);
-  const emitCommand = emits ? `mentiko emit ${emits}` : "";
 
   const eventHandoff = emits
     ? plan.coreGenerationChain
@@ -105,11 +105,12 @@ export function buildTypedCompletionContract(plan: Pick<AgentBootstrapPlan, "age
         "Core generation handoff:",
         `- Write the authoritative generation payload to ${join(plan.artifactsDir, "generation-result.json")}.`,
         "- Mentiko imports that file automatically when this run completes.",
-        `- You may run "${emitCommand}" after writing the payload; the generation file remains authoritative.`,
+        "- You may run this command after writing the payload; the generation file remains authoritative:",
+        `    ${emitCommand}`,
       ]
       : [
         "Canonical event handoff:",
-        "When completely finished, signal completion by running this command exactly:",
+        "When completely finished, signal completion by running this command exactly. It supplies the runner environment inline in case your command shell does not inherit it:",
         `    ${emitCommand}`,
       ]
     : [
@@ -157,6 +158,30 @@ export function buildTypedCompletionContract(plan: Pick<AgentBootstrapPlan, "age
     "The completion marker line must contain exactly the token AGENT_COMPLETE and nothing else.",
     "The final non-empty line must be exactly AGENT_COMPLETE. Do not write anything after it. Do not put AGENT_COMPLETE inside files or earlier in your response.",
   ].join("\n");
+}
+
+function buildRunnerEmitCommand(
+  plan: Pick<AgentBootstrapPlan, "agentId" | "runContextExports">,
+  event: string,
+): string {
+  const env = plan.runContextExports;
+  const mentikoBin = env.MENTIKO_BIN || join(config.codeRoot, "bin", "mentiko");
+  const binDirectory = dirname(mentikoBin);
+  const inheritedPath = env.PATH || process.env.PATH || "";
+  const pathEntries = inheritedPath.split(delimiter);
+  const commandPath = pathEntries.includes(binDirectory)
+    ? inheritedPath
+    : [binDirectory, inheritedPath].filter(Boolean).join(delimiter);
+  const assignments = {
+    MENTIKO_BIN: mentikoBin,
+    MENTIKO_AGENT_ID: plan.agentId || env.MENTIKO_AGENT_ID || "unknown",
+    MENTIKO_RUN_ID: env.MENTIKO_RUN_ID || env.RUN_ID || "unknown",
+    PATH: commandPath,
+  };
+  const inlineEnv = Object.entries(assignments)
+    .map(([key, value]) => `${key}=${shellEscape(value)}`)
+    .join(" ");
+  return `${inlineEnv} ${shellEscape(mentikoBin)} emit ${shellEscape(event)}`;
 }
 
 /**
