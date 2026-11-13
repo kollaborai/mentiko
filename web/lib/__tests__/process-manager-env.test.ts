@@ -8,6 +8,7 @@ import {
   resolveManagedDevGlobalRoot,
   shouldReplaceUnavailableDevContainerRoot,
 } from "../process-manager-env";
+import type { ProcessesFile } from "../pm-types";
 import { RUNNER_CONTROL_ENV_KEYS } from "../runner-control-env";
 
 describe("process manager environment", () => {
@@ -37,8 +38,8 @@ describe("process manager environment", () => {
 
   it("hands KOLLAB_CONFIG_DIR only to the web app and the engine", () => {
     const src = { KOLLAB_CONFIG_DIR: "/tmp/mentiko-kollab", PATH: "/bin" };
-    const dev = JSON.parse(readFileSync(join(__dirname, "..", "..", "processes.dev.json"), "utf8"));
-    const procs: Array<{ name: string; env?: Record<string, string> }> = dev.processes ?? dev;
+    const dev: ProcessesFile = JSON.parse(readFileSync(join(__dirname, "..", "..", "processes.dev.json"), "utf8"));
+    const procs = dev.processes;
     const envFor = (name: string) =>
       buildManagedProcessEnv(procs.find((p) => p.name === name)!, src).KOLLAB_CONFIG_DIR;
     expect(envFor("platform")).toBe("/tmp/mentiko-kollab");
