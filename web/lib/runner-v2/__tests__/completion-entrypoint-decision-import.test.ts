@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "fs";
+import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { spawnSync } from "child_process";
@@ -50,7 +50,11 @@ function setupDecisionRun(opts: { withBlockedSummary: boolean }) {
   });
 
   const runJsonPath = join(runDir, "run.json");
-  const run = createRunRecord({ chainName: "Decision Guided Options", goal: "" });
+  const run = createRunRecord({
+    chainName: "Decision Guided Options",
+    goal: "",
+    now: new Date("2026-08-17T00:00:00.000Z"),
+  });
   updateRunJson(runJsonPath, () => ({
     ...run,
     id: "run-dec-1",
@@ -75,10 +79,13 @@ function setupDecisionRun(opts: { withBlockedSummary: boolean }) {
   }));
 
   // The real deliverable the agent produced before its CLI import 401'd.
-  writeJson(join(artifactsDir, "decision-result.json"), {
+  const decisionResultPath = join(artifactsDir, "decision-result.json");
+  writeJson(decisionResultPath, {
     options: [{ id: "a", title: "Option A" }, { id: "b", title: "Option B" }],
     recommendation: { optionId: "b" },
   });
+  const artifactTime = new Date("2026-08-18T00:00:00.000Z");
+  utimesSync(decisionResultPath, artifactTime, artifactTime);
   if (opts.withBlockedSummary) {
     // RC1: the agent self-reports "blocked" because `mentiko decision import` failed.
     writeJson(join(artifactsDir, "decision-option-strategist-summary.json"), {

@@ -3,7 +3,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -723,6 +723,45 @@ describe("Git node worktree isolation merge-back", () => {
         integrationCommit: integration.previousIntegrationCommit,
       },
     })).toBe("no-changes");
+  });
+
+  it("writes a merge-back receipt on retry after a crash between apply and receipt", () => {
+    const fixture = repository();
+    const { runWorkspace } = initialize({ ...fixture, runId: "run-merge-back-crash-replay" });
+    const node = allocateGitNodeWorkspace({
+      runWorkspace,
+      agentId: "builder",
+      attemptId: "attempt-builder",
+    });
+    writeFileSync(join(node.workspacePath, "left.ts"), "export const left = 'applied-before-crash';\n");
+    const result = finalizeGitNodeWorkspace({ runWorkspace, node });
+    const integration = integrateGitNodeWorkspaceResult({ runWorkspace, result });
+    const integrationTree = git(fixture.root, "rev-parse", `${integration.integrationCommit}^{tree}`);
+    const receiptsDir = join(runWorkspace.isolationRoot, "receipts", "merge-backs");
+
+    expect(() => mergeGitNodeIntegration({
+      runWorkspace,
+      integration,
+      afterApplyBeforeReceipt: () => {
+        throw new Error("simulated-crash-after-merge-back-apply");
+      },
+    })).toThrow("simulated-crash-after-merge-back-apply");
+    expect(existsSync(receiptsDir)).toBe(false);
+    expect(captureGitWorkspaceSnapshot({
+      workspacePath: fixture.root,
+      scratchDir: fixture.scratch,
+      label: "run-merge-back-crash-after-apply",
+    }).snapshotTree).toBe(integrationTree);
+
+    expect(mergeGitNodeIntegration({ runWorkspace, integration })).toBe("already-published");
+    const receipts = readdirSync(receiptsDir).filter((name) => name.endsWith(".json"));
+    expect(receipts).toHaveLength(1);
+    expect(JSON.parse(readFileSync(join(receiptsDir, receipts[0]), "utf8"))).toMatchObject({
+      kind: "git-run-workspace-merge-back",
+      runId: "run-merge-back-crash-replay",
+      integrationCommit: integration.integrationCommit,
+      sourceTreeAfter: integrationTree,
+    });
   });
 
   it("merge-back fails loudly when the main worktree drifted from the chain", () => {

@@ -12,6 +12,8 @@ import {
   runnerAgentStatePath,
   transitionRunnerAgentState,
 } from "@/lib/runner-v2/agent-state";
+import { readRunnerV2AttemptState } from "@/lib/runner-v2/agent-attempt";
+import { withRelaunchAuthorization } from "@/lib/runner-v2/relaunch-authorization";
 import { updateRunJson } from "@/lib/runner-v2/run-state";
 
 export type AgentErrorType = "error" | "timeout";
@@ -161,7 +163,7 @@ export function scheduleChainRunner(chainFile: string, agentId: string, delaySec
  * occurrence and spawn the typed launch-agent bundle detached. The launcher
  * reuses the exact run id, the run-local immutable chain snapshot, parent
  * provenance, and terminal attempt history (createAgentAttempt preserves it);
- * the scoped relaunchAuthorization is the typed runtime's documented mechanism for a
+ * the per-agent relaunchAuthorizations entry is the typed runtime's documented mechanism for a
  * direct bootstrap of an agent whose latest attempt is terminal, mirroring the
  * resume route. Detached + unref'd: the relaunch outlives this process and
  * never blocks the error decision that scheduled it.
@@ -235,16 +237,20 @@ function resolveTypedLauncher(bundlePath: string): string {
  * Authorize one fresh typed occurrence for a non-terminal run, scoped to one
  * agent and, when routed, one launch-job occurrence. The typed bootstrap's
  * assertBootstrapLaunchable gate admits a direct relaunch of an agent whose
- * latest attempt is terminal only when a durable authorization matches that
- * agent and occurrence and is newer than the attempt's updatedAt;
- * retry/handler relaunches are detached direct bootstraps (not
- * routed-completion replays), so they need this durable authorization rather
- * than an env occurrence claim. The authorization is written to
- * relaunchAuthorization, not resumedAt: resumedAt also feeds the watchdog and
- * reconciler grace windows, so every relaunch would otherwise suspend stall
- * detection. Identity-guarded and best-effort: a missing record or write
- * failure never changes the durable retry/handler decision, and a record whose
- * id does not match is left untouched.
+ * latest attempt is terminal when a durable authorization matches that agent
+ * and occurrence and has not yet been consumed by a matching attempt created
+  * at or after the authorization. Retry/handler relaunches are detached direct
+  * bootstraps (not routed-completion replays), so they need this durable
+ * authorization rather than an env occurrence claim. Authorizations live in
+ * a per-agent map
+ * (relaunchAuthorizations[agentId][direct|job:<launchJobId>]): a retry and a
+ * routed revisit of the same agent, or of different agents, each keep their
+ * own occurrence entry instead of overwriting each other. They are deliberately
+ * not resumedAt: resumedAt also feeds the
+ * watchdog and reconciler grace windows, so every relaunch would otherwise
+ * suspend stall detection. Identity-guarded and best-effort: a missing record
+ * or write failure never changes the durable retry/handler decision, and a
+ * record whose id does not match is left untouched.
  */
 export function authorizeTypedRelaunch(
   runJsonPath: string,
@@ -258,11 +264,14 @@ export function authorizeTypedRelaunch(
       if (current.id !== runId) return current; // never authorize a foreign record
       return {
         ...current,
-        relaunchAuthorization: {
+        relaunchAuthorizations: withRelaunchAuthorization({
+          run: current,
+          runId,
           agentId: scope.agentId,
           launchJobId: scope.launchJobId,
           authorizedAt: new Date().toISOString(),
-        },
+          attempts: readRunnerV2AttemptState(runJsonPath).attempts,
+        }),
       };
     });
   } catch {

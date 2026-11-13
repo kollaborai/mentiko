@@ -7,6 +7,7 @@ export interface SocketReadiness {
   type: 'socket';
   path: string;
   timeout: number;
+  timeoutEnv?: string;
   interval?: number;
 }
 
@@ -14,6 +15,7 @@ export interface PortReadiness {
   type: 'port';
   port: number;
   timeout: number;
+  timeoutEnv?: string;
   interval?: number;
 }
 
@@ -21,12 +23,14 @@ export interface HttpReadiness {
   type: 'http';
   url: string;
   timeout: number;
+  timeoutEnv?: string;
   interval?: number;
 }
 
 export interface TimerReadiness {
   type: 'timer';
   timeout: number;
+  timeoutEnv?: string;
 }
 
 export interface NoneReadiness {
@@ -49,6 +53,8 @@ export interface RestartConfig {
   maxDelay: number;
   resetAfter: number;
   jitter?: boolean;
+  /** Retry a critical process during initial startup before aborting the stack. */
+  retryOnStartup?: boolean;
 }
 
 // --- process config (shape of each entry in processes.json) ---

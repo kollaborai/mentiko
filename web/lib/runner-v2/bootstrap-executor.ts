@@ -1,8 +1,9 @@
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "fs";
-import { basename, dirname, join } from "path";
+import { basename, delimiter, dirname, join } from "path";
 import { pty } from "@/lib/pty/pty-client";
 import { shellEscape } from "@/lib/api/audit-exec";
 import config from "@/lib/config";
+import { resolveBootstrapShell } from "@/lib/runner-v2/bootstrap-shell";
 import {
   buildAgentBootstrapPlan,
   writeAgentNodeChainSnapshot,
@@ -18,6 +19,12 @@ import {
 } from "@/lib/runner-v2/launch-job";
 import { classifyCliReadiness, type CliReadinessResult } from "@/lib/runner-v2/readiness-policy";
 import { composerState, confirmComposerSubmission } from "@/lib/runner-v2/composer-submit";
+import {
+  findTranscriptJsonlByInstructionPath,
+  scoreTranscriptIdentity,
+  transcriptContainsUserText,
+  transcriptRootFromProfile,
+} from "@/lib/runner-v2/agent-transcript";
 import {
   captureAssertsAgentComplete,
   findCompletionEventFile,
@@ -42,6 +49,7 @@ import {
   recoveryKeyBytes,
   type StartupRecoveryInput,
 } from "@/lib/runner-v2/readiness-cli";
+import { relaunchAuthorizationAdmits } from "@/lib/runner-v2/relaunch-authorization";
 import { addRunSession, readRunJson, updateRunJson, updateRunStatus, type RunAgentRecord } from "@/lib/runner-v2/run-state";
 import {
   type AgentAttemptPhase,
@@ -93,9 +101,9 @@ export function buildTypedCompletionContract(plan: Pick<AgentBootstrapPlan, "age
   const runId = plan.runContextExports.MENTIKO_RUN_ID || plan.runContextExports.RUN_ID || "unknown";
   const agentId = plan.agentId || plan.runContextExports.MENTIKO_AGENT_ID || "unknown";
   const emits = plan.runContextExports.MENTIKO_AGENT_EMITS || "";
+  const emitCommand = emits ? buildRunnerEmitCommand(plan, emits) : "";
   const summaryJson = join(plan.artifactsDir, `${agentId}-summary.json`);
   const summaryMarkdown = join(plan.artifactsDir, `${agentId}-summary.md`);
-  const emitCommand = emits ? `mentiko emit ${emits}` : "";
 
   const eventHandoff = emits
     ? plan.coreGenerationChain
@@ -103,11 +111,12 @@ export function buildTypedCompletionContract(plan: Pick<AgentBootstrapPlan, "age
         "Core generation handoff:",
         `- Write the authoritative generation payload to ${join(plan.artifactsDir, "generation-result.json")}.`,
         "- Mentiko imports that file automatically when this run completes.",
-        `- You may run "${emitCommand}" after writing the payload; the generation file remains authoritative.`,
+        "- You may run this command after writing the payload; the generation file remains authoritative:",
+        `    ${emitCommand}`,
       ]
       : [
         "Canonical event handoff:",
-        "When completely finished, signal completion by running this command exactly:",
+        "When completely finished, signal completion by running this command exactly. It supplies the runner environment inline in case your command shell does not inherit it:",
         `    ${emitCommand}`,
       ]
     : [
@@ -155,6 +164,30 @@ export function buildTypedCompletionContract(plan: Pick<AgentBootstrapPlan, "age
     "The completion marker line must contain exactly the token AGENT_COMPLETE and nothing else.",
     "The final non-empty line must be exactly AGENT_COMPLETE. Do not write anything after it. Do not put AGENT_COMPLETE inside files or earlier in your response.",
   ].join("\n");
+}
+
+function buildRunnerEmitCommand(
+  plan: Pick<AgentBootstrapPlan, "agentId" | "runContextExports">,
+  event: string,
+): string {
+  const env = plan.runContextExports;
+  const mentikoBin = env.MENTIKO_BIN || join(config.codeRoot, "bin", "mentiko");
+  const binDirectory = dirname(mentikoBin);
+  const inheritedPath = env.PATH || process.env.PATH || "";
+  const pathEntries = inheritedPath.split(delimiter);
+  const commandPath = pathEntries.includes(binDirectory)
+    ? inheritedPath
+    : [binDirectory, inheritedPath].filter(Boolean).join(delimiter);
+  const assignments = {
+    MENTIKO_BIN: mentikoBin,
+    MENTIKO_AGENT_ID: plan.agentId || env.MENTIKO_AGENT_ID || "unknown",
+    MENTIKO_RUN_ID: env.MENTIKO_RUN_ID || env.RUN_ID || "unknown",
+    PATH: commandPath,
+  };
+  const inlineEnv = Object.entries(assignments)
+    .map(([key, value]) => `${key}=${shellEscape(value)}`)
+    .join(" ");
+  return `${inlineEnv} ${shellEscape(mentikoBin)} emit ${shellEscape(event)}`;
 }
 
 /**
@@ -441,17 +474,18 @@ export async function executeLocalBootstrap(
     chmodSync(startScriptPath, 0o700);
 
     assertRoutedLaunchJobOwnership(runJsonPath, launchJobId, launchOwnerId);
+    const bootstrapShell = resolveBootstrapShell(context.env);
     await executor.remove(executionPlan.sessionName);
-    const spawned = await executor.spawn(executionPlan.sessionName, "zsh", [], {
+    const spawned = await executor.spawn(executionPlan.sessionName, bootstrapShell, [], {
       cwd: executionPlan.projectRoot,
       env: sanitizePtyEnv({
         PATH: context.env.PATH || process.env.PATH || "",
         HOME: context.env.HOME || process.env.HOME || "",
-        SHELL: context.env.SHELL || process.env.SHELL || "",
         TERM: context.env.TERM || process.env.TERM || "xterm-256color",
         MENTIKO_RUNNER_V2_ACTIVE: "1",
         MENTIKO_RUNNER_V2_MODE: "typed-plan",
         ...executionPlan.runContextExports,
+        SHELL: bootstrapShell,
       }),
     });
     transitionAgentAttempt({ runJsonPath, attemptId: attempt.id, to: "pty_allocated" });
@@ -464,10 +498,10 @@ export async function executeLocalBootstrap(
     transitionAgentAttempt({ runJsonPath, attemptId: attempt.id, to: "process_spawned" });
 
     registerRunSession(context, executionPlan);
-    // The PTY intentionally starts as an interactive shell, but a failed
-    // startup script must terminate that shell. Otherwise readiness can see a
-    // normal zsh prompt and inject agent instructions as shell commands.
-    const startCommand = `cd ${shellEscape(executionPlan.projectRoot)} && bash ${shellEscape(startScriptPath)} || exit $?`;
+    // Replace the interactive shell with the selected shell running the startup
+    // script. If startup fails, the PTY exits instead of exposing a prompt that
+    // readiness could mistake for a live agent CLI.
+    const startCommand = `exec ${shellEscape(bootstrapShell)} ${shellEscape(startScriptPath)}`;
     // No trailing \r: sendKeys now sets the daemon's `enter` flag, which appends
     // the return itself after its settle delay. A literal \r here would submit a
     // second, empty line.
@@ -482,12 +516,10 @@ export async function executeLocalBootstrap(
       pointer: executionPlan.instructionPointer,
     });
     if (submission.delivered) {
-      // no trailing \r: the pointer is multi-line, so the CLI receives it as a
-      // bracketed paste and an embedded enter is swallowed into the paste body.
-      // The pty daemon's non-raw send appends its own enter after the paste
-      // settle delay; confirmInstructionSubmission then verifies the composer
-      // actually accepted it (a CLI still running boot checks — e.g. MCP auth —
-      // renders the composer but drops enters) and retries bare enters.
+      // No trailing \r: pty.sendKeys appends one itself. The multi-line pointer
+      // is sent as a paste, and Codex may consume that return while processing
+      // the paste. confirmInstructionSubmission checks durable transcript
+      // evidence as well as the composer and retries bare enters when needed.
       await executor.sendKeys(executionPlan.sessionName, executionPlan.instructionPointer);
       const confirmed = await confirmInstructionSubmission(executionPlan, executor);
       if (confirmed) {
@@ -502,7 +534,7 @@ export async function executeLocalBootstrap(
         });
       }
     }
-    await startMonitorSession(executionPlan, executor);
+    await startMonitorSession(executionPlan, executor, bootstrapShell);
   } catch (error) {
     if (error instanceof BootstrapReadinessBlockedError) {
       return;
@@ -635,24 +667,23 @@ function assertBootstrapLaunchable(
   // A resume route authorizes one fresh occurrence by persisting resumedAt on
   // the run before relaunch. This is durable route state, unlike an environment
   // occurrence id (which is only a caller claim). authorizeTypedRelaunch writes
-  // a separate occurrence-scoped relaunchAuthorization (agent id + launch job
-  // id) for retry and routed-revisit relaunches, so a replayed or duplicate
-  // launch job cannot admit a completed agent, and relaunches do not extend
-  // the watchdog/reconciler resumedAt grace windows. createAgentAttempt then
-  // allocates the next attempt id and preserves the terminal history; the new
-  // attempt's updatedAt is newer than the authorization, so each authorization
-  // admits exactly one attempt.
-  const attemptUpdatedAt = Date.parse(latestAttempt.updatedAt);
+  // a separate occurrence-scoped entry in the per-agent relaunchAuthorizations
+  // map (agent id + direct or launch job key) for retry and routed-revisit
+  // relaunches, so a retry and a routed revisit of the same agent never
+  // displace each other. The matching AgentAttempt is the consumption receipt:
+  // an attempt for one occurrence cannot consume another occurrence's entry.
+  // If bootstrap dies before createAgentAttempt the entry simply stays live and
+  // a later bootstrap of the still-stuck agent is admitted — intended.
   const resumedAt = typeof run.resumedAt === "string" ? Date.parse(run.resumedAt) : Number.NaN;
+  const attemptUpdatedAt = Date.parse(latestAttempt.updatedAt);
   if (Number.isFinite(resumedAt) && Number.isFinite(attemptUpdatedAt) && resumedAt > attemptUpdatedAt) return;
-  const relaunch = run.relaunchAuthorization;
-  if (
-    relaunch
-    && typeof relaunch === "object"
-    && relaunch.agentId === agentId
-    && relaunch.launchJobId === launchJobId
-    && Date.parse(typeof relaunch.authorizedAt === "string" ? relaunch.authorizedAt : "") > attemptUpdatedAt
-  ) return;
+  if (relaunchAuthorizationAdmits({
+    run,
+    runId,
+    agentId,
+    launchJobId,
+    attempts: readRunnerV2AttemptState(runJsonPath).attempts,
+  })) return;
 
   // Existing routed launches are replayed from their persisted acceptance
   // receipt by adapters.ts before bootstrap is reached; a direct bootstrap
@@ -1238,8 +1269,9 @@ async function confirmInstructionSubmission(
     sendEnter: () => executor.sendRaw
       ? executor.sendRaw(plan.sessionName, "\r")
       : executor.sendKeys(plan.sessionName, ""),
-    hasAcceptedExecutionEvidence: (capture) => (
-      (composerState(capture) === "absent" && captureAssertsAgentComplete(capture))
+    hasAcceptedSubmissionEvidence: (capture) => (
+      instructionPointerRecorded(plan)
+      || (composerState(capture) === "absent" && captureAssertsAgentComplete(capture))
       || Boolean(findCompletionEventFile({
         eventsDir: plan.eventsDir,
         runId: plan.monitorSpec.runId,
@@ -1256,9 +1288,38 @@ async function confirmInstructionSubmission(
   });
 }
 
+/**
+ * Codex uses `›` for both its transcript and composer, so the rendered PTY
+ * cannot prove that the pointer left the input box. Its durable rollout does:
+ * the instruction path is unique to this attempt and is recorded in the user
+ * message when Codex accepts the pointer. Keep this lookup independent of the
+ * screen glyphs and fail closed on zero or multiple matching transcripts.
+ */
+function instructionPointerRecorded(plan: AgentBootstrapPlan): boolean {
+  const root = transcriptRootFromProfile(plan.runContextExports.MENTIKO_AGENT_PROFILE_PATH);
+  if (!root) return false;
+  const runDir = plan.runContextExports.MENTIKO_RUN_DIR || dirname(plan.artifactsDir);
+  const attemptId = plan.runContextExports.MENTIKO_AGENT_ATTEMPT_ID;
+  const attempt = attemptId
+    ? readRunnerV2AttemptState(join(runDir, "run.json")).attempts.find((candidate) => candidate.id === attemptId)
+    : undefined;
+  const identity = {
+    instructionPath: plan.instructionPath,
+    workspacePath: plan.projectRoot,
+    ...(attempt?.createdAt ? { attemptStartedAt: attempt.createdAt } : {}),
+  };
+  const candidates = findTranscriptJsonlByInstructionPath(
+    root,
+    identity,
+    4,
+  ).filter((path) => scoreTranscriptIdentity(path, undefined, identity) !== null);
+  return candidates.length === 1 && transcriptContainsUserText(candidates[0], plan.instructionPath);
+}
+
 async function startMonitorSession(
   plan: AgentBootstrapPlan,
   executor: RunnerV2BootstrapExecutor,
+  shell: string,
 ): Promise<void> {
   await executor.remove(plan.monitorSessionName);
   // The long-lived PTY daemon filters the environment it receives. Keep the
@@ -1268,13 +1329,14 @@ async function startMonitorSession(
   const monitorCommand = plan.runContextExports.MENTIKO_AGENT_ATTEMPT_ID
     ? `export MENTIKO_AGENT_ATTEMPT_ID=${shellEscape(plan.runContextExports.MENTIKO_AGENT_ATTEMPT_ID)}; ${plan.monitorCommand}`
     : plan.monitorCommand;
-  await executor.spawn(plan.monitorSessionName, "bash", ["-lc", monitorCommand], {
+  await executor.spawn(plan.monitorSessionName, shell, ["-c", monitorCommand], {
     cwd: plan.projectRoot,
     env: sanitizePtyEnv({
       PATH: plan.runContextExports.PATH || process.env.PATH || "",
       MENTIKO_RUNNER_V2_ACTIVE: "1",
       MENTIKO_RUNNER_V2_MODE: "typed-plan",
       ...plan.runContextExports,
+      SHELL: shell,
     }),
   });
 }

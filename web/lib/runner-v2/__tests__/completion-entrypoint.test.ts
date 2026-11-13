@@ -370,9 +370,19 @@ describe("runner-v2 completion entrypoint", () => {
     )).toContain("attempt-a");
   });
 
-  it("blocks terminal success without touching the source when its CAS detects drift", () => {
+  it("blocks terminal success without touching the source when merge-back detects drift", () => {
     const fixture = seedIsolatedTerminalFixture();
     writeFileSync(join(fixture.node.workspacePath, "left.ts"), "export const left = 'agent-result';\n");
+    const nodeResult = finalizeGitNodeWorkspace({
+      runWorkspace: fixture.runWorkspace,
+      node: fixture.node,
+    });
+    integrateGitNodeWorkspaceResult({
+      runWorkspace: fixture.runWorkspace,
+      result: nodeResult,
+    });
+    // The private integration receipt already exists, so completion must still
+    // retry merge-back and surface any new source-worktree drift.
     writeFileSync(join(fixture.repositoryRoot, "right.ts"), "export const right = 'user-edit';\n");
     const sourceBefore = git(fixture.repositoryRoot, "status", "--porcelain=v1", "-z");
 
@@ -390,17 +400,18 @@ describe("runner-v2 completion entrypoint", () => {
     });
 
     expect(result).toMatchObject({
-      decision: "workspace-source-changed",
-      plan: { action: "workspace-source-changed", launches: [], effects: [] },
+      decision: "workspace-conflict",
+      plan: { action: "workspace-conflict", launches: [], effects: [] },
     });
     const blocked = readRunJson(fixture.runJsonPath) as ReturnType<typeof readRunJson> & {
       runnerV2?: { attempts?: Array<Record<string, unknown>> };
     };
     expect(blocked.status).toBe("blocked");
-    expect(blocked.status_message).toContain("changes: right.ts");
+    expect(blocked.status_message).toContain("paths: right.ts");
+    expect(blocked.status_message).toContain("merge-back-conflicts");
     expect(blocked.runnerV2?.attempts?.[0]).toMatchObject({
       phase: "human_action_required",
-      terminalReason: "source_workspace_changed",
+      terminalReason: "workspace_integration_conflict",
     });
     expect(git(fixture.repositoryRoot, "status", "--porcelain=v1", "-z")).toBe(sourceBefore);
     expect(readFileSync(join(fixture.repositoryRoot, "left.ts"), "utf8")).toContain("'base'");
@@ -408,7 +419,7 @@ describe("runner-v2 completion entrypoint", () => {
     expect(existsSync(fixture.node.worktreeRoot)).toBe(true);
   });
 
-  it("keeps a released-attempt source-drift replay idempotent", () => {
+  it("keeps a released-attempt merge-back-drift replay idempotent", () => {
     const fixture = seedIsolatedTerminalFixture();
     writeJson(fixture.chainPath, {
       id: "chain",
@@ -465,7 +476,8 @@ describe("runner-v2 completion entrypoint", () => {
       runnerV2?: { attempts?: Array<Record<string, unknown>> };
     };
     expect(replayed.status).toBe("blocked");
-    expect(replayed.status_message).toContain("changes: right.ts");
+    expect(replayed.status_message).toContain("paths: right.ts");
+    expect(replayed.status_message).toContain("merge-back-conflicts");
     expect(replayed.runnerV2?.attempts?.[0]).toMatchObject({
       phase: "released",
       terminalReason: "completed_from_durable_marker",
@@ -1127,7 +1139,11 @@ describe("runner-v2 completion entrypoint", () => {
     });
 
     const runJsonPath = join(runDir, "run.json");
-    const run = createRunRecord({ chainName: "Chain Recommendation", goal: "recommend" });
+    const run = createRunRecord({
+      chainName: "Chain Recommendation",
+      goal: "recommend",
+      now: new Date("2026-06-25T00:00:00.000Z"),
+    });
     updateRunJson(runJsonPath, () => ({
       ...run,
       id: "run-123",
@@ -1139,12 +1155,15 @@ describe("runner-v2 completion entrypoint", () => {
       agents: [{ id: "chain-recommender", name: "Chain Recommender", session: "chain-recommender-run-123", status: "running" }],
       sessions: ["chain-recommender-run-123"],
     }));
-    writeJson(join(artifactsDir, "generation-result.json"), {
+    const generationResultPath = join(artifactsDir, "generation-result.json");
+    writeJson(generationResultPath, {
       recommendation: {
         action: "no_action_needed",
         reasoning: "Already built.",
       },
     });
+    const artifactTime = new Date("2026-06-26T00:00:01.000Z");
+    utimesSync(generationResultPath, artifactTime, artifactTime);
 
     const result = runRunnerV2CompletionEntrypoint({
       sessionName: "chain-recommender-run-123",
@@ -1513,13 +1532,15 @@ describe("runner-v2 completion entrypoint", () => {
       writeJson(join(fixture.runDir, "artifacts", "decision-result.json"), { summary: "s", tasks: [], dependencies: [] });
       emitVerifierEvent(fixture.eventsDir);
       const fetchMock = jest.fn().mockResolvedValue(new Response(null, { status: 200 }));
-      global.fetch = fetchMock;
+      const unexpectedNetwork = jest.fn().mockRejectedValue(new Error("unexpected network call"));
+      global.fetch = unexpectedNetwork;
 
       const result = runRunnerV2CompletionEntrypoint({
         sessionName: "verifier-run-123",
         chainPath: fixture.chainPath,
         env: routedEnv(fixture),
         now: new Date("2026-07-04T00:00:00.000Z"),
+        fetchImpl: fetchMock,
       });
       expect(readRunJson(fixture.runJsonPath).status).toBe("completed");
       // The completion path fires the import as an unawaited side effect; let
@@ -1536,6 +1557,7 @@ describe("runner-v2 completion entrypoint", () => {
         runId: "run-123",
         selectedOptionId: "opt-a",
       });
+      expect(unexpectedNetwork).not.toHaveBeenCalled();
     });
 
     it("does not trigger a decision import when a completed run carries no decision metadata", async () => {

@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { pty } from "@/lib/pty/pty-client";
 import { buildAgentProfileCommand, resolveDefaultProfile, resolveExactProfile } from "@/lib/runner-v2/agent-profile";
+import { resolveBootstrapShell } from "@/lib/runner-v2/bootstrap-shell";
 import { completePeerRun, startPeerRun } from "@/lib/runner-v2/run-record-operations";
 import { updateRunJson } from "@/lib/runner-v2/run-state";
 
@@ -87,8 +88,9 @@ export async function runPeerLinkController(
     managerSession: context.managerSession,
   }, null, 2));
 
-  await dependencies.transport.spawn(firstSession, "zsh", [], { cwd: context.workspacePath });
-  await dependencies.transport.spawn(secondSession, "zsh", [], { cwd: context.workspacePath });
+  const shell = resolveBootstrapShell(process.env);
+  await dependencies.transport.spawn(firstSession, shell, [], { cwd: context.workspacePath });
+  await dependencies.transport.spawn(secondSession, shell, [], { cwd: context.workspacePath });
   startPeerRun(runJsonPath, firstSession, secondSession);
 
   const firstCommand = buildAgentProfileCommand({ profilePath: firstProfile.path, interactive: true, namespaceId: context.namespaceId, orgId: context.orgId });
