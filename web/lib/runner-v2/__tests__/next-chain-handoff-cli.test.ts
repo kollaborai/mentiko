@@ -16,6 +16,11 @@ jest.mock("@/lib/pty/pty-client", () => ({
 
 import { parseNextChainLaunchArgs } from "@/lib/runner-v2/next-chain-launch";
 import { runTypedDirect } from "@/lib/runner-v2/direct-run";
+import {
+  cleanupCompletionLaunchContext,
+  consumeCompletionLaunchContext,
+  createCompletionLaunchContext,
+} from "@/lib/runner-v2/completion-launch-context";
 import { persistRoutedLaunchJob } from "@/lib/runner-v2/launch-job";
 import { runRoutedLaunchJob } from "@/lib/runner-v2/launch-job-runner";
 
@@ -31,7 +36,8 @@ function tempDir(): string {
   return mkdtempSync(join(tmpdir(), "runner-v2-next-chain-cli-"));
 }
 
-const cliSources: Array<[string, { reviewerCli?: string; chainCli?: string }]> = [
+const cliSources: Array<[string, { reviewerCli?: string; chainCli?: string; environmentCli?: string }]> = [
+  ["MENTIKO_CLI", { environmentCli: "codex" }],
   ["agents[].cli", { reviewerCli: "codex" }],
   ["config.cli", { chainCli: "codex" }],
 ];
@@ -45,7 +51,7 @@ describe("next-chain handoff CLI selection", () => {
     ptyMock.capture.mockReset().mockResolvedValue("codex ready >\n❯ ");
   });
 
-  it.each(cliSources)("uses codex from %s for the second agent after next-chain handoff with MENTIKO_CLI unset", async (_source, selection) => {
+  it.each(cliSources)("uses codex from %s for the second agent after next-chain handoff when coordinator MENTIKO_CLI is unset", async (_source, selection) => {
     const root = tempDir();
     const workspace = join(root, "workspace");
     const runsDir = join(root, "runs");
@@ -83,8 +89,8 @@ describe("next-chain handoff CLI selection", () => {
       EVENTS_DIR: join(root, "events"),
       STATE_DIR: join(root, "state"),
       MENTIKO_CAP_DISABLED: "1",
+      ...(selection.environmentCli ? { MENTIKO_CLI: selection.environmentCli } : {}),
     };
-    delete env.MENTIKO_CLI;
 
     const nextChain = parseNextChainLaunchArgs([
       chainPath,
@@ -108,6 +114,21 @@ describe("next-chain handoff CLI selection", () => {
       ],
     });
 
+    const writerStart = readFileSync(join(child.runDir, "artifacts", "writer-start.sh"), "utf8");
+    expect(writerStart).toContain(`exec '${selection.reviewerCli ? "claude" : "codex"}'`);
+    const monitorCall = ptyMock.spawn.mock.calls.find(([name]) => String(name).startsWith("monitor-"));
+    const monitorEnv = (monitorCall?.[3] as { env?: NodeJS.ProcessEnv } | undefined)?.env;
+    expect(monitorEnv?.MENTIKO_CLI).toBe(selection.environmentCli);
+
+    if (!monitorEnv) throw new Error("writer monitor did not receive its run context");
+    const completionContext = createCompletionLaunchContext(monitorEnv);
+    const completionEnv: NodeJS.ProcessEnv = { NODE_ENV: "test" };
+    try {
+      consumeCompletionLaunchContext(completionContext.path, completionEnv);
+    } finally {
+      cleanupCompletionLaunchContext(completionContext.path);
+    }
+
     const handoff = persistRoutedLaunchJob({
       runJsonPath,
       occurrenceId: `${child.runId}:writer:draft-ready`,
@@ -115,17 +136,19 @@ describe("next-chain handoff CLI selection", () => {
       runDir: child.runDir,
       chainPath: join(child.runDir, "chain.json"),
       targetAgentIds: ["reviewer"],
-      environment: env,
+      environment: completionEnv,
     });
+    const coordinatorEnv: NodeJS.ProcessEnv = { ...env };
+    delete coordinatorEnv.MENTIKO_CLI;
     const routed = await runRoutedLaunchJob({
       runJsonPath,
       jobId: handoff.id,
       ownerId: "test-next-chain-handoff",
-      dependencies: { processEnv: env },
+      dependencies: { processEnv: coordinatorEnv },
     });
 
     expect(routed).toMatchObject({ status: "completed", jobId: handoff.id });
-    expect(handoff.environment).not.toHaveProperty("MENTIKO_CLI");
+    expect(handoff.environment.MENTIKO_CLI).toBe(selection.environmentCli);
     expect(ptyMock.spawn).toHaveBeenCalledWith(
       expect.stringContaining("reviewer-run-next-chain-child"),
       expect.any(String),
