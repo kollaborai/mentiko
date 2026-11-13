@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { BadRequest } from "@/lib/api-errors";
-import { execAuditLog, execAuditQuery } from "@/lib/api/audit-exec";
+import { execAuditQuery } from "@/lib/api/audit-exec";
 import { requirePermission } from "@/lib/auth/rbac-auth";
 
 export const dynamic = "force-dynamic";
@@ -108,35 +108,18 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
   });
 });
 
-// POST /api/audit - Write an audit log entry
-// Body: { eventType, description, metadata }
+// Audit entries must be written by server-side code so clients cannot forge
+// event types, descriptions, or writer identities.
 export const POST = withErrorHandling(async (request: NextRequest) => {
-  const perm = await requirePermission(request, "view_audit");
-  if (perm) return perm;
-
-  const ip = getClientIp(request);
-
-  const body = await request.json();
-  const { eventType, description, metadata = {} } = body as {
-    eventType?: unknown;
-    description?: unknown;
-    metadata?: Record<string, unknown>;
-  };
-
-  if (typeof eventType !== "string" || typeof description !== "string" || !eventType || !description) {
-    throw new BadRequest("eventType and description are required");
-  }
-
-  const safeMetadata: Record<string, string> = {};
-  for (const [k, v] of Object.entries(metadata ?? {})) {
-    if (v === null || v === undefined) continue;
-    safeMetadata[k] = typeof v === "string" ? v : JSON.stringify(v);
-  }
-
-  const auditId = await execAuditLog(eventType, description, safeMetadata, { ip });
-
-  return apiSuccess({
-    success: true,
-    auditId,
-  });
+  void request;
+  return NextResponse.json(
+    {
+      success: false,
+      error: {
+        code: "METHOD_NOT_ALLOWED",
+        message: "Audit log writes are internal only",
+      },
+    },
+    { status: 405, headers: { Allow: "GET" } },
+  );
 });
