@@ -22,6 +22,10 @@ import {
 import { runRoutedLaunchJob } from "@/lib/runner-v2/launch-job-runner";
 import { createRunRecord, updateRunJson } from "@/lib/runner-v2/run-state";
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
 function singleTargetFixture(runId: string) {
   const runDir = mkdtempSync(join(tmpdir(), "routed-launch-phase-restart-"));
   const runJsonPath = join(runDir, "run.json");
@@ -450,13 +454,13 @@ describe("routing-driven revisit of a terminal-attempt agent", () => {
     // The authorization is scoped to one agent and one launch-job occurrence,
     // and deliberately is not resumedAt (which the watchdog and reconciler
     // read as a stall-detection grace window).
-    expect(run.relaunchAuthorization).toEqual({
-      agentId: "step-one",
-      launchJobId: job.id,
-      authorizedAt: expect.any(String),
+    expect(run.relaunchAuthorizations).toEqual({
+      "step-one": {
+        [`job:${job.id}`]: { launchJobId: job.id, authorizedAt: expect.any(String) },
+      },
     });
     expect(run.resumedAt).toBeUndefined();
-    expect(Date.parse(run.relaunchAuthorization.authorizedAt)).toBeGreaterThan(Date.parse(firstUpdatedAt));
+    expect(Date.parse(run.relaunchAuthorizations["step-one"][`job:${job.id}`].authorizedAt)).toBeGreaterThan(Date.parse(firstUpdatedAt));
   });
 
   it("does not bootstrap again when the same launch job id is replayed", async () => {
@@ -518,22 +522,31 @@ describe("routing-driven revisit of a terminal-attempt agent", () => {
     });
 
     await revisit();
-    const authorizedAt = JSON.parse(readFileSync(runJsonPath, "utf8")).relaunchAuthorization?.authorizedAt;
+    const authorizedAt = JSON.parse(readFileSync(runJsonPath, "utf8")).relaunchAuthorizations?.["step-one"]?.[`job:${job.id}`]?.authorizedAt;
     expect(authorizedAt).toEqual(expect.any(String));
 
     // Simulate the replay window: the worker died after the revisit attempt was
     // durably terminal but before the job completed, so the reconciler requeues
     // the SAME job id. It must not bootstrap a third occurrence.
-    updateRunJson(runJsonPath, (run) => ({
-      ...run!,
-      runnerV2: {
-        ...run!.runnerV2,
-        launchJobs: {
-          ...run!.runnerV2?.launchJobs,
-          [job.id]: { ...readRoutedLaunchJob(runJsonPath, job.id)!, status: "queued", lease: undefined },
+    updateRunJson(runJsonPath, (run) => {
+      if (!run) throw new Error("run.json not found");
+      const runnerV2 = run.runnerV2;
+      if (!isRecord(runnerV2)) throw new Error("runnerV2 state missing from run fixture");
+      const launchJobs = runnerV2.launchJobs;
+      if (!isRecord(launchJobs)) throw new Error("launchJobs state missing from run fixture");
+      const currentJob = launchJobs[job.id];
+      if (!isRecord(currentJob)) throw new Error("launch job missing from run fixture");
+      return {
+        ...run,
+        runnerV2: {
+          ...runnerV2,
+          launchJobs: {
+            ...launchJobs,
+            [job.id]: { ...currentJob, status: "queued", lease: undefined },
+          },
         },
-      },
-    }));
+      };
+    });
     const replay = await runRoutedLaunchJob({
       runJsonPath,
       jobId: job.id,
@@ -546,7 +559,7 @@ describe("routing-driven revisit of a terminal-attempt agent", () => {
     });
     expect(replay).toEqual({ status: "completed", jobId: job.id });
     const run = JSON.parse(readFileSync(runJsonPath, "utf8"));
-    expect(run.relaunchAuthorization.authorizedAt).toBe(authorizedAt); // no re-authorization
+    expect(run.relaunchAuthorizations["step-one"][`job:${job.id}`].authorizedAt).toBe(authorizedAt); // no re-authorization
     expect(readRunnerV2AttemptState(runJsonPath).attempts).toHaveLength(2); // no third occurrence
   });
 });

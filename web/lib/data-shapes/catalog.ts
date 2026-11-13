@@ -2608,7 +2608,7 @@ export const DATA_SHAPE_SOURCE_EXCLUSIONS: Record<string, string> = {
   "web/lib/notifications/notifications-store.ts": "client Zustand state; server notification persistence is cataloged separately",
   "web/lib/runner-v2/claude-mentiko-mcp-config.ts": "one-shot ephemeral 0600 temp file holding a per-run Claude MCP config; deleted after the provider exits, not durable Mentiko data",
   "web/lib/runner-v2/test-support/external-effects-child.fixture.ts": "child-process concurrency harness; writes only caller-provided temporary test paths",
-  "web/lib/runner-v2/test-support/file-claim-child.fixture.ts": "child-process crash harness; writes only caller-provided temporary test paths",
+  "web/lib/runner-v2/test-support/file-claim-child.fixture.mjs": "child-process crash harness; writes only caller-provided temporary test paths",
   "web/lib/runs/run-state.ts": "derived runtime overlay reader; persisted run and agent state are cataloged separately",
   "web/lib/runs/runs-store.ts": "client/reader projection; run persistence is cataloged through run-record",
   "web/lib/tasks/auto-run-state.ts": "pure task auto-run state reducer, not a persistence writer",

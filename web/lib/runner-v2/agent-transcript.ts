@@ -61,7 +61,15 @@ export function assistantTexts(record: unknown): string[] {
       }
     }
   }
-  if ((r.type === "message" || r.type === "response_item") && r.role === "assistant") {
+  // Codex rollouts wrap the item, so the role sits on the payload:
+  // {"type":"response_item","payload":{"type":"message","role":"assistant","content":[...]}}.
+  const payloadRole = r.payload && typeof r.payload === "object"
+    ? (r.payload as { role?: unknown }).role
+    : undefined;
+  if (
+    (r.type === "message" || r.type === "response_item")
+    && (r.role === "assistant" || (r.role === undefined && payloadRole === "assistant"))
+  ) {
     // Match the legacy jq `.content // .payload.content // []` semantics:
     // fallback to payload only when content is absent/null. A malformed but
     // present content value must not be bypassed into a false completion latch.
@@ -80,6 +88,67 @@ export function assistantTexts(record: unknown): string[] {
       }
     }
   }
+  return out;
+}
+
+/**
+ * Extract user-authored text from one transcript record. Codex records a user
+ * turn as an `event_msg` whose payload has `type: "user_message"`; newer
+ * response-item records put the user role on the payload. Claude-style
+ * transcripts use a top-level `user` record. Keeping this role-aware prevents
+ * an assistant quoting a nudge from being mistaken for proof that the CLI
+ * accepted it.
+ */
+export function userTexts(record: unknown): string[] {
+  if (!record || typeof record !== "object") return [];
+  const r = record as Record<string, unknown>;
+  const out: string[] = [];
+
+  const addContent = (content: unknown): void => {
+    if (typeof content === "string") {
+      out.push(content);
+      return;
+    }
+    if (!Array.isArray(content)) return;
+    for (const item of content) {
+      if (!item || typeof item !== "object") continue;
+      const text = (item as Record<string, unknown>).text;
+      if (typeof text === "string") out.push(text);
+    }
+  };
+
+  const addMessage = (message: unknown): void => {
+    if (typeof message === "string") {
+      out.push(message);
+      return;
+    }
+    if (!message || typeof message !== "object") return;
+    addContent((message as Record<string, unknown>).content);
+  };
+
+  if (r.type === "event_msg" && r.payload && typeof r.payload === "object") {
+    const payload = r.payload as Record<string, unknown>;
+    if (payload.type === "user_message") addMessage(payload.message);
+  }
+
+  if (r.type === "user") {
+    addMessage(r.message);
+    addContent(r.content);
+  }
+
+  const payloadRole = r.payload && typeof r.payload === "object"
+    ? (r.payload as Record<string, unknown>).role
+    : undefined;
+  if (
+    (r.type === "message" || r.type === "response_item")
+    && (r.role === "user" || (r.role === undefined && payloadRole === "user"))
+  ) {
+    addContent(r.content);
+    if ((r.content === undefined || r.content === null) && r.payload && typeof r.payload === "object") {
+      addContent((r.payload as Record<string, unknown>).content);
+    }
+  }
+
   return out;
 }
 
@@ -140,6 +209,55 @@ export function readAssistantTextsFromTranscript(jsonlPath: string): string[] {
     texts.push(...assistantTexts(record));
   }
   return texts;
+}
+
+/** Read every user-authored text segment from a transcript JSONL file. */
+export function readUserTextsFromTranscript(jsonlPath: string): string[] {
+  let body: string;
+  try {
+    body = readFileSync(jsonlPath, "utf8");
+  } catch {
+    return [];
+  }
+  const texts: string[] = [];
+  for (const line of body.split("\n")) {
+    if (!line.trim()) continue;
+    let record: unknown;
+    try {
+      record = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    texts.push(...userTexts(record));
+  }
+  return texts;
+}
+
+/**
+ * True when a user-authored transcript message contains the expected text.
+ * A substring match is intentional: the bootstrap pointer is a multi-line
+ * user message and may be wrapped by a CLI-specific record.
+ */
+export function transcriptContainsUserText(jsonlPath: string, expected: string): boolean {
+  const needle = expected.trim();
+  return Boolean(needle) && readUserTextsFromTranscript(jsonlPath).some((text) => text.includes(needle));
+}
+
+/**
+ * True when a matching user-authored text segment was appended after a
+ * submission checkpoint. This prevents an earlier identical monitor nudge
+ * from being mistaken for delivery of the current one.
+ */
+export function transcriptContainsUserTextAfter(
+  jsonlPath: string,
+  expected: string,
+  previousUserTextCount: number,
+): boolean {
+  const needle = expected.trim();
+  if (!needle || !Number.isSafeInteger(previousUserTextCount) || previousUserTextCount < 0) return false;
+  const currentTexts = readUserTextsFromTranscript(jsonlPath);
+  if (currentTexts.length <= previousUserTextCount) return false;
+  return currentTexts.slice(previousUserTextCount).some((text) => text.includes(needle));
 }
 
 /**
@@ -217,6 +335,9 @@ export function scoreTranscriptIdentity(
     try {
       const record = JSON.parse(line) as Record<string, unknown>;
       if (typeof record.cwd === "string") cwds.add(record.cwd);
+      // Codex records cwd on its session_meta / turn_context payloads.
+      const payload = record.payload as Record<string, unknown> | null | undefined;
+      if (payload && typeof payload === "object" && typeof payload.cwd === "string") cwds.add(payload.cwd);
       for (const key of ["sessionId", "session_id"] as const) {
         if (typeof record[key] === "string") sessionIds.add(record[key].toLowerCase());
       }

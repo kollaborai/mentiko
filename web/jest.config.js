@@ -7,6 +7,7 @@ const createJestConfig = nextJest({
 
 const customJestConfig = {
   rootDir: '.',  // explicitly set root to web directory
+  globalSetup: '<rootDir>/jest.global-setup.js',
   setupFilesAfterEnv: ['<rootDir>/jest.setup.js'],
   testEnvironment: 'jest-environment-jsdom',
   moduleNameMapper: {
