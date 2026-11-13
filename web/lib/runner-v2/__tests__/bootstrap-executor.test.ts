@@ -25,6 +25,10 @@ function tempDir() {
   return mkdtempSync(join(tmpdir(), "runner-v2-bootstrap-exec-"));
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
 function seedRunJson(root: string, status: RunStatus = "pending"): string {
   const runJsonPath = join(root, "run.json");
   updateRunJson(runJsonPath, () => ({
@@ -777,29 +781,34 @@ describe("runner-v2 bootstrap executor", () => {
       pid: process.pid,
       leaseMs: 60_000,
     });
-    updateRunJson(runJsonPath, (run) => ({
-      ...run!,
-      runnerV2: {
-        ...run!.runnerV2,
-        attempts: [{
-          id: "run-1:writer:1",
-          runId: "run-1",
-          agentId: "writer",
-          phase: "completed",
-          desiredPhase: "completed",
-          observedPhase: "completed",
-          terminalReason: "completed_from_event",
-          instructionLedger: [],
-          recoveryDecisionCount: 0,
-          createdAt: "2026-07-15T00:00:00.000Z",
-          updatedAt: "2026-07-15T00:01:00.000Z",
-          transitions: [],
-        }],
-      },
-      relaunchAuthorizations: {
-        writer: { launchJobId: job.id, authorizedAt: "2026-07-15T00:02:00.000Z" },
-      },
-    }));
+    updateRunJson(runJsonPath, (run) => {
+      if (!run) throw new Error("run.json not found");
+      const runnerV2 = run.runnerV2;
+      if (!isRecord(runnerV2)) throw new Error("runnerV2 state missing from run fixture");
+      return {
+        ...run,
+        runnerV2: {
+          ...runnerV2,
+          attempts: [{
+            id: "run-1:writer:1",
+            runId: "run-1",
+            agentId: "writer",
+            phase: "completed",
+            desiredPhase: "completed",
+            observedPhase: "completed",
+            terminalReason: "completed_from_event",
+            instructionLedger: [],
+            recoveryDecisionCount: 0,
+            createdAt: "2026-07-15T00:00:00.000Z",
+            updatedAt: "2026-07-15T00:01:00.000Z",
+            transitions: [],
+          }],
+        },
+        relaunchAuthorizations: {
+          writer: { launchJobId: job.id, authorizedAt: "2026-07-15T00:02:00.000Z" },
+        },
+      };
+    });
     const routedContext = {
       ...context(root),
       env: {
@@ -972,13 +981,18 @@ describe("runner-v2 bootstrap executor", () => {
       updatedAt: "2026-07-15T00:01:00.000Z",
       transitions: [],
     });
-    updateRunJson(runJsonPath, (run) => ({
-      ...run!,
-      runnerV2: {
-        ...run!.runnerV2,
-        attempts: [terminalAttempt("writer"), terminalAttempt("designer")],
-      },
-    }));
+    updateRunJson(runJsonPath, (run) => {
+      if (!run) throw new Error("run.json not found");
+      const runnerV2 = run.runnerV2;
+      if (!isRecord(runnerV2)) throw new Error("runnerV2 state missing from run fixture");
+      return {
+        ...run,
+        runnerV2: {
+          ...runnerV2,
+          attempts: [terminalAttempt("writer"), terminalAttempt("designer")],
+        },
+      };
+    });
     authorizeTypedRelaunch(runJsonPath, "run-1", { agentId: "writer" }); // retry relaunch of A
     authorizeTypedRelaunch(runJsonPath, "run-1", { agentId: "designer", launchJobId: job.id }); // routed revisit of B
 
