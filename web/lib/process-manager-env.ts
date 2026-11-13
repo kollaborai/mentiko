@@ -51,6 +51,10 @@ export const MANAGED_PROCESS_ENV_WHITELIST = [
 ] as const;
 
 export const PLATFORM_PROCESS_ENV_WHITELIST = [
+  // kollab config dir the engine uses (dev default ~/.mentiko/kollab): the web
+  // reads its token/settings there. Engine gets it via processes.dev.json.
+  // Not in the shared list, so pty-mgr/worker-launched kollab agents keep ~/.kollab.
+  "KOLLAB_CONFIG_DIR",
   // hosted included-AI gateway config. next.js signs upstream gateway requests;
   // agents only receive a separate local proxy token from route launch env.
   "MENTIKO_AI_GATEWAY_ENABLED",

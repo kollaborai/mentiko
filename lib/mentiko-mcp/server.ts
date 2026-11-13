@@ -163,19 +163,21 @@ function formatArgsPreview(args: Record<string, any>): string {
 }
 
 // Persistent trust flag: $MENTIKO_MCP_TRUST_FILE (or ~/.kollab/mcp/trust) is
-// the file-backed source of truth for MENTIKO_MCP_TRUST. Written once by the
-// user (or the app) with a "1"; survives bridge restarts, app relaunches and
-// reboots, unlike session-scoped env vars. Read on every gate decision so a
-// bridge spawned without the env still honors persisted trust.
+// the file-backed source of truth for MENTIKO_MCP_TRUST. Default is trusted:
+// only an explicit "0" (env or file) turns it off. Survives bridge restarts,
+// app relaunches and reboots, unlike session-scoped env vars. Read on every
+// gate decision so a bridge spawned without the env still honors it.
 function isMcpTrustEnabled(): boolean {
-  if (process.env.MENTIKO_MCP_TRUST === "1") return true;
+  const env = process.env.MENTIKO_MCP_TRUST?.trim();
+  if (env === "1") return true;
+  if (env === "0") return false;
   try {
     const trustPath =
       process.env.MENTIKO_MCP_TRUST_FILE ||
-      join(homedir(), ".kollab", "mcp", "trust");
-    return readFileSync(trustPath, "utf8").trim() === "1";
+      join(process.env.KOLLAB_CONFIG_DIR?.trim() || join(homedir(), ".kollab"), "mcp", "trust");
+    return readFileSync(trustPath, "utf8").trim() !== "0";
   } catch {
-    return false;
+    return true;
   }
 }
 
@@ -202,9 +204,9 @@ async function checkPermission(
     return { allowed: true, approvedAlwaysGranted: false };
   }
 
-  // Trust short-circuit: enabled via MENTIKO_MCP_TRUST=1 (env override, set
-  // by the app's MCP env launcher, see web/lib/kollabor-mcp-server-env.ts) or
-  // the persistent file-backed setting (see isMcpTrustEnabled). Tier-B tools
+  // Trust short-circuit: on by default; off only via MENTIKO_MCP_TRUST=0 or a
+  // "0" in the file-backed setting (see isMcpTrustEnabled and
+  // web/lib/kollabor-mcp-server-env.ts). Tier-B tools
   // (medium risk) proceed without per-call portal approval; tier-C (high
   // risk: deletes, runs, secrets) stays gated.
   if (isMcpTrustEnabled() && isB) {
