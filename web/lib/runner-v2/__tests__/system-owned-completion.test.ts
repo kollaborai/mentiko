@@ -27,6 +27,7 @@ import { createRunRecord, readRunJson, updateRunJson } from "@/lib/runner-v2/run
 const RUN_ID = "run-123";
 const ATTEMPT_STARTED = "2026-08-10T11:00:00.000Z";
 const NOW = new Date("2026-08-10T12:00:00.000Z");
+const testFetch: typeof fetch = async () => new Response(null, { status: 200 });
 
 function writeJson(path: string, value: unknown) {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
@@ -213,6 +214,7 @@ function complete(
       ...env,
     },
     dryRun: options.dryRun ?? true,
+    fetchImpl: testFetch,
     now: NOW,
   });
 }
