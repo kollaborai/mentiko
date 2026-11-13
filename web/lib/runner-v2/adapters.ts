@@ -41,7 +41,7 @@ type AdapterOperationPayload =
   | { type: "webhook"; event: string; chainId?: string; chainPath?: string }
   | { type: "event"; event: string; source: string; data: string }
   | { type: "plugin"; event: string; chainName: string; runId: string; agentId?: string }
-  | { type: "notification"; event: string; chainName: string; runId: string; agentId?: string; reason?: string }
+  | { type: "notification"; event: string; chainName: string; runId: string; agentId?: string; reason?: string; incidentRunPath?: string; incidentId?: string }
   | { type: "hook"; event: string; runId: string; details: Record<string, string> }
   | { type: "metadata-webhooks"; event: string; chainId?: string; chainPath?: string; chainName: string; runId: string }
   | { type: "legacy-webhook"; url: string; payload: Record<string, string> }

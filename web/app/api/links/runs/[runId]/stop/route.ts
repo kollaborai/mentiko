@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { execFileSync } from "child_process";
-import { readFileSync, writeFileSync, existsSync } from "fs";
+import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import config from "@/lib/config";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
@@ -9,6 +9,7 @@ import { checkRunAccess } from "@/lib/auth/run-acl";
 import { BadRequest, NotFound, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { resolveLinkRunPaths, validateLinkRunId } from "@/lib/links/link-run-runtime";
+import { updateRunJsonRecord } from "@/lib/runner-v2/run-state";
 
 export const dynamic = "force-dynamic";
 
@@ -62,18 +63,25 @@ export const POST = withErrorHandling(async (
   }
 
   // update run + agent statuses
-  run.status = "stopped";
-  run.completed = new Date().toISOString();
-  run.statusReason = { actor: "user", reason: "link run stopped via link stop API" };
-  if (run.agents) {
-    for (const agent of run.agents) {
-      if (agent.status === "running" || agent.status === "pending") {
-        agent.status = "stopped";
-        agent.statusReason = { actor: "user", reason: "link run stopped via link stop API" };
-      }
-    }
-  }
-  writeFileSync(runPath, JSON.stringify(run, null, 2));
+  updateRunJsonRecord(runPath, (current) => {
+    if (!current) throw new NotFound("Run not found");
+    if (current.type !== "link") throw new BadRequest("Not a link run");
+    const reason = { actor: "user", reason: "link run stopped via link stop API" };
+    return {
+      ...current,
+      status: "stopped",
+      completed: new Date().toISOString(),
+      statusReason: reason,
+      agents: Array.isArray(current.agents)
+        ? current.agents.map((agent) => {
+          if (!agent || typeof agent !== "object" || Array.isArray(agent)) return agent;
+          const record = agent as Record<string, unknown>;
+          if (record.status !== "running" && record.status !== "pending") return record;
+          return { ...record, status: "stopped", statusReason: reason };
+        })
+        : current.agents,
+    };
+  });
 
   return apiSuccess({ stopped, runId });
 });

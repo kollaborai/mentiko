@@ -7,7 +7,7 @@ import { NextRequest } from "next/server";
 import { randomBytes } from "crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "fs";
 import { join } from "path";
-import { withRunJsonLock, writeRunJsonAtomic } from "@/lib/runs/run-json-lock";
+import { updateRunJsonRecord } from "@/lib/runner-v2/run-state";
 import { checkAuth } from "@/lib/auth/api-auth";
 import { enforceGuestWrites } from "@/lib/middleware";
 import {
@@ -1347,14 +1347,14 @@ function tagDecisionResearchRun(
   const runJsonPath = join(resolveLinkRunsDir(namespaceId, orgId), runId, "run.json");
   if (!existsSync(runJsonPath)) return;
   try {
-    withRunJsonLock(runJsonPath, () => {
-      const run = JSON.parse(readFileSync(runJsonPath, "utf8")) as Record<string, unknown>;
+    updateRunJsonRecord(runJsonPath, (run) => {
+      if (!run) throw new Error(`run.json not found: ${runJsonPath}`);
       const metadata = asPlainObject(run.metadata) ?? {};
-      if (metadata.auto_run_decision_research_fingerprint === fingerprint) return;
-      writeRunJsonAtomic(runJsonPath, {
+      if (metadata.auto_run_decision_research_fingerprint === fingerprint) return run;
+      return {
         ...run,
         metadata: { ...metadata, auto_run_decision_research_fingerprint: fingerprint },
-      });
+      };
     });
   } catch {
     // The provenance fallback above still makes the launch recoverable.
@@ -2480,20 +2480,25 @@ function reapDeadRuns(snapshot: RunsSnapshot): ReapedDeadRun[] {
       const last = runLastActivityMs(record.raw, p);
       if (last > 0 && now - last <= DEAD_RUN_STALE_MS) continue; // still live
       let terminalized: ReapedDeadRun | undefined;
-      withRunJsonLock(p, () => {
-        const fresh = JSON.parse(readFileSync(p, "utf-8"));
-        if (fresh.status !== "running" && fresh.status !== "pending") return; // raced to terminal
-        if (now - runLastActivityMs(fresh, p) <= DEAD_RUN_STALE_MS) return; // became live under lock
+      updateRunJsonRecord(p, (current) => {
+        if (!current) throw new Error(`run.json not found: ${p}`);
+        const fresh = { ...current };
+        if (fresh.status !== "running" && fresh.status !== "pending") return current; // raced to terminal
+        if (now - runLastActivityMs(fresh, p) <= DEAD_RUN_STALE_MS) return current; // became live under lock
         fresh.status = "failed";
         fresh.status_message = `reaped: no agent liveness for >${Math.round(DEAD_RUN_STALE_MS / 60000)}m (dead session); freed concurrency slot`;
-        for (const a of (Array.isArray(fresh.agents) ? fresh.agents : [])) {
-          if (!TERMINAL_AGENT_STATUSES.has(a.status)) a.status = "failed";
-        }
-        writeRunJsonAtomic(p, fresh);
+        fresh.agents = Array.isArray(fresh.agents)
+          ? fresh.agents.map((agent) => {
+            if (!agent || typeof agent !== "object" || Array.isArray(agent)) return agent;
+            const record = agent as Record<string, unknown>;
+            return TERMINAL_AGENT_STATUSES.has(String(record.status)) ? record : { ...record, status: "failed" };
+          })
+          : fresh.agents;
         terminalized = {
           runId: typeof fresh.id === "string" ? fresh.id : record.active.id,
           taskId: typeof fresh.taskId === "string" ? fresh.taskId : undefined,
         };
+        return fresh;
       });
       if (terminalized) {
         reaped.push(terminalized);

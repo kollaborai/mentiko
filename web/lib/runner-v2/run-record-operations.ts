@@ -279,7 +279,7 @@ export function buildRunSummary(
   const latestFirst = [...ordered].reverse();
   const finalSummary = latestFirst[0];
   let outcome: string;
-  if (summaries.some((summary) => statusFailed(summary) || explicit(summary, /(?:overall )?result:\s*fail/i))) {
+  if (summaries.some((summary) => statusFailed(summary, run.status) || explicit(summary, /(?:overall )?result:\s*fail/i))) {
     outcome = "fail";
   } else if (summaries.some((summary) =>
     stringValue(summary.status).toLowerCase() === "partial"
@@ -340,8 +340,10 @@ function runArtifacts(run: RunRecord): unknown[] {
   return [...run.artifacts];
 }
 
-function statusFailed(summary: AgentSummary): boolean {
-  return ["failed", "failure", "error", "blocked"].includes(stringValue(summary.status).toLowerCase());
+function statusFailed(summary: AgentSummary, runStatus: string): boolean {
+  const status = stringValue(summary.status).toLowerCase();
+  return ["failed", "failure", "error"].includes(status)
+    || status === "blocked" && runStatus !== "completed";
 }
 
 function explicit(summary: AgentSummary, pattern: RegExp): boolean {

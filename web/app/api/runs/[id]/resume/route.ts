@@ -9,7 +9,7 @@
  * - reuses the same run ID and directory
  */
 
-import { readFileSync, writeFileSync, existsSync, openSync, closeSync, readdirSync } from "fs";
+import { readFileSync, existsSync, openSync, closeSync, readdirSync } from "fs";
 import { join } from "path";
 import { spawn } from "child_process";
 import config, { nsPath, orgPath } from "@/lib/config";
@@ -30,6 +30,7 @@ import { NotFound, Conflict, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { collectStaleRunSessionNames } from "@/lib/runs/stale-run-sessions";
 import { terminateRunProcess } from "@/lib/runs/run-process";
+import { updateRunJson } from "@/lib/runner-v2/run-state";
 
 export const dynamic = "force-dynamic";
 
@@ -125,10 +126,7 @@ export const POST = withErrorHandling(async (
   }
 
   // analyze agent states
-  const completed = run.agents.filter((a) => a.status === "complete");
-  const incomplete = run.agents.filter((a) => a.status !== "complete");
-
-  if (incomplete.length === 0) {
+  if (!run.agents.some((agent) => agent.status !== "complete")) {
     throw new Conflict("All agents already completed");
   }
 
@@ -146,58 +144,63 @@ export const POST = withErrorHandling(async (
   // source-repointer after the remover had already resolved the bug, contradicting
   // itself and failing the run). Falls back to positional order if the chain can't
   // be parsed.
-  let frontierIds = new Set<string>();
+  let routingAgents: RoutingAgent[] = [];
+  const routingContext = routingContextForEvents(readRoutingEvents(config.eventsDir, run.id), run.id);
   try {
     const chainForRouting = JSON.parse(readFileSync(chainPath, "utf-8"));
-    const routingAgents: RoutingAgent[] = (chainForRouting.agents || []).map(
+    routingAgents = (chainForRouting.agents || []).map(
       (a: { id: string; triggers?: string[]; emits?: string; wait_for_events?: RoutingAgent["wait_for_events"] }) => ({
         id: a.id,
         triggers: a.triggers,
         emits: a.emits,
         wait_for_events: a.wait_for_events,
-        status: run.agents.find((ra) => ra.id === a.id)?.status,
       }),
-    );
-    const routingContext = routingContextForEvents(readRoutingEvents(config.eventsDir, run.id), run.id);
-    frontierIds = new Set(
-      routingAgents
-        .filter((a) => a.status !== "complete" && hasCompletedTrigger(a, routingAgents, routingContext))
-        .map((a) => a.id),
     );
   } catch { /* fall back to positional selection */ }
 
-  // find the agent to resume from
-  // priority: interrupted (running/stopped) > trigger-eligible frontier > first pending
-  // NOTE: the frontier tier matches ANY incomplete frontier agent, not just pending —
-  // in a stopped/failed run the stranded agents are cancelled/stopped/failed, not
-  // pending (evidence run run-1783833704281-b9b585d6 had fix-verifier "cancelled").
-  // frontierIds already excludes completed agents, and the reset loop below flips
-  // whatever we pick back to pending before relaunch.
-  const resumeAgent = incomplete.find((a) => a.status === "running" || a.status === "stopped")
-    || incomplete.find((a) => frontierIds.has(a.id))
-    || incomplete.find((a) => a.status === "pending")
-    || incomplete[0];
+  let resumeAgentId = "";
+  const resumedRun = updateRunJson(runJsonPath, (current) => {
+    if (!current) throw new NotFound("Run", runId);
+    if (current.status === "running") throw new Conflict("Run is already running");
+    const currentIncomplete = current.agents.filter((agent) => agent.status !== "complete");
+    if (currentIncomplete.length === 0) throw new Conflict("All agents already completed");
 
-  // reset incomplete agents to pending (chain-runner will launch them)
-  for (const agent of run.agents) {
-    if (agent.status === "complete") continue;
-    agent.status = "pending";
-    agent.session = "";
-    delete agent.started;
-    delete agent.completed;
-    delete agent.blockedReason;
-    delete agent.lastMessage;
-  }
+    const currentRoutingAgents = routingAgents.map((agent) => ({
+      ...agent,
+      status: current.agents.find((candidate) => candidate.id === agent.id)?.status,
+    }));
+    const frontierIds = new Set(
+      currentRoutingAgents
+        .filter((agent) => agent.status !== "complete" && hasCompletedTrigger(agent, currentRoutingAgents, routingContext))
+        .map((agent) => agent.id),
+    );
+    // Priority: interrupted > trigger-eligible frontier > first pending. The
+    // frontier includes cancelled/stopped agents whose trigger already fired.
+    const resumeAgent = currentIncomplete.find((agent) => agent.status === "running" || agent.status === "stopped")
+      || currentIncomplete.find((agent) => frontierIds.has(agent.id))
+      || currentIncomplete.find((agent) => agent.status === "pending")
+      || currentIncomplete[0];
+    resumeAgentId = resumeAgent.id;
 
-  // update run status + grace period for reconciler
-  run.status = "running";
-  run.resumedAt = new Date().toISOString();
-  delete run.completed;
-  delete run.blockedReason;
-  delete run.blockedAt;
-  delete run.status_message;
-
-  writeFileSync(runJsonPath, JSON.stringify(run, null, 2));
+    const agents = current.agents.map((agent) => {
+      if (agent.status === "complete") return agent;
+      const { started: _started, completed: _completed, blockedReason: _blockedReason, lastMessage: _lastMessage, ...rest } = agent;
+      return { ...rest, status: "pending" as const, session: "" };
+    });
+    const run: typeof current = {
+      ...current,
+      agents,
+      status: "running",
+      resumedAt: new Date().toISOString(),
+    };
+    delete run.completed;
+    delete run.blockedReason;
+    delete run.blockedAt;
+    delete run.status_message;
+    return run;
+  });
+  const completed = resumedRun.agents.filter((agent) => agent.status === "complete");
+  const incomplete = resumedRun.agents.filter((agent) => agent.status !== "complete");
 
   // resolve agent profile for env vars
   let profileEnv: Record<string, string> = {};
@@ -214,10 +217,10 @@ export const POST = withErrorHandling(async (
 
   // spawn chain-runner with existing run ID and --start flag
   const binPath = join(config.codeRoot, "bin", "mentiko");
-  const startFlag = ` --start ${shellEscape(resumeAgent.id)}`;
-  const wsFlag = run.workspacePath ? ` --workspace ${shellEscape(run.workspacePath)}` : "";
-  const taskFlag = run.taskId ? ` --task ${shellEscape(run.taskId)}` : "";
-  const debugFlag = run.debug ? " --debug" : "";
+  const startFlag = ` --start ${shellEscape(resumeAgentId)}`;
+  const wsFlag = resumedRun.workspacePath ? ` --workspace ${shellEscape(resumedRun.workspacePath)}` : "";
+  const taskFlag = resumedRun.taskId ? ` --task ${shellEscape(resumedRun.taskId)}` : "";
+  const debugFlag = resumedRun.debug ? " --debug" : "";
 
   const logPath = join(runDir, "output.log");
   const logFd = openSync(logPath, "a");
@@ -256,7 +259,7 @@ export const POST = withErrorHandling(async (
   return apiSuccess({
     success: true,
     runId,
-    resumeFrom: resumeAgent.id,
+    resumeFrom: resumeAgentId,
     completedAgents: completed.map((a) => a.id),
     resumingAgents: incomplete.map((a) => a.id),
     pid: child.pid,

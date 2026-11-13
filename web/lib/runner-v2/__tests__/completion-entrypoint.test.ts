@@ -1065,6 +1065,70 @@ describe("runner-v2 completion entrypoint", () => {
     });
   });
 
+  it("completes a non-git reviewer run when its reviewed event landed despite blocked attribution status", () => {
+    const root = tempRoot();
+    const runDir = join(root, "runs", "run-123");
+    const eventsDir = join(root, "events");
+    const stateDir = join(root, "state");
+    const artifactsDir = join(runDir, "artifacts");
+    mkdirSync(runDir, { recursive: true });
+    mkdirSync(eventsDir, { recursive: true });
+    mkdirSync(stateDir, { recursive: true });
+    mkdirSync(artifactsDir, { recursive: true });
+
+    const chainPath = join(root, "chain.json");
+    writeJson(chainPath, {
+      id: "review-chain",
+      name: "Review Chain",
+      config: { project_root: root },
+      agents: [{ id: "reviewer", name: "Reviewer", role: "reviewer", emits: "reviewed" }],
+    });
+    const runJsonPath = join(runDir, "run.json");
+    const run = createRunRecord({ chainName: "Review Chain", goal: "review changes" });
+    updateRunJson(runJsonPath, () => ({
+      ...run,
+      id: "run-123",
+      status: "running",
+      agents: [{ id: "reviewer", name: "Reviewer", session: "reviewer-run-123", status: "running" }],
+      sessions: ["reviewer-run-123"],
+    }));
+    writeJson(join(artifactsDir, "reviewer-summary.json"), {
+      status: "blocked",
+      executiveSummary: "Reviewed and approved; workspace attribution unavailable because this workspace is not a git repository.",
+    });
+    const eventPath = join(eventsDir, "run-123-reviewer-reviewed.event");
+    writeFileSync(eventPath, runnerEventFixture({
+      event: "reviewed",
+      source: "reviewer-run-123",
+      runId: "run-123",
+      timestamp: "2026-11-12T00:00:00.000Z",
+    }));
+
+    const result = runRunnerV2CompletionEntrypoint({
+      sessionName: "reviewer-run-123",
+      chainPath,
+      env: {
+        MENTIKO_RUN_ID: "run-123",
+        MENTIKO_RUN_DIR: runDir,
+        EVENTS_DIR: eventsDir,
+        STATE_DIR: stateDir,
+        NAMESPACE_ID: "default",
+        ORG_ID: "default",
+      },
+      now: new Date("2026-11-12T00:00:00.000Z"),
+    });
+
+    expect(result.decision).not.toBe("quality-gate-failed");
+    expect(readRunJson(runJsonPath)).toMatchObject({
+      status: "completed",
+      agents: [{ id: "reviewer", status: "complete" }],
+    });
+    expect(existsSync(eventPath)).toBe(false);
+    expect(readFileSync(join(eventsDir, "archive", "run-123-reviewer-reviewed.event"), "utf8"))
+      .toContain("processed: true");
+    expect(existsSync(join(artifactsDir, "triage-result.json"))).toBe(false);
+  });
+
   it("rolls back adopted and agent state when the quality-gate terminal write fails", () => {
     const root = tempRoot();
     const runDir = join(root, "runs", "run-123");

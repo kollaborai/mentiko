@@ -1,9 +1,10 @@
-import { writeFileSync, existsSync, readFileSync, rmSync } from "fs";
+import { existsSync, readFileSync, rmSync } from "fs";
 import { join } from "path";
 import { taskMergeMeta } from "@/lib/tasks/task-store";
 import { writeLog } from "@/lib/system/system-logger";
 import { getNamespaceConfig, getOrgIdFromRequest, getNamespaceIdFromRequest } from "@/lib/namespace-config";
 import { readAgentStates, mergeAgentStates } from "@/lib/runs/run-state";
+import { updateRunJson } from "@/lib/runner-v2/run-state";
 import { pty } from "@/lib/pty/pty-client";
 import { checkRunAccess } from "@/lib/auth/run-acl";
 import { Unauthorized, NotFound, BadRequest, Conflict } from "@/lib/api-errors";
@@ -123,31 +124,37 @@ export const PATCH = withErrorHandling(async (
     throw new BadRequest("Unknown action", { validAction: "cancel" });
   }
 
-  const run = readRunRecordAt(runsDir, runId);
+  const initialRun = readRunRecordAt(runsDir, runId);
 
-  if (run.status !== "running" && run.status !== "pending") {
+  if (initialRun.status !== "running" && initialRun.status !== "pending") {
     throw new Conflict("Run is not active");
   }
 
   // kill sessions for any active agents
-  for (const agent of run.agents || []) {
+  for (const agent of initialRun.agents || []) {
     if (agent.session) {
       await pty.remove(agent.session);
     }
   }
 
-  // update run status
-  run.status = "cancelled";
-  run.completed = new Date().toISOString();
-  run.statusReason = { actor: "user", reason: "cancelled via run detail API" };
-  for (const agent of run.agents || []) {
-    if (agent.status === "running" || agent.status === "pending") {
-      agent.status = "cancelled";
-      agent.statusReason = { actor: "user", reason: "run cancelled via run detail API" };
+  const run = updateRunJson(runJsonPath, (current) => {
+    if (!current) throw new NotFound("Run", runId);
+    if (current.status !== "running" && current.status !== "pending") {
+      throw new Conflict("Run is not active");
     }
-  }
-
-  writeFileSync(runJsonPath, JSON.stringify(run, null, 2));
+    const completedAt = new Date().toISOString();
+    return {
+      ...current,
+      status: "cancelled",
+      completed: completedAt,
+      statusReason: { actor: "user", reason: "cancelled via run detail API" },
+      agents: (current.agents || []).map((agent) => (
+        agent.status === "running" || agent.status === "pending"
+          ? { ...agent, status: "cancelled", statusReason: { actor: "user", reason: "run cancelled via run detail API" } }
+          : agent
+      )),
+    };
+  });
   writeLog(namespaceId, orgId || "default", "warn", "run-api",
     `run ${runId} cancelled (deleted)`, `chain: ${run.chain || "unknown"}`);
 
