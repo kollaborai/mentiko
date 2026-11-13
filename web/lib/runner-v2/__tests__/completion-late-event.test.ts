@@ -339,6 +339,13 @@ describe("recoverLateCompletionEvents", () => {
   it("adopts a late completion event for a completion_failed attempt, completes the agent, and routes downstream", () => {
     const file = runPath();
     seedFailedRun(file);
+    updateRunJson(file, (run) => ({
+      ...run!,
+      agents: run!.agents.map((agent) => ({
+        ...agent,
+        lastMessage: "queued: waiting for an active agent slot",
+      })),
+    }));
     seedFailedAttempt(file);
 
     const result = recoverLateCompletionEvents({
@@ -361,6 +368,7 @@ describe("recoverLateCompletionEvents", () => {
     // run reopened, agent flipped from failed -> complete
     expect(result.run.status).toBe("running");
     expect(result.run.agents[0]).toMatchObject({ id: "writer", status: "complete" });
+    expect(result.run.agents[0].lastMessage).toBeUndefined();
 
     // the completion_failed attempt stays in history; a fresh adopted attempt
     // records the real completion evidence (bash parity: "process gone but
