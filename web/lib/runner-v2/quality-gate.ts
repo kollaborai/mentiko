@@ -30,6 +30,8 @@ interface CoverageValues {
 export interface QualityGateInput {
   agent: AgentDescriptor;
   summary?: AgentSummary;
+  /** A valid, unprocessed event matching this agent's declared completion event was found. */
+  completionEventAccepted?: boolean;
   /** A required agent summary existed but could not be decoded as a JSON object. */
   summaryParseError?: string;
   routeCoverage?: RouteCoverageReport;
@@ -74,7 +76,10 @@ export function evaluateQualityGate(input: QualityGateInput): QualityGateResult 
     };
   }
   const summaryStatus = input.summary?.status?.trim().toLowerCase();
-  if (summaryStatus && ["failed", "failure", "error", "blocked"].includes(summaryStatus)) {
+  if (summaryStatus && (
+    ["failed", "failure", "error"].includes(summaryStatus)
+    || summaryStatus === "blocked" && !input.completionEventAccepted
+  )) {
     return {
       passed: false,
       reason: `agent summary status is ${summaryStatus}`,
