@@ -1,5 +1,5 @@
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "fs";
-import { basename, dirname, join } from "path";
+import { accessSync, chmodSync, constants as fsConstants, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "fs";
+import { basename, delimiter, dirname, join, resolve, sep } from "path";
 import { pty } from "@/lib/pty/pty-client";
 import { shellEscape } from "@/lib/api/audit-exec";
 import config from "@/lib/config";
@@ -448,17 +448,18 @@ export async function executeLocalBootstrap(
     chmodSync(startScriptPath, 0o700);
 
     assertRoutedLaunchJobOwnership(runJsonPath, launchJobId, launchOwnerId);
+    const bootstrapShell = resolveBootstrapShell(context.env);
     await executor.remove(executionPlan.sessionName);
-    const spawned = await executor.spawn(executionPlan.sessionName, "zsh", [], {
+    const spawned = await executor.spawn(executionPlan.sessionName, bootstrapShell, [], {
       cwd: executionPlan.projectRoot,
       env: sanitizePtyEnv({
         PATH: context.env.PATH || process.env.PATH || "",
         HOME: context.env.HOME || process.env.HOME || "",
-        SHELL: context.env.SHELL || process.env.SHELL || "",
         TERM: context.env.TERM || process.env.TERM || "xterm-256color",
         MENTIKO_RUNNER_V2_ACTIVE: "1",
         MENTIKO_RUNNER_V2_MODE: "typed-plan",
         ...executionPlan.runContextExports,
+        SHELL: bootstrapShell,
       }),
     });
     transitionAgentAttempt({ runJsonPath, attemptId: attempt.id, to: "pty_allocated" });
@@ -471,12 +472,13 @@ export async function executeLocalBootstrap(
     transitionAgentAttempt({ runJsonPath, attemptId: attempt.id, to: "process_spawned" });
 
     registerRunSession(context, executionPlan);
-    // The PTY intentionally starts as an interactive shell, but a failed
-    // startup script must terminate that shell. Otherwise readiness can see a
-    // normal zsh prompt and inject agent instructions as shell commands.
-    const startCommand = `cd ${shellEscape(executionPlan.projectRoot)} && bash ${shellEscape(startScriptPath)} || exit $?`;
-    // No trailing \r: pty.sendKeys appends its own return. A literal \r here
-    // would submit a second, empty line.
+    // Replace the interactive shell with the selected shell running the startup
+    // script. If startup fails, the PTY exits instead of exposing a prompt that
+    // readiness could mistake for a live agent CLI.
+    const startCommand = `exec ${shellEscape(bootstrapShell)} ${shellEscape(startScriptPath)}`;
+    // No trailing \r: sendKeys now sets the daemon's `enter` flag, which appends
+    // the return itself after its settle delay. A literal \r here would submit a
+    // second, empty line.
     await executor.sendKeys(executionPlan.sessionName, startCommand);
     await waitForBootstrapReadiness(executionPlan, executor, attempt.id, runJsonPath);
     transitionAgentAttempt({ runJsonPath, attemptId: attempt.id, to: "ready_for_instructions" });
@@ -506,7 +508,7 @@ export async function executeLocalBootstrap(
         });
       }
     }
-    await startMonitorSession(executionPlan, executor);
+    await startMonitorSession(executionPlan, executor, bootstrapShell);
   } catch (error) {
     if (error instanceof BootstrapReadinessBlockedError) {
       return;
@@ -1291,6 +1293,7 @@ function instructionPointerRecorded(plan: AgentBootstrapPlan): boolean {
 async function startMonitorSession(
   plan: AgentBootstrapPlan,
   executor: RunnerV2BootstrapExecutor,
+  shell: string,
 ): Promise<void> {
   await executor.remove(plan.monitorSessionName);
   // The long-lived PTY daemon filters the environment it receives. Keep the
@@ -1300,15 +1303,56 @@ async function startMonitorSession(
   const monitorCommand = plan.runContextExports.MENTIKO_AGENT_ATTEMPT_ID
     ? `export MENTIKO_AGENT_ATTEMPT_ID=${shellEscape(plan.runContextExports.MENTIKO_AGENT_ATTEMPT_ID)}; ${plan.monitorCommand}`
     : plan.monitorCommand;
-  await executor.spawn(plan.monitorSessionName, "bash", ["-lc", monitorCommand], {
+  await executor.spawn(plan.monitorSessionName, shell, ["-c", monitorCommand], {
     cwd: plan.projectRoot,
     env: sanitizePtyEnv({
       PATH: plan.runContextExports.PATH || process.env.PATH || "",
       MENTIKO_RUNNER_V2_ACTIVE: "1",
       MENTIKO_RUNNER_V2_MODE: "typed-plan",
       ...plan.runContextExports,
+      SHELL: shell,
     }),
   });
+}
+
+function resolveBootstrapShell(env: NodeJS.ProcessEnv): string {
+  const pathValue = env.PATH ?? process.env.PATH ?? "";
+  const candidates = [
+    env.MENTIKO_RUNNER_V2_SHELL || process.env.MENTIKO_RUNNER_V2_SHELL,
+    env.SHELL || process.env.SHELL,
+    "bash",
+    "sh",
+  ];
+
+  for (const candidate of candidates) {
+    const executable = resolveExecutable(candidate, pathValue);
+    if (executable) return executable;
+  }
+
+  throw new Error(
+    "No executable shell found for runner-v2 bootstrap. Set MENTIKO_RUNNER_V2_SHELL or SHELL, or install bash or sh on PATH.",
+  );
+}
+
+function resolveExecutable(candidate: string | undefined, pathValue: string): string | undefined {
+  const command = candidate?.trim();
+  if (!command) return undefined;
+
+  const candidates = command.includes(sep) || command.includes("/")
+    ? [resolve(command)]
+    : pathValue.split(delimiter).filter(Boolean).map((directory) => join(directory, command));
+
+  for (const executable of candidates) {
+    try {
+      if (!statSync(executable).isFile()) continue;
+      accessSync(executable, fsConstants.X_OK);
+      return executable;
+    } catch {
+      // Keep looking when a configured candidate is missing or not executable.
+    }
+  }
+
+  return undefined;
 }
 
 function sleep(ms: number): Promise<void> {
