@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { spawnSync } from "child_process";
@@ -71,6 +71,19 @@ function env(input: ReturnType<typeof fixture>) {
     MENTIKO_MAX_ACTIVE_AGENTS: "1",
     MENTIKO_AGENT_CAP_MAX_WAIT_SECS: "90",
   };
+}
+
+function expectClaimedOccurrence(input: ReturnType<typeof fixture>): void {
+  const transactionRoot = join(input.eventsDir, ".event-transactions");
+  const [transactionId] = readdirSync(transactionRoot);
+  expect(transactionId).toMatch(/^[a-f0-9]{64}$/);
+  expect(JSON.parse(readFileSync(join(transactionRoot, transactionId, "manifest.json"), "utf8"))).toMatchObject({
+    state: "claimed",
+    sourceFilename: "writer.event",
+    runId: "run-123",
+    occurrenceId: expect.any(String),
+  });
+  expect(existsSync(join(transactionRoot, transactionId, "claimed.event"))).toBe(true);
 }
 
 function complete(
@@ -244,7 +257,7 @@ describe("runner-v2 routed launch durable acceptance", () => {
     expect(routedLaunchCalls()).toHaveLength(1);
   });
 
-  it("preserves an accepted handoff across event-consume failure and replay does not relaunch", () => {
+  it("preserves an accepted handoff in its transaction across consume failure and replay does not relaunch", () => {
     const input = fixture();
     const heartbeatAt = "2026-07-15T12:00:02.000Z";
     mockSpawnSync.mockImplementation((...args) => {
@@ -266,7 +279,8 @@ describe("runner-v2 routed launch durable acceptance", () => {
     });
 
     expect(() => complete(input)).toThrow(/archive/i);
-    expect(existsSync(input.eventPath)).toBe(true);
+    expect(existsSync(input.eventPath)).toBe(false);
+    expectClaimedOccurrence(input);
     expect(readRunJson(input.runJsonPath).agents).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: "reviewer", status: "running", session: "reviewer-run-123" }),
     ]));
@@ -283,6 +297,7 @@ describe("runner-v2 routed launch durable acceptance", () => {
     expect(replay).toMatchObject({ status: "handled", decision: "route", plan: { launches: [] } });
     expect(routedLaunchCalls()).toHaveLength(0);
     expect(existsSync(input.eventPath)).toBe(false);
+    expect(readdirSync(join(input.eventsDir, ".event-transactions"))).toEqual([]);
   });
 
   it("preserves fast-terminal target provenance and concurrent monitor state across locked rollback", () => {
@@ -297,7 +312,8 @@ describe("runner-v2 routed launch durable acceptance", () => {
     });
 
     expect(() => complete(input)).toThrow(/archive/i);
-    expect(existsSync(input.eventPath)).toBe(true);
+    expect(existsSync(input.eventPath)).toBe(false);
+    expectClaimedOccurrence(input);
     expect(readRunJson(input.runJsonPath)).toMatchObject({
       agents: expect.arrayContaining([
         expect.objectContaining({ id: "writer", status: "running" }),

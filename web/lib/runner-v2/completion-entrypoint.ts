@@ -9,7 +9,7 @@ import { adoptAgentAttemptForCompletion, isTerminalAgentAttemptPhase, markAgentA
 import { agentOwnsEvent } from "@/lib/runner-v2/completion";
 import { runCompletionPipeline, type CompletionPipelineResult } from "@/lib/runner-v2/completion-pipeline";
 import type { AgentLivenessInput, CompletionRecoveryEvidence } from "@/lib/runner-v2/completion-runner";
-import { scanRunnerEventFiles } from "@/lib/runner-v2/event-lifecycle";
+import { readPendingRunnerEventTransactions, scanRunnerEventFiles } from "@/lib/runner-v2/event-lifecycle";
 import { eventMatchesRunId, type RunnerEventRecord } from "@/lib/runner-v2/events";
 import { buildTypedExecutorPlan, type TypedExecutorPlan } from "@/lib/runner-v2/executor";
 import { captureHash, monitorStatePaths } from "@/lib/runner-v2/monitor-io";
@@ -102,7 +102,10 @@ export function runRunnerV2CompletionEntrypoint(
   const fanGroup = fanGroupId ? readFanGroup(stateDir, fanGroupId) || undefined : undefined;
 
   const eventsDir = resolveEventsDir(env);
-  const events = readEvents(eventsDir);
+  const events = [
+    ...readEvents(eventsDir),
+    ...readPendingRunnerEventTransactions(eventsDir, runId).map(({ event }) => event),
+  ];
   // Archived processed events are replay evidence only for completion matching.
   // Keep them out of candidate events so an old handoff can never become a new
   // trigger, but merge same-run archived events into routing firedEvents so
