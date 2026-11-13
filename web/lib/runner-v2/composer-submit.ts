@@ -10,7 +10,7 @@
 // -------------------------------------------------------------------
 
 /**
- * Three distinct states, because "no composer on screen" is NOT the same as
+ * Four distinct states, because "no composer on screen" is NOT the same as
  * "composer accepted the paste" — conflating them is how a run dies silently:
  *
  *   holding — the LAST line with a ❯ has content after it: unsubmitted input.
@@ -21,21 +21,42 @@
  *             a `›` glyph for both its transcript and composer, so it also
  *             lands here deliberately. We have NO evidence either way, so
  *             this must never count as delivery by itself.
+ *   codex-empty — Codex's idle composer placeholder is visible. It confirms
+ *             the composer is empty, but not that the preceding paste landed.
  *
  * Menus/dialogs also use ❯ as a selection caret — an enter retry there picks
  * the default option, which the readiness failure classifier already treats
  * as human_action_required territory.
  */
-export type ComposerState = "holding" | "empty" | "absent";
+export type ComposerState = "holding" | "empty" | "absent" | "codex-empty";
 
 export function composerState(output: string): ComposerState {
   const lines = output.split("\n");
+  const lastVisibleLine = [...lines].reverse().find((line) => line.trim().length > 0);
+  // Codex's › glyph is shared by transcript and composer text. Its stable
+  // idle placeholder identifies the composer, but is not proof that a prior
+  // paste was accepted (the same prompt is visible when no input was sent).
+  if (/^\s*›\s*Ask Codex to do anything\s*$/.test(lastVisibleLine ?? "")) {
+    return "codex-empty";
+  }
   for (let i = lines.length - 1; i >= 0; i--) {
     const idx = lines[i].indexOf("❯"); // ❯
     if (idx === -1) continue;
     return lines[i].slice(idx + 1).trim().length > 0 ? "holding" : "empty";
   }
   return "absent";
+}
+
+/**
+ * Codex renders a timed "Working (...)" status while processing an accepted
+ * turn. This is positive submission evidence only for bootstrap, which sends
+ * the first prompt into a fresh session; callers delivering nudges to a
+ * session that may already be working must leave this opt-in disabled.
+ */
+export function isCodexWorking(output: string): boolean {
+  return output.split("\n").some((line) =>
+    /\bWorking\s*\(\s*\d+(?:s|m|h)\b[^)]*(?:\)|$)/i.test(line),
+  );
 }
 
 /**
@@ -66,12 +87,16 @@ export interface ConfirmSubmissionOptions {
   maxEnterRetries?: number;
   captureLines?: number;
   /**
-   * Return false as soon as the first successful capture has no recognizable
-   * composer. Use this for an already-running agent where waiting and sending
-   * blind Enter retries cannot create stronger submission evidence. Bootstrap
-   * leaves this disabled because an absent composer can still mean "booting".
+   * Return false as soon as the first successful capture has no pending input
+   * composer to retry. Use this for an already-running agent where waiting and
+   * sending blind Enter retries cannot create stronger evidence.
    */
   stopOnAbsentComposer?: boolean;
+  /**
+   * Accept Codex's active-turn status as proof that a fresh bootstrap prompt
+   * started working. Do not enable this for monitor nudges into a live session.
+   */
+  acceptCodexWorking?: boolean;
 }
 
 /**
@@ -101,12 +126,13 @@ export async function confirmComposerSubmission(
       deadline,
     ).catch(() => null);
     if (output === SUBMISSION_DEADLINE_EXCEEDED) return false;
-    // An empty rendered composer proves the CLI accepted the text. A capture
-    // with no composer at all ("absent") remains missing evidence unless the
-    // caller can prove this exact execution already produced a durable handoff.
-    // That second branch covers execute-and-exit CLIs without reintroducing the
-    // booting-CLI false positive.
+    // An empty rendered Claude-style composer proves the CLI accepted the text.
+    // Codex's idle composer placeholder is recognized separately because it
+    // can also appear when the paste was never delivered.
     const state = output === null ? null : composerState(output);
+    if (output !== null && options.acceptCodexWorking === true && isCodexWorking(output)) {
+      return true;
+    }
     if (state === "empty") return true;
     const hasAcceptedEvidence = io.hasAcceptedSubmissionEvidence || io.hasAcceptedExecutionEvidence;
     if (hasAcceptedEvidence) {
@@ -117,8 +143,10 @@ export async function confirmComposerSubmission(
       if (evidence === SUBMISSION_DEADLINE_EXCEEDED) return false;
       if (evidence === true) return true;
     }
-    if (state === "absent" && options.stopOnAbsentComposer === true) return false;
-    if (enterRetries < maxEnterRetries) {
+    if ((state === "absent" || state === "codex-empty") && options.stopOnAbsentComposer === true) return false;
+    // On bootstrap, Codex's idle placeholder has no pending text, so a blind
+    // Enter cannot submit the paste and may affect an unrelated UI state.
+    if (!(state === "codex-empty" && options.acceptCodexWorking === true) && enterRetries < maxEnterRetries) {
       enterRetries += 1;
       const enterResult = await awaitBeforeDeadline(
         () => io.sendEnter(),
