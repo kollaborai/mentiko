@@ -42,10 +42,11 @@ import {
   currentRunWorkspaceCommit,
   integrateAcceptedCompletionWorkspace,
   integrateCompletedNodeWorkspace,
+  isWorkspaceIntegrationRefused,
   publishCompletedRunWorkspace,
+  type CompletionWorkspaceIntegrationResult,
 } from "@/lib/runner-v2/completion-workspace";
 import type {
-  GitNodeIntegrationResult,
   GitRunWorkspacePublicationResult,
 } from "@/lib/runner-v2/workspace-isolation";
 import { waitForProcessSessionQuiescence } from "@/lib/runner-v2/process-session";
@@ -118,7 +119,7 @@ export function runRunnerV2CompletionEntrypoint(
   if (duplicate) {
     let completionAttempt: ReturnType<typeof resolveAgentAttemptForCompletion>;
     let completionAttemptCurrent = true;
-    let integration: GitNodeIntegrationResult | undefined;
+    let integration: CompletionWorkspaceIntegrationResult | undefined;
     if (!input.dryRun) {
       completionAttempt = resolveAgentAttemptForCompletion({
         runJsonPath,
@@ -143,7 +144,7 @@ export function runRunnerV2CompletionEntrypoint(
           now: input.now,
         })
         : undefined;
-      if (integration?.status === "conflict") {
+      if (isWorkspaceIntegrationRefused(integration)) {
         return blockWorkspaceIntegrationConflict({
           runJsonPath,
           runId,
@@ -198,7 +199,7 @@ export function runRunnerV2CompletionEntrypoint(
         updateRunStatus(runJsonPath, "completed", undefined, input.now, undefined, attemptGuard, completedReason);
       }
     }
-    if (!input.dryRun && completionAttempt && integration && integration.status !== "conflict") {
+    if (!input.dryRun && completionAttempt && integration && !isWorkspaceIntegrationRefused(integration)) {
       cleanupNodeWorkspaceAfterCompletion({
         run,
         runId,
@@ -390,7 +391,7 @@ export function runRunnerV2CompletionEntrypoint(
       dryRun: input.dryRun,
       now: input.now,
     });
-    if (workspaceIntegration?.status === "conflict") {
+    if (isWorkspaceIntegrationRefused(workspaceIntegration)) {
       restoreSnapshots(runJsonPath, runMutationJournal, loopMutationJournal);
       return blockWorkspaceIntegrationConflict({
         runJsonPath,
@@ -771,7 +772,7 @@ function blockWorkspaceIntegrationConflict(input: {
   sessionName: string;
   agentId: string;
   attemptId: string;
-  integration: GitNodeIntegrationResult;
+  integration: CompletionWorkspaceIntegrationResult & { status: "conflict" | "merge-back-refused" };
   env: NodeJS.ProcessEnv | Record<string, string | undefined>;
   now?: Date;
 }): RunnerV2CompletionEntrypointResult {
