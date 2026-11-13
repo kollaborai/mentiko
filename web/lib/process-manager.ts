@@ -2,7 +2,7 @@
 // runs as PID 2 under tini. spawns and manages all platform processes.
 // zero external dependencies. node built-ins only.
 
-import { spawn, execSync, type ChildProcess } from 'child_process';
+import { spawn, execSync, execFileSync, type ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as net from 'net';
@@ -13,8 +13,15 @@ import type {
   ProcessConfig, ProcessesFile, ReadinessConfig,
   IPCRequest,
 } from './pm-types';
-import { buildManagedProcessEnv, expandManagedProcessArgs, resolveManagedDevGlobalRoot, shouldReplaceUnavailableDevContainerRoot } from './process-manager-env';
+import {
+  buildManagedProcessEnv,
+  expandManagedProcessArgs,
+  resolveManagedDevGlobalRoot,
+  resolveManagedWebPort,
+  shouldReplaceUnavailableDevContainerRoot,
+} from './process-manager-env';
 import { registerKollabMentikoMcpServer } from './kollabor-mcp-settings';
+import { formatReadinessTimeout, resolveReadinessTimeout, resolveRestartDelay } from './process-manager-readiness';
 
 interface ManagedProcess {
   config: ProcessConfig;
@@ -168,8 +175,9 @@ function checkHttp(url: string): Promise<boolean> {
 
 async function waitReady(_name: string, r: ReadinessConfig | undefined): Promise<boolean> {
   if (!r || r.type === 'none') return true;
-  if (r.type === 'timer') { await sleep(r.timeout || 1000); return true; }
-  const deadline = Date.now() + (r.timeout || 10000);
+  const timeoutMs = resolveReadinessTimeout(r);
+  if (r.type === 'timer') { await sleep(timeoutMs); return true; }
+  const deadline = Date.now() + timeoutMs;
   const interval = r.interval || POLL_INTERVAL;
   while (Date.now() < deadline) {
     if (shuttingDown) return false;
@@ -202,7 +210,9 @@ function spawnChild(config: ProcessConfig): ManagedProcess {
   child.on('exit', (code: number | null, signal: string | null) => handleExit(m, code, signal));
   child.on('error', (err: Error) => {
     logErr(`${config.name} spawn error: ${err.message}`);
+    const readinessPending = m.status === 'starting';
     m.status = 'crashed';
+    if (readinessPending && config.critical && config.restart?.retryOnStartup) return;
     scheduleRestart(m);
   });
   return m;
@@ -210,6 +220,7 @@ function spawnChild(config: ProcessConfig): ManagedProcess {
 
 function handleExit(m: ManagedProcess, code: number | null, signal: string | null) {
   const name = m.config.name;
+  const readinessPending = m.status === 'starting';
   m.lastExit = Date.now();
   m.lastExitCode = code;
   m.child = null;
@@ -245,24 +256,27 @@ function handleExit(m: ManagedProcess, code: number | null, signal: string | nul
   if (code === 0 && !(m.config.restart?.enabled ?? true)) {
     m.status = 'stopped'; log(`${name} exited cleanly (${desc})`); return;
   }
+  if (readinessPending && m.config.critical && m.config.restart?.retryOnStartup) {
+    log(`${name} exited before readiness; startup retry will follow its readiness window`);
+    return;
+  }
   log(`${name} crashed (${desc}), uptime ${Math.round(uptime / 1000)}s`);
   scheduleRestart(m);
 }
 
 function scheduleRestart(m: ManagedProcess) {
   if (shuttingDown) return;
-  const r = m.config.restart ?? { enabled: true, maxRestarts: 10, baseDelay: 1000, maxDelay: 30000, resetAfter: 60000, jitter: true };
-  if (!r.enabled) { m.status = 'stopped'; return; }
-  const max = r.maxRestarts ?? 10;
-  if (m.restarts >= max) {
+  const restart = m.config.restart;
+  if (restart && !restart.enabled) { m.status = 'stopped'; return; }
+  const nextRestart = resolveRestartDelay(restart, m.restarts);
+  const max = nextRestart?.maxRestarts ?? restart?.maxRestarts ?? 10;
+  if (!nextRestart) {
     m.status = 'failed';
     logErr(`${m.config.name} exceeded max restarts (${max}/${max}), giving up`);
     if (m.config.critical) { logErr(`critical process ${m.config.name} failed, shutting down`); exitCode = 1; shutdown(); }
     return;
   }
-  const base = r.baseDelay ?? 1000;
-  let delay = Math.min(base * Math.pow(2, m.restarts), r.maxDelay ?? 30000);
-  if (r.jitter ?? true) delay = Math.round(delay * (0.85 + Math.random() * 0.3));
+  const delay = nextRestart.delayMs;
   m.restarts++;
   log(`${m.config.name} restarting in ${delay}ms (attempt ${m.restarts}/${max})`);
   m.restartTimer = setTimeout(async () => {
@@ -304,12 +318,23 @@ async function startOne(config: ProcessConfig, options: StartOptions = {}): Prom
       if (daemonPid) { m.pid = daemonPid; log(`${config.name} daemon pid ${daemonPid}`); }
     }
   } else if (!shuttingDown) {
-    logErr(`${config.name} readiness timeout, killing`);
+    const timeoutMs = resolveReadinessTimeout(config.readiness);
+    logErr(formatReadinessTimeout(config.name, config.readiness, timeoutMs, expandEnv));
     await killProc(m);
     m.status = 'crashed';
     if (options.abortCriticalReadinessTimeout && config.critical) {
+      const retry = config.restart?.retryOnStartup
+        ? resolveRestartDelay(config.restart, m.restarts)
+        : null;
+      if (retry) {
+        m.restarts++;
+        log(`${config.name} retrying startup in ${retry.delayMs}ms after readiness timeout (attempt ${m.restarts}/${retry.maxRestarts})`);
+        await sleep(retry.delayMs);
+        if (shuttingDown) return m;
+        return startOne(config, options);
+      }
       m.status = 'failed';
-      logErr(`critical process ${config.name} failed readiness during startup`);
+      logErr(`${config.name} failed readiness during startup after ${m.restarts} retries (max ${config.restart?.maxRestarts ?? 0})`);
       exitCode = 1;
       await shutdown();
     } else {
@@ -464,10 +489,25 @@ function pmSocketPath(): string {
   return path.join(os.homedir(), '.mentiko-pm', 'pm.sock');
 }
 
+// Asks the engine's python (same `python` processes.dev.json runs) where it
+// would put its config dir with KOLLAB_CONFIG_DIR=dir. Any failure = no.
+function kollabEngineHonorsConfigDir(dir: string): boolean {
+  try {
+    const out = execFileSync(
+      'python',
+      ['-c', 'from kollabor_config.config_utils import get_config_directory as g; print(g())'],
+      { encoding: 'utf-8', env: { ...process.env, KOLLAB_CONFIG_DIR: dir }, timeout: 10000 },
+    ).trim();
+    return path.resolve(out) === path.resolve(dir);
+  } catch {
+    return false;
+  }
+}
+
 // If a previous process-manager is still running, send it a shutdown over IPC
 // and wait for it to release the socket. Without this, two PMs coexist and
 // both keep their kollabor-engine/worker/etc subprocesses alive — leading to
-// EADDRINUSE crash loops on ports 7433, 3099, etc.
+// EADDRINUSE crash loops on ports 7443, 3099, etc.
 async function shutdownPriorPm(): Promise<void> {
   const sockPath = pmSocketPath();
   if (!fs.existsSync(sockPath)) return;
@@ -655,7 +695,7 @@ async function handleIpc(raw: string, conn: net.Socket) {
 
 // -- housekeeping --
 
-async function housekeep() {
+async function housekeep(config: ProcessesFile) {
   if (!process.env.PATH?.includes('/opt/mentiko/bin'))
     process.env.PATH = `/opt/mentiko/bin:${process.env.PATH || ''}`;
 
@@ -761,7 +801,8 @@ async function housekeep() {
       : crypto.randomBytes(32).toString('hex');
     log(`internal service secret: ${isDev ? 'using dev default' : 'generated'} (len=${process.env.INTERNAL_SERVICE_SECRET.length})`);
   }
-  const webPort = process.env.WEB_PORT || process.env.PORT || '3000';
+  const platformConfig = config.processes.find(process => process.name === 'platform');
+  const webPort = resolveManagedWebPort(process.env, platformConfig);
   if (!process.env.WEB_PORT) process.env.WEB_PORT = webPort;
   if (!process.env.PORT && isDev) process.env.PORT = webPort;
   if (!process.env.BETTER_AUTH_URL && isDev) process.env.BETTER_AUTH_URL = `http://localhost:${webPort}`;
@@ -774,6 +815,20 @@ async function housekeep() {
   if (!process.env.MENTIKO_ORG_ID) {
     process.env.MENTIKO_ORG_ID = process.env.ORG_ID || 'default';
   }
+  // dev: give mentiko's engine its own kollab config dir, so its token, MCP
+  // settings and profiles never overwrite a standalone kollab on this machine.
+  // Production (one engine per tenant) keeps ~/.kollab.
+  // Only when the installed engine honors KOLLAB_CONFIG_DIR: an older engine
+  // would keep writing ~/.kollab while mentiko read the private dir.
+  if (isDev && !process.env.KOLLAB_CONFIG_DIR) {
+    const devDir = path.join(os.homedir(), '.mentiko', 'kollab');
+    if (kollabEngineHonorsConfigDir(devDir)) {
+      process.env.KOLLAB_CONFIG_DIR = devDir;
+    } else {
+      log('kollab engine ignores KOLLAB_CONFIG_DIR (needs a newer kollab); sharing ~/.kollab with any standalone kollab');
+    }
+  }
+  if (process.env.KOLLAB_CONFIG_DIR) log(`kollab config dir: ${process.env.KOLLAB_CONFIG_DIR}`);
   try {
     // Prefer the bundled binary in prod, repo shim in dev
     const mcpBin = fs.existsSync('/opt/mentiko/bin/mentiko-mcp')
@@ -787,14 +842,14 @@ async function housekeep() {
 
   // dev mode: if another process-manager is already running, ask it to shut
   // down before we start. Without this, two PMs run side-by-side, each with
-  // their own kollabor-engine/worker children, fighting over 7433 etc.
+  // their own kollabor-engine/worker children, fighting over 7443 etc.
   if (isDev) {
     try { await shutdownPriorPm(); } catch (e: unknown) { logErr(`prior-pm shutdown failed: ${errorMessage(e)}`); }
   }
 
   // dev mode: kill stale processes on ports we need, then wait for ports to free
   if (isDev) {
-    for (const port of [Number(webPort), 3099, 7433].filter((p) => Number.isFinite(p))) {
+    for (const port of [Number(webPort), 3099, 7443].filter((p) => Number.isFinite(p))) {
       try {
         const pids = execSync(`lsof -ti :${port} 2>/dev/null`, { encoding: 'utf-8' }).trim();
         if (!pids) continue;
@@ -843,11 +898,11 @@ async function main() {
     });
   });
 
-  try { await housekeep(); } catch (e: unknown) { logErr(`housekeeping failed: ${errorMessage(e)}`); }
-
   configPath = findConfig();
   log(`config: ${configPath}`);
   const config = loadConfig(configPath);
+  try { await housekeep(config); } catch (e: unknown) { logErr(`housekeeping failed: ${errorMessage(e)}`); }
+
   startupOrder = topoSort(config.processes);
   log(`startup order: ${startupOrder.join(' -> ')}`);
   startIpc();

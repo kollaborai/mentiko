@@ -1,6 +1,6 @@
 import { createHash } from "crypto";
 import { access, cp as copyDir, mkdir, readdir, readFile, writeFile } from "fs/promises";
-import { homedir } from "os";
+import { kollabConfigDir } from "@/lib/kollab-config-dir";
 import { join } from "path";
 import { NextRequest, NextResponse } from "next/server";
 import { checkAuth } from "@/lib/auth/api-auth";
@@ -11,8 +11,8 @@ export const dynamic = "force-dynamic";
 
 /** Shipped agent bundle (repo root `kollab/agent-bundles/mentiko`, copied into prod images). */
 const SOURCE_DIR = codePath("kollab", "agent-bundles", "mentiko");
-const TARGET_DIR = join(homedir(), ".kollab", "agents", "mentiko");
-const MCP_SETTINGS_PATH = join(homedir(), ".kollab", "mcp", "mcp_settings.json");
+const TARGET_DIR = join(kollabConfigDir(), "agents", "mentiko");
+const MCP_SETTINGS_PATH = join(kollabConfigDir(), "mcp", "mcp_settings.json");
 
 type McpSettings = {
   servers?: Record<string, unknown>;
@@ -41,7 +41,7 @@ type McpSetupResult = {
   preservedServerCount: number;
 };
 
-const MCP_DIR = join(homedir(), ".kollab", "mcp");
+const MCP_DIR = join(kollabConfigDir(), "mcp");
 const MCP_SERVER_NAME = "mentiko";
 const MCP_COMMAND = codePath("bin", "mentiko-mcp");
 const NORMALIZED_AGENT_TARGET = "~/.kollab/agents/mentiko";
@@ -66,7 +66,7 @@ async function syncAgentBundle(sourceFingerprint: string): Promise<AgentSetupRes
   const previousFingerprint = targetExists ? await hashBundle(TARGET_DIR) : null;
   const updated = previousFingerprint !== sourceFingerprint;
 
-  await mkdir(join(homedir(), ".kollab", "agents"), { recursive: true });
+  await mkdir(join(kollabConfigDir(), "agents"), { recursive: true });
   if (updated) {
     await copyDir(SOURCE_DIR, TARGET_DIR, { recursive: true, force: true });
   }

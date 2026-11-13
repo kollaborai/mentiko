@@ -35,6 +35,15 @@ jest.mock("@/lib/config", () => {
   return { __esModule: true, ...actual, nsPath, default: { ...actual.default, runsDir } };
 });
 
+// canAdmitAutoRun reads dependency state from task-store after receiving its
+// candidate. This regression uses a hermetic, persisted no-dependency task;
+// without the row, the correct fail-closed result is deps_not_ready.
+jest.mock("@/lib/tasks/task-store", () => ({
+  taskGet: jest.fn(() => ({ id: "TASK-003", dependencies: [] })),
+  taskList: jest.fn(),
+  taskUpdate: jest.fn(),
+}));
+
 import { describe, it, expect } from "@jest/globals";
 import { canAdmitAutoRun } from "@/lib/runs/auto-run";
 import { hydrateLifecycleState } from "@/lib/orchestration/task-lifecycle-hydrate";

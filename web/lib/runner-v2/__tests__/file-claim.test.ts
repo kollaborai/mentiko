@@ -16,8 +16,7 @@ import {
   withExclusiveFileClaim,
 } from "@/lib/runner-v2/file-claim";
 
-const childFixture = join(__dirname, "..", "test-support", "file-claim-child.fixture.ts");
-const jestBin = join(process.cwd(), "node_modules", "jest", "bin", "jest.js");
+const childFixture = join(__dirname, "..", "test-support", "file-claim-child.fixture.mjs");
 const fixtureChildren = new Set<ChildProcess>();
 
 function seedStaleClaim(claimDir: string): void {
@@ -30,12 +29,8 @@ function seedStaleClaim(claimDir: string): void {
 function spawnFixture(args: string[]): ChildProcess {
   const [mode, claimDir, artifactPath, gatePath, readyPath] = args;
   const child = spawn(process.execPath, [
-    jestBin,
-    "--runInBand",
-    "--forceExit",
-    "--testMatch",
-    "**/file-claim-child.fixture.ts",
-    "--runTestsByPath",
+    "--experimental-strip-types",
+    "--experimental-transform-types",
     childFixture,
   ], {
     cwd: process.cwd(),
