@@ -26,6 +26,13 @@ export interface CliReadinessResult {
   pattern?: string;
   action?: string;
   risk?: string;
+  /**
+   * Set only by the built-in cli startup holds (#123). Unlike a plain
+   * unknown, both wait loops keep polling a startup hold regardless of
+   * MENTIKO_READINESS_FAIL_CLOSED — otherwise the legacy fail-open default
+   * would proceed immediately and defeat the hold.
+   */
+  startupHold?: boolean;
 }
 
 // classification order mirrors cli_readiness_check: a blocked match beats
@@ -49,13 +56,28 @@ export function isReadinessFailClosed(env: Record<string, string | undefined> = 
  * `Waiting for startup` footer for ~50s while the CLI is still initializing;
  * the banner alone must not pass readiness in that window. No pattern group
  * means "keep polling" — blocked/recover/retry are all terminal in both wait
- * loops — so the hold demotes a matched ready verdict to unknown, the status
- * the fail-closed loops keep polling on. Keyed on the profile's own cli so
- * saved profiles without any new pattern get the rule for free.
+ * loops — so the hold demotes a matched ready verdict to unknown and marks it
+ * `startupHold`, which both loops keep polling in either fail mode. Keyed on
+ * the profile's own cli so saved profiles without any new pattern get the
+ * rule for free.
  */
 const CLI_STARTUP_HOLDS: ReadonlyArray<{ cli: string; value: string }> = [
   { cli: "codex", value: "Waiting for startup" },
 ];
+
+/**
+ * Codex paints the startup indicator in its bottom status area, so only the
+ * last few non-empty lines of a capture are the live footer. The wait loops
+ * capture 80-120 lines including scrollback, where a stale startup line can
+ * linger long after the live footer cleared — matching the whole capture
+ * would hold an already-ready agent until the deadline (#123 round 2).
+ */
+const STARTUP_HOLD_FOOTER_LINES = 3;
+
+function startupHoldFooterRegion(output: string): string {
+  const lines = output.split("\n").filter((line) => line.trim() !== "");
+  return lines.slice(-STARTUP_HOLD_FOOTER_LINES).join("\n");
+}
 
 export function applyBuiltinCliStartupHold(
   cli: string | undefined,
@@ -64,8 +86,8 @@ export function applyBuiltinCliStartupHold(
 ): CliReadinessResult {
   if (result.status !== "ready" || !cli) return result;
   for (const hold of CLI_STARTUP_HOLDS) {
-    if (hold.cli === cli && output.includes(hold.value)) {
-      return { status: "unknown", reason: `cli startup hold: ${hold.value} still on screen` };
+    if (hold.cli === cli && startupHoldFooterRegion(output).includes(hold.value)) {
+      return { status: "unknown", reason: `cli startup hold: ${hold.value} still on screen`, startupHold: true };
     }
   }
   return result;

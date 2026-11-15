@@ -91,6 +91,62 @@ describe("typed readiness wait", () => {
     expect(captures).toBe(2);
   });
 
+  it("holds codex banner readiness in legacy fail-open mode too (#123)", () => {
+    const root = mkdtempSync(join(tmpdir(), "mentiko-readiness-codex-open-"));
+    const path = join(root, "profile.json");
+    writeFileSync(path, JSON.stringify({
+      id: "profile", name: "P", cli: "codex",
+      readiness: { enabled: true, ready_patterns: [{ name: "codex tui banner", value: "OpenAI Codex (v", type: "text" }] },
+    }));
+    let captures = 0;
+    let clock = 0;
+    const result = waitForReadiness({
+      profilePath: path, ptyCommand: "p", session: "s", maxWaitSecs: 90, pollSecs: 2, failClosed: false,
+      now: () => clock,
+      sleep: (ms) => { clock += ms; },
+      run: (_cmd, args) => args[0] === "alive" ? { status: 0, stdout: "alive" } : args[0] === "pid" ? { status: 0, stdout: "42" } : {
+        status: 0,
+        stdout: ++captures === 1
+          ? "OpenAI Codex (v0.169.0)\nWaiting for startup  · esc cancel"
+          : "OpenAI Codex (v0.169.0)",
+      },
+    });
+    // Passed on the banner itself, not on the legacy unresolved-startup
+    // return, and only after the startup line cleared.
+    expect(result).toMatchObject({ exitCode: 0, result: { status: "ready", reason: expect.stringContaining("codex tui banner") } });
+    expect(captures).toBe(2);
+  });
+
+  it("returns a scrollback-stale startup line immediately ready in fail-open mode (#123)", () => {
+    const root = mkdtempSync(join(tmpdir(), "mentiko-readiness-codex-scroll-"));
+    const path = join(root, "profile.json");
+    writeFileSync(path, JSON.stringify({
+      id: "profile", name: "P", cli: "codex",
+      readiness: { enabled: true, ready_patterns: [{ name: "codex tui banner", value: "OpenAI Codex (v", type: "text" }] },
+    }));
+    let captures = 0;
+    let clock = 0;
+    const result = waitForReadiness({
+      profilePath: path, ptyCommand: "p", session: "s", maxWaitSecs: 90, pollSecs: 2, failClosed: true,
+      now: () => clock,
+      sleep: (ms) => { clock += ms; },
+      run: (_cmd, args) => args[0] === "alive" ? { status: 0, stdout: "alive" } : args[0] === "pid" ? { status: 0, stdout: "42" } : {
+        status: 0,
+        stdout: (++captures, [
+          "OpenAI Codex (v0.169.0)",
+          "resolving MCP servers",
+          "Waiting for startup  · esc cancel",
+          "",
+          "model ready",
+          "context loaded",
+          "❯ ",
+        ].join("\n")),
+      },
+    });
+    expect(result).toMatchObject({ exitCode: 0, result: { status: "ready" } });
+    expect(captures).toBe(1);
+  });
+
   it("applies only a typed low-risk startup recovery decision within the budget", () => {
     const root = mkdtempSync(join(tmpdir(), "mentiko-readiness-recovery-"));
     const agentPath = join(root, "agent.json");

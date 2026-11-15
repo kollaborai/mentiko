@@ -162,6 +162,15 @@ export function waitForReadiness(input: ReadinessWaitInput): { result: CliReadin
       writeStartupRecoveryArtifacts(input.recovery, result, output);
       return { result, exitCode: 2 };
     }
+    // Built-in cli startup hold (#123): keep polling in BOTH modes until the
+    // live footer clears — a plain unknown would let the legacy fail-open
+    // mode return immediately and defeat the hold. At the deadline each mode
+    // keeps its own unknown behavior (legacy proceeds below, fail-closed
+    // times out below).
+    if (result.startupHold && now() - started < input.maxWaitSecs * 1_000) {
+      sleep(input.pollSecs * 1_000);
+      continue;
+    }
     if (!input.failClosed) return { result: { status: "ready", reason: "legacy readiness policy permits unresolved startup" }, exitCode: 0 };
     if (now() - started >= input.maxWaitSecs * 1_000) {
       const timeout: CliReadinessResult = { status: "unknown", reason: `CLI readiness timeout after ${input.maxWaitSecs}s` };

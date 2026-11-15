@@ -93,7 +93,28 @@ describe("runner-v2 readiness policy", () => {
       expect(applyBuiltinCliStartupHold("codex", startupScreen, ready)).toMatchObject({
         status: "unknown",
         reason: expect.stringContaining("Waiting for startup"),
+        startupHold: true,
       });
+    });
+
+    it("does not hold when the startup phrase only survives in scrollback above a ready composer", () => {
+      // The wait loops capture 80-120 lines including scrollback; a stale
+      // startup line up there must not hold an agent whose live footer is a
+      // ready composer (#123 round 2).
+      const scrollback = [
+        "OpenAI Codex (v0.169.0)",
+        "resolving MCP servers",
+        "Waiting for startup  · esc cancel",
+        "",
+        "model ready",
+        "context loaded",
+        "❯ ",
+      ].join("\n");
+      const ready = classifyCliReadiness({ readiness: codexReadiness, output: scrollback, failClosed: true });
+      expect(ready.status).toBe("ready");
+      const held = applyBuiltinCliStartupHold("codex", scrollback, ready);
+      expect(held.status).toBe("ready");
+      expect(held.startupHold).toBeUndefined();
     });
 
     it("passes the same profile once the startup line is gone", () => {

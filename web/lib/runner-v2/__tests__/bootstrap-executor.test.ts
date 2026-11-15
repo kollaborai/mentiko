@@ -1888,6 +1888,55 @@ describe("runner-v2 bootstrap executor", () => {
       expect(executor.pointerAtRemaining).toEqual([0]);
     }, 20_000);
 
+    it("keeps polling through the startup wait with fail-closed unset (default mode) too", async () => {
+      // Round-2 P1: a plain unknown proceeds immediately in default mode, so
+      // the hold must gate the pointer there just like fail-closed does.
+      const previous = process.env.MENTIKO_READINESS_FAIL_CLOSED;
+      delete process.env.MENTIKO_READINESS_FAIL_CLOSED;
+      try {
+        const root = tempDir();
+        writeCodexProfile(root);
+        writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
+        seedRunJson(root);
+        const executor = executorWithStartupCountdown(2);
+        const openPlan = codexPlan(root, "30");
+        // "0" is not "1": planReadinessFailClosed stays off (default mode).
+        openPlan.runContextExports.MENTIKO_READINESS_FAIL_CLOSED = "0";
+
+        await executeLocalBootstrap(openPlan, context(root), executor);
+
+        // On the old head the pointer went out on the first poll (remaining=1).
+        expect(executor.pointerAtRemaining).toEqual([0]);
+      } finally {
+        if (previous !== undefined) process.env.MENTIKO_READINESS_FAIL_CLOSED = previous;
+      }
+    }, 20_000);
+
+    it("does not hold when the startup phrase only survives in scrollback above a ready composer", async () => {
+      // Round-2 P1: the loop captures 80 lines; a stale startup line far up
+      // must not hold an agent whose live footer is already a ready composer.
+      const root = tempDir();
+      writeCodexProfile(root);
+      writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
+      seedRunJson(root);
+      const scrollbackScreen = [
+        "OpenAI Codex (v0.169.0)",
+        "resolving MCP servers",
+        "Waiting for startup  · esc cancel",
+        "",
+        "model ready",
+        "context loaded",
+        "❯ ",
+      ].join("\n");
+      const executor = executorWithCapture(scrollbackScreen);
+
+      await executeLocalBootstrap(codexPlan(root, "5"), context(root), executor);
+
+      expect(executor.sendKeys).toHaveBeenCalledWith("workspace-writer-run-1", expect.stringContaining("writer-instructions.md"));
+      const attempts = (JSON.parse(readFileSync(join(root, "run.json"), "utf8")).runnerV2 || {}).attempts || [];
+      expect(attempts[0]?.phase).toBe("instructions_submitted");
+    }, 20_000);
+
     it("blocks at the readiness deadline when Waiting for startup never clears", async () => {
       const root = tempDir();
       writeCodexProfile(root);
