@@ -26,10 +26,15 @@ let cachedWebEnv: CliWebEnv | null = null;
  */
 export function loadWebEnvForCliSigning(env: NodeJS.ProcessEnv = process.env): CliWebEnv {
   if (cachedWebEnv) return cachedWebEnv;
+  // Without Next's loader, the effective values are the caller's own.
+  const callerOnly = pickKeys({ ...process.env, ...env });
   try {
     const webDir = join(config.codeRoot, "web");
-    const nextEnv = join(webDir, "node_modules", "@next", "env");
-    if (!existsSync(nextEnv)) return {};
+    // dev checkouts keep Next under web/node_modules; the standalone image
+    // assembles it under <codeRoot>/node_modules
+    const nextEnv = [join(webDir, "node_modules", "@next", "env"), join(config.codeRoot, "node_modules", "@next", "env")]
+      .find((candidate) => existsSync(candidate));
+    if (!nextEnv) return callerOnly;
     const dev = (env.NODE_ENV ?? process.env.NODE_ENV) !== "production";
     const script = [
       `const { loadEnvConfig } = require(${JSON.stringify(nextEnv)});`,
@@ -49,8 +54,14 @@ export function loadWebEnvForCliSigning(env: NodeJS.ProcessEnv = process.env): C
   } catch {
     // Best effort: without file values a missing root secret fails at mint
     // time with a clear error instead of launching an agent without ops access.
-    return {};
+    return callerOnly;
   }
+}
+
+function pickKeys(source: Record<string, string | undefined>): CliWebEnv {
+  const out: CliWebEnv = {};
+  for (const key of CLI_WEB_ENV_KEYS) if (source[key] !== undefined) out[key] = source[key];
+  return out;
 }
 
 /**

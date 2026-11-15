@@ -162,6 +162,23 @@ describe("CLI session token signing across the CLI/web boundary", () => {
     for (const token of tokens) await expect(serverVerify(token)).resolves.toMatchObject({ sub: "cli" });
   });
 
+  it("keeps the caller's own signing values when Next's loader is not installed", async () => {
+    rmSync(join(fakeCodeRoot, "web", "node_modules"), { recursive: true, force: true });
+    const { loadWebEnvForCliSigning, cliSigningSecret } = await import("@/lib/runner-v2/cli-web-env");
+    const webEnv = loadWebEnvForCliSigning({ NODE_ENV: "test", BETTER_AUTH_SECRET: "caller-secret", MENTIKO_WEB_URL: "http://caller:1" });
+    expect(cliSigningSecret(webEnv)).toBe("caller-secret");
+    expect(webEnv.MENTIKO_WEB_URL).toBe("http://caller:1");
+  });
+
+  it("finds Next's loader under <codeRoot>/node_modules (standalone image layout)", async () => {
+    const webModules = join(fakeCodeRoot, "web", "node_modules");
+    rmSync(webModules, { recursive: true, force: true });
+    mkdirSync(join(fakeCodeRoot, "node_modules", "@next"), { recursive: true });
+    symlinkSync(join(process.cwd(), "node_modules", "@next", "env"), join(fakeCodeRoot, "node_modules", "@next", "env"));
+    const { loadWebEnvForCliSigning } = await import("@/lib/runner-v2/cli-web-env");
+    expect(loadWebEnvForCliSigning({ NODE_ENV: "test" }).BETTER_AUTH_SECRET).toBe(WEB_ENV_SECRET);
+  });
+
   it("matches Next on inline #, empty overrides and ${VAR} expansion", async () => {
     const webDir = join(fakeCodeRoot, "web");
     writeFileSync(join(webDir, ".env"), "BETTER_AUTH_SECRET=lower\nBASE=http://from-base:4200\nMENTIKO_WEB_URL=${BASE}\nSECRET_KEY=abc#def\n");
