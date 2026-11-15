@@ -14,6 +14,9 @@ const taskCreate = jest.fn();
 const taskGet = jest.fn();
 const taskUpdate = jest.fn();
 const taskAddDep = jest.fn();
+const selectFollowUpTaskIds = jest.fn();
+// pairs "parentId->followUpId" the mocked graph says would deadlock
+let cyclePairs = new Set<string>();
 const getDecision = jest.fn();
 const updateDecision = jest.fn();
 let resolutionLockTail = Promise.resolve();
@@ -59,6 +62,7 @@ jest.mock("@/lib/tasks/task-store", () => {
     taskGet: (...a: unknown[]) => taskGet(...a),
     taskUpdate: (...a: unknown[]) => taskUpdate(...a),
     taskAddDep: (...a: unknown[]) => taskAddDep(...a),
+    selectFollowUpTaskIds: (...a: unknown[]) => selectFollowUpTaskIds(...a),
     TaskDependencyCycleError,
   };
 });
@@ -81,7 +85,6 @@ jest.mock("@/lib/runs/auto-run-service", () => ({
 }));
 
 import { resolveDecisionToTasks as resolveDecisionToTasksWithActor } from "./decision-resolution";
-import { TaskDependencyCycleError } from "@/lib/tasks/task-store";
 
 let seq = 0;
 
@@ -135,11 +138,28 @@ function resolveDecisionToTasks(input: Omit<ResolveInput, "actor" | "channel"> &
 beforeEach(() => {
   jest.clearAllMocks();
   seq = 0;
+  cyclePairs = new Set();
   resolutionLockTail = Promise.resolve();
   // each create returns a unique id in call order: NEW-1, NEW-2, ...
   taskCreate.mockImplementation((_org: unknown, fields: Record<string, unknown>) => ({ id: `NEW-${++seq}`, ...fields }));
   taskGet.mockReturnValue({ id: "FEAT-019", issue_type: "epic", workspace_id: undefined });
   updateDecision.mockImplementation((_ns: unknown, _org: unknown, _id: unknown, patch: Record<string, unknown>) => ({ id: "DEC-1", ...patch }));
+  // Mirrors the real filter: dedupe, drop the parent itself, drop pairs the
+  // mocked graph says would deadlock. Tests mark deadlocking pairs in cyclePairs.
+  selectFollowUpTaskIds.mockImplementation(
+    ({ parentTaskId, candidates }: { parentTaskId: string; candidates: readonly unknown[] }) => {
+      const seen = new Set<string>();
+      const valid: string[] = [];
+      for (const candidate of candidates) {
+        if (typeof candidate !== "string" || candidate.length === 0) continue;
+        if (candidate === parentTaskId || seen.has(candidate)) continue;
+        seen.add(candidate);
+        if (cyclePairs.has(`${parentTaskId}->${candidate}`)) continue;
+        valid.push(candidate);
+      }
+      return valid;
+    },
+  );
 });
 
 describe("resolveDecisionToTasks parenting", () => {
@@ -389,11 +409,13 @@ describe("resolveDecisionToTasks parenting", () => {
     );
   });
 
-  it("skips follow-up edges that would self-depend or cycle instead of failing the resolution (issue #113)", async () => {
-    // Incident shape: the parent's follow-up list includes the parent itself
-    // and a task that already depends on the parent. The store rejects both
-    // edges; the resolution must survive, wire the healthy edges, and persist
-    // the followup_blocked lifecycle.
+  it("keeps invalid follow-ups out of lifecycle state instead of skipping only the edges (issue #113)", async () => {
+    // Incident shape: one of the decision's follow-ups already depends on the
+    // parent. Round 1 skipped the deadlocking EDGE but still persisted NEW-1
+    // into followup_task_ids / blocked_by_task_ids, so the reconciler waited
+    // on a task that could never complete while the parent was blocked. The
+    // invalid follow-up must be filtered BEFORE the reducer runs: only the
+    // valid follow-up is wired, stored, and waited on.
     taskGet.mockImplementation((_org: unknown, id: string) => {
       if (id === "FEAT-019") {
         return {
@@ -418,18 +440,8 @@ describe("resolveDecisionToTasks parenting", () => {
       parentTaskId: "FEAT-019",
       ...planFlow,
     }));
-    taskAddDep.mockImplementation(
-      (_org: unknown, taskId: unknown, dependsOnId: unknown) => {
-        if (taskId === dependsOnId) {
-          throw new TaskDependencyCycleError(taskId as string, dependsOnId as string, "self");
-        }
-        // NEW-1 "already depends on" FEAT-019 in the mocked graph
-        if (taskId === "FEAT-019" && dependsOnId === "NEW-1") {
-          throw new TaskDependencyCycleError(taskId as string, dependsOnId as string, "cycle");
-        }
-        return undefined;
-      },
-    );
+    // NEW-1 "already depends on" FEAT-019 in the mocked graph; NEW-2 is clean.
+    cyclePairs = new Set(["FEAT-019->NEW-1"]);
 
     await expect(resolveDecisionToTasks({
       namespaceId: "default",
@@ -438,9 +450,11 @@ describe("resolveDecisionToTasks parenting", () => {
       selectedOptionId: "opt-a",
     })).resolves.toBeTruthy();
 
-    // the healthy edge was still written
+    // only the healthy edge is attempted — the invalid one is never sent to
+    // the store, not thrown-and-skipped there
     expect(taskAddDep).toHaveBeenCalledWith("default", "FEAT-019", "NEW-2", "default", undefined);
-    // the parent is parked on its follow-ups despite the two skipped edges
+    expect(taskAddDep).not.toHaveBeenCalledWith("default", "FEAT-019", "NEW-1", "default", undefined);
+    // persisted lifecycle waits ONLY on the valid follow-up
     expect(taskUpdate).toHaveBeenCalledWith(
       "default",
       "FEAT-019",
@@ -448,7 +462,59 @@ describe("resolveDecisionToTasks parenting", () => {
         status: "blocked",
         metadata: expect.objectContaining({
           lifecycle_phase: "followup_blocked",
-          followup_task_ids: ["NEW-1", "NEW-2"],
+          followup_task_ids: ["NEW-2"],
+        }),
+      },
+      "default",
+    );
+  });
+
+  it("resumes the parent when every follow-up is invalid instead of parking it (issue #113)", async () => {
+    taskGet.mockImplementation((_org: unknown, id: string) => {
+      if (id === "FEAT-019") {
+        return {
+          id: "FEAT-019",
+          issue_type: "feature",
+          parent_id: "EPIC-008",
+          workspace_id: undefined,
+          metadata: {
+            lifecycle_phase: "decision_blocked",
+            decision_subtask_id: "DEC-TASK-1",
+            last_run_decision_required: true,
+          },
+        };
+      }
+      if (id === "EPIC-008") {
+        return { id: "EPIC-008", issue_type: "epic", parent_id: null, workspace_id: undefined, metadata: {} };
+      }
+      return undefined;
+    });
+    getDecision.mockReturnValue(makeDecision({
+      source: "completion-audit",
+      parentTaskId: "FEAT-019",
+      ...planFlow,
+    }));
+    // both generated follow-ups already depend on the parent
+    cyclePairs = new Set(["FEAT-019->NEW-1", "FEAT-019->NEW-2"]);
+
+    await resolveDecisionToTasks({
+      namespaceId: "default",
+      orgId: "default",
+      decisionId: "DEC-1",
+      selectedOptionId: "opt-a",
+    });
+
+    // no follow-up edge is wired (plan-internal deps between NEW tasks may
+    // still exist) and the reducer's empty-list branch resumes
+    expect(taskAddDep).not.toHaveBeenCalledWith("default", "FEAT-019", expect.any(String), "default", undefined);
+    expect(taskUpdate).toHaveBeenCalledWith(
+      "default",
+      "FEAT-019",
+      {
+        status: "open",
+        metadata: expect.objectContaining({
+          lifecycle_phase: "resuming",
+          followup_task_ids: [],
         }),
       },
       "default",

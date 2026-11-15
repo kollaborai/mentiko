@@ -3,7 +3,7 @@ import {
   updateDecision,
   withDecisionResolutionLock,
 } from "@/lib/decisions/decision-storage";
-import { TaskDependencyCycleError, taskAddDep, taskCreate, taskGet, taskUpdate } from "@/lib/tasks/task-store";
+import { TaskDependencyCycleError, selectFollowUpTaskIds, taskAddDep, taskCreate, taskGet, taskUpdate } from "@/lib/tasks/task-store";
 import { isTaskWorkMode } from "@/lib/tasks/work-mode";
 import { applyLifecycleEvent, type LifecycleEffectDeps } from "@/lib/orchestration/task-lifecycle-service";
 import { hydrateLifecycleState } from "@/lib/orchestration/task-lifecycle-hydrate";
@@ -171,7 +171,19 @@ async function applyResolutionLifecycle(input: {
   workspaceId?: string;
   workspacePath?: string;
 }): Promise<void> {
-  const { namespaceId, orgId, parentTask, decisionTaskId, followUpTaskIds, workspaceId, workspacePath } = input;
+  const { namespaceId, orgId, parentTask, decisionTaskId, workspaceId, workspacePath } = input;
+  // Issue #113: decide which follow-ups the parent can actually wait on
+  // BEFORE the reducer runs. Waiting on the parent itself, or on a task that
+  // already (transitively) depends on the parent, can never complete — the
+  // reducer would persist those ids into followup_task_ids /
+  // blocked_by_task_ids and deadlock the lifecycle. If nothing valid remains,
+  // the reducer's empty-list branch resumes the parent instead.
+  const validFollowUpTaskIds = selectFollowUpTaskIds({
+    orgId,
+    parentTaskId: parentTask.id,
+    candidates: input.followUpTaskIds,
+    namespaceId,
+  });
   const deps: LifecycleEffectDeps = {
     startOutcomeSummary: async () => undefined,
     createDecisionGate: async () => undefined,
@@ -205,7 +217,7 @@ async function applyResolutionLifecycle(input: {
       type: "decision.resolved",
       taskId: parentTask.id,
       decisionTaskId,
-      followUpTaskIds,
+      followUpTaskIds: validFollowUpTaskIds,
     },
     context: {
       request: {} as Request,

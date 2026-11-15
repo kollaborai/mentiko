@@ -733,26 +733,18 @@ export class TaskDependencyCycleError extends Error {
   }
 }
 
-export function taskAddDep(
+/**
+ * Adding taskId -> dependsOnId closes a cycle iff taskId is already reachable
+ * from dependsOnId through existing depends-on edges (org-scoped).
+ * ponytail: iterative DFS over the edge list; a recursive CTE if graphs get deep.
+ */
+function dependencyCycleReason(
+  db: Database.Database,
   orgId: string,
   taskId: string,
   dependsOnId: string,
-  namespaceId?: string,
-  workspaceId?: string
-): void {
-  const db = getDb(namespaceId);
-  const t1 = db.prepare("SELECT id, workspace_id FROM tasks WHERE id = ? AND org_id = ?").get(taskId, orgId) as { id: string; workspace_id: string | null } | undefined;
-  const t2 = db.prepare("SELECT id, workspace_id FROM tasks WHERE id = ? AND org_id = ?").get(dependsOnId, orgId) as { id: string; workspace_id: string | null } | undefined;
-  if (!t1 || !t2) throw new Error("Task not found or org mismatch");
-  if (workspaceId && (t1.workspace_id !== workspaceId || t2.workspace_id !== workspaceId)) {
-    throw new Error("Task not found in workspace");
-  }
-  if (taskId === dependsOnId) {
-    throw new TaskDependencyCycleError(taskId, dependsOnId, "self");
-  }
-  // Adding taskId -> dependsOnId closes a cycle iff taskId is already
-  // reachable from dependsOnId through existing depends-on edges (org-scoped).
-  // ponytail: iterative DFS over the edge list; a recursive CTE if graphs get deep.
+): "self" | "cycle" | null {
+  if (taskId === dependsOnId) return "self";
   const dependsOnOf = db.prepare(`
     SELECT d.depends_on_id
     FROM task_dependencies d
@@ -763,9 +755,7 @@ export function taskAddDep(
   const stack = [dependsOnId];
   while (stack.length > 0) {
     const current = stack.pop()!;
-    if (current === taskId) {
-      throw new TaskDependencyCycleError(taskId, dependsOnId, "cycle");
-    }
+    if (current === taskId) return "cycle";
     const rows = dependsOnOf.all(orgId, current) as Array<{ depends_on_id: string }>;
     for (const row of rows) {
       if (!visited.has(row.depends_on_id)) {
@@ -774,10 +764,74 @@ export function taskAddDep(
       }
     }
   }
+  return null;
+}
 
-  db.prepare(
-    "INSERT OR IGNORE INTO task_dependencies (task_id, depends_on_id, type, created_at) VALUES (?, ?, 'blocks', ?)"
-  ).run(taskId, dependsOnId, now());
+/** Read-only check: would taskAddDep(taskId, dependsOnId) reject as a cycle? */
+export function taskDepWouldCycle(
+  orgId: string,
+  taskId: string,
+  dependsOnId: string,
+  namespaceId?: string
+): boolean {
+  return dependencyCycleReason(getDb(namespaceId), orgId, taskId, dependsOnId) !== null;
+}
+
+export function taskAddDep(
+  orgId: string,
+  taskId: string,
+  dependsOnId: string,
+  namespaceId?: string,
+  workspaceId?: string
+): void {
+  const db = getDb(namespaceId);
+  // ONE write transaction (BEGIN IMMEDIATE) around endpoint validation,
+  // traversal and insert: two connections inserting A->B and B->A serialize
+  // on the write lock and exactly one succeeds. Nested inside another
+  // transaction (generated-task import) this degrades to a savepoint, which
+  // is safe — the outer transaction already owns the write path.
+  const addDependency = db.transaction((tid: string, did: string, wsId?: string) => {
+    const t1 = db.prepare("SELECT id, workspace_id FROM tasks WHERE id = ? AND org_id = ?").get(tid, orgId) as { id: string; workspace_id: string | null } | undefined;
+    const t2 = db.prepare("SELECT id, workspace_id FROM tasks WHERE id = ? AND org_id = ?").get(did, orgId) as { id: string; workspace_id: string | null } | undefined;
+    if (!t1 || !t2) throw new Error("Task not found or org mismatch");
+    if (wsId && (t1.workspace_id !== wsId || t2.workspace_id !== wsId)) {
+      throw new Error("Task not found in workspace");
+    }
+    const reason = dependencyCycleReason(db, orgId, tid, did);
+    if (reason) throw new TaskDependencyCycleError(tid, did, reason);
+    db.prepare(
+      "INSERT OR IGNORE INTO task_dependencies (task_id, depends_on_id, type, created_at) VALUES (?, ?, 'blocks', ?)"
+    ).run(tid, did, now());
+  });
+  addDependency.immediate(taskId, dependsOnId, workspaceId);
+}
+
+/**
+ * Valid follow-up ids for a decision-blocked parent (issue #113): drop
+ * empty/duplicate entries, the parent itself, ids that don't resolve in this
+ * org, and any candidate the parent cannot wait on without deadlocking
+ * (a task that already, directly or transitively, depends on the parent).
+ * Both the live resolution path and the recovery path filter through this
+ * BEFORE the lifecycle reducer runs, so followup_task_ids /
+ * blocked_by_task_ids only ever list blockers that can complete.
+ */
+export function selectFollowUpTaskIds(input: {
+  orgId: string;
+  parentTaskId: string;
+  candidates: readonly unknown[];
+  namespaceId?: string;
+}): string[] {
+  const seen = new Set<string>();
+  const valid: string[] = [];
+  for (const candidate of input.candidates) {
+    if (typeof candidate !== "string" || candidate.length === 0) continue;
+    if (candidate === input.parentTaskId || seen.has(candidate)) continue;
+    seen.add(candidate);
+    if (!taskGet(input.orgId, candidate, input.namespaceId)) continue;
+    if (taskDepWouldCycle(input.orgId, input.parentTaskId, candidate, input.namespaceId)) continue;
+    valid.push(candidate);
+  }
+  return valid;
 }
 
 export function taskRemoveDep(

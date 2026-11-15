@@ -27,7 +27,7 @@ import {
   getDecision,
   withDecisionResolutionLock,
 } from "@/lib/decisions/decision-storage";
-import { TaskDependencyCycleError, taskAddDep, taskGet, taskUpdate } from "@/lib/tasks/task-store";
+import { TaskDependencyCycleError, selectFollowUpTaskIds, taskAddDep, taskGet, taskUpdate } from "@/lib/tasks/task-store";
 import {
   applyLifecycleEvent,
   type LifecycleEffectDeps,
@@ -99,6 +99,8 @@ function stringOrUndefined(value: unknown): string | undefined {
 export function readLinkedDecisionSignal(input: {
   namespaceId: string;
   orgId: string;
+  /** The decision-blocked task being unblocked — never a valid follow-up of itself. */
+  parentTaskId: string;
   workspacePath?: string;
   metadata: Record<string, unknown>;
 }): LinkedDecisionSignal | undefined {
@@ -128,13 +130,21 @@ export function readLinkedDecisionSignal(input: {
   // minus the decision subtask itself and the epic/parent container that
   // received them. Mirrors the live resolution flow's followUpTaskIds so the
   // reducer parks the task behind exactly the tasks that must complete.
+  // Issue #113: selectFollowUpTaskIds additionally drops the blocked parent
+  // itself and any candidate that already (transitively) depends on it —
+  // historical resolution lists can contain both, and waiting on either
+  // deadlocks the lifecycle (shared policy with decision-resolution.ts).
   const resolution = decision?.resolution;
   const resolutionTaskIds = Array.isArray(resolution?.taskIds) ? resolution.taskIds : [];
   const epicId = resolution?.taskId;
-  const followUpTaskIds = Array.from(new Set(
-    resolutionTaskIds.filter((id): id is string =>
-      typeof id === "string" && id.length > 0 && id !== decisionTaskId && id !== epicId),
-  ));
+  const candidates = resolutionTaskIds.filter((id): id is string =>
+    typeof id === "string" && id.length > 0 && id !== decisionTaskId && id !== epicId);
+  const followUpTaskIds = selectFollowUpTaskIds({
+    orgId: input.orgId,
+    parentTaskId: input.parentTaskId,
+    candidates,
+    namespaceId: input.namespaceId,
+  });
 
   // The run whose decision gate is spent: the anchored execution run, else
   // the audited run. Same preference order as the live approval path.
@@ -211,6 +221,7 @@ export async function unblockTaskViaResolvedDecision(
     readLinkedDecisionSignal({
       namespaceId: input.namespaceId,
       orgId: input.orgId,
+      parentTaskId: input.taskId,
       workspacePath: input.workspacePath,
       metadata: meta,
     });
