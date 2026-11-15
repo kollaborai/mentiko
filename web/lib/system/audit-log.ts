@@ -120,6 +120,7 @@ export function writeAuditLog(input: {
   metadata?: AuditLogMetadata;
   source?: string;
   ip?: string;
+  userId?: string;
 }): AuditEntry {
   const paths = resolveAuditPaths(input.namespaceId);
   mkdirSync(paths.dir, { recursive: true, mode: 0o700 });
@@ -131,7 +132,7 @@ export function writeAuditLog(input: {
     timestamp: new Date().toISOString(),
     event_type: sanitizeText(input.eventType, "event type", MAX_EVENT_LENGTH),
     description: sanitizeText(input.description, "description", MAX_DESCRIPTION_LENGTH),
-    user: currentUser(),
+    user: input.userId ? sanitizeText(input.userId, "user", 512) : currentUser(),
     source: input.source || "system",
     ip: input.ip || "",
     hostname: currentHost(),

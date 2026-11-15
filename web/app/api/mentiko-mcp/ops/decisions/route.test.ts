@@ -29,6 +29,11 @@ jest.mock("@/lib/ai-engine/mentiko-mcp-ops-auth", () => ({
   requireOpsPermission: jest.fn().mockReturnValue(null),
 }));
 
+const mockGetSessionUser = jest.fn();
+jest.mock("@/lib/auth/auth-bridge", () => ({
+  getSessionUser: (...args: unknown[]) => mockGetSessionUser(...args),
+}));
+
 jest.mock("@/lib/decisions/decision-storage", () => ({
   createDecision: jest.fn(),
   getDecision: jest.fn(),
@@ -52,6 +57,13 @@ function makeRequest(body: Record<string, unknown>): Parameters<typeof POST>[0] 
 describe("POST /api/mentiko-mcp/ops/decisions", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockGetSessionUser.mockResolvedValue({
+      id: "user-test",
+      sessionId: "session-test",
+      role: "owner",
+      namespaceId: "mike",
+      orgId: "default",
+    });
     (createDecision as jest.Mock).mockReturnValue({
       id: "decision-123",
       status: "intake",
@@ -100,9 +112,18 @@ describe("POST /api/mentiko-mcp/ops/decisions", () => {
     expect(createDecision).toHaveBeenCalledWith(
       "mike",
       "default",
-      { prompt: "smoke test decision", source: "mentiko-mcp" },
+      {
+        prompt: "smoke test decision",
+        source: "mentiko-mcp",
+        createdBy: {
+          user_id: "user-test",
+          session_id: "session-test",
+          org_role: "owner",
+        },
+      },
       undefined,
     );
+    expect(mockGetSessionUser).toHaveBeenCalled();
     expect(updateDecision).toHaveBeenCalledWith(
       "mike",
       "default",

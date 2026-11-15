@@ -197,6 +197,9 @@ describe("run record validation", () => {
 
   it("projects only stable API/UI fields and preserves optional sessions", () => {
     const input = record({
+      user_id: "session-user-1",
+      session_id: "session-1",
+      org_role: "member",
       sessions: undefined,
       workspaceId: "workspace-1",
       workspacePath: "/workspace",
@@ -220,6 +223,9 @@ describe("run record validation", () => {
       chain: "typed migration",
       goal: "preserve run truth",
       started: "2026-07-15T12:00:00.000Z",
+      user_id: "session-user-1",
+      session_id: "session-1",
+      org_role: "member",
       status: "running",
       workspaceId: "workspace-1",
       workspacePath: "/workspace",

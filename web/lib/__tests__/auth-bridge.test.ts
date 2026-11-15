@@ -283,6 +283,7 @@ describe("auth-bridge", () => {
         role: "owner",
         isAdmin: true,
         namespaceId: "default",
+        authMethod: "development",
       });
     });
 
@@ -302,6 +303,7 @@ describe("auth-bridge", () => {
         role: "owner",
         isAdmin: true,
         namespaceId: "default",
+        authMethod: "development",
       });
       expect(mockGetAuth).not.toHaveBeenCalled();
     });
@@ -341,6 +343,8 @@ describe("auth-bridge", () => {
         role: "member",
         isAdmin: false,
         namespaceId: "default",
+        orgId: undefined,
+        authMethod: "internal-service",
       });
     });
 
@@ -371,6 +375,8 @@ describe("auth-bridge", () => {
         orgId: "my-org",
         namespaceId: "my-org",
         linuxUsername: undefined,
+        sessionId: "sess-1",
+        authMethod: "better-auth",
       });
     });
   });

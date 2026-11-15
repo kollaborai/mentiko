@@ -1,3 +1,5 @@
+import type { OrgRole } from "@/lib/orgs/org-types";
+
 /**
  * approval gate types
  * human-in-the-loop approval system for chain execution
@@ -17,10 +19,17 @@ export interface ApprovalRequest {
   requestedAt: string;
   expiresAt?: string;
   approvedBy?: string;
+  approvalActor?: {
+    user_id: string;
+    session_id?: string;
+    org_role?: OrgRole;
+  };
   approvedAt?: string;
   rejectionReason?: string;
   method: ApprovalMethod;
   metadata: Record<string, unknown>;
+  /** Optional session-user allowlist for approval, rejection, or cancellation. */
+  approvers?: string[];
   // what needs approval
   action: string;
   description: string;
