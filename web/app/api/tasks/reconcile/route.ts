@@ -45,7 +45,7 @@ import {
 } from "@/lib/tasks/task-run-locator";
 import { hasLivePendingHandoff } from "@/lib/runner-v2/handoff-liveness";
 import { isConcurrencyCapBlockedReason } from "@/lib/runner-v2/concurrency-admission";
-import { isDecisionGateReleased } from "@/lib/tasks/decision-gate-release";
+import { isDecisionGateReleased, releaseDecisionGateMetadata } from "@/lib/tasks/decision-gate-release";
 import { unblockTaskViaResolvedDecision } from "@/lib/tasks/decision-unblock";
 import { updateRunJsonRecord } from "@/lib/runner-v2/run-state";
 
@@ -804,6 +804,14 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     const verdict = meta.last_audit_verdict as "close" | "decision";
     try {
       const safeId = validateTaskId(issue.id);
+      // Issue #120 bug B, same-pass ordering: the followups.completed sweep
+      // above runs before this loop and can release this task's decision gate
+      // after the selector snapshot was taken. Re-read the durable record and
+      // honor the release instead of re-applying the audited verdict over it.
+      if (verdict === "decision") {
+        const freshMeta = parseMetadata(taskGet(orgId, safeId, namespaceId)?.metadata);
+        if (freshMeta && isDecisionGateReleased(freshMeta, runId)) continue;
+      }
       const sourceTerminalMetadata = verdict === "decision"
         ? readAuditedSourceTerminalMetadata(safeId, runId, meta)
         : undefined;
@@ -1009,14 +1017,27 @@ function makeLifecycleDeps(input: {
     blockOnDecision: () => undefined,
     createFollowupDependencies: () => undefined,
     resumeOriginalTask: ({ lifecycleState }) => {
+      // Issue #120 bug B: a decision that resolved WITH follow-ups parks the
+      // parent in followup_blocked still carrying the audited run's execution
+      // bookkeeping (last_run_id, completed status, run scope, applied audit).
+      // Resuming without releasing it left auto-run refusing the completed
+      // execution and the provenance-repair sweep re-gating the task. Same
+      // release the no-follow-up path applies in decision-unblock.ts /
+      // decision-resolution.ts: one write, keyed on the run whose gate is spent.
+      const sourceRunId = (typeof input.metadata.last_run_id === "string" && input.metadata.last_run_id)
+        || (typeof input.metadata.completion_audit_run_id === "string" && input.metadata.completion_audit_run_id)
+        || undefined;
+      const baseMetadata = {
+        ...metadataWithLifecycleState(input.metadata, lifecycleState),
+        last_run_decision_required: false,
+        decision_subtask_id: undefined,
+        followup_task_ids: [],
+      };
       taskUpdate(input.orgId, input.taskId, {
         status: "open",
-        metadata: {
-          ...metadataWithLifecycleState(input.metadata, lifecycleState),
-          last_run_decision_required: false,
-          decision_subtask_id: undefined,
-          followup_task_ids: [],
-        },
+        metadata: sourceRunId
+          ? releaseDecisionGateMetadata(baseMetadata, { taskId: input.taskId, sourceRunId })
+          : baseMetadata,
       }, input.namespaceId);
     },
     closeTask: () => undefined,

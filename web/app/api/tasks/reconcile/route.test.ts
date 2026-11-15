@@ -157,6 +157,11 @@ jest.mock("@/lib/runner-v2/adapters", () => ({
 }));
 
 import { GET } from "./route";
+// Real admission predicate (issue #120 bug B): the follow-ups-completed path
+// must leave metadata the REAL canAdmitAutoRun accepts -- never a mock of it.
+import { canAdmitAutoRun } from "@/lib/runs/auto-run";
+import type { RunsSnapshot } from "@/lib/runs/auto-run";
+import type { TaskRecord } from "@/lib/tasks/task-store-types";
 
 function makeRequest() {
   return new Request("http://localhost:3000/api/tasks/reconcile", {
@@ -2595,6 +2600,112 @@ describe("GET /api/tasks/reconcile", () => {
       expect(mockStartTaskOutcomeAudit).not.toHaveBeenCalled();
       expect(mockApplyCompletionAudit).not.toHaveBeenCalled();
       expect(body.data.results).toEqual([]);
+    });
+  });
+
+  // Issue #120 bug B: a decision resolved WITH follow-ups parks the parent in
+  // followup_blocked carrying the audited run's execution bookkeeping. When the
+  // follow-ups complete, the resume write must release the decision gate and
+  // the source-run scope in the same write (releaseDecisionGateMetadata), or
+  // auto-run refuses the completed execution and the audit-repair sweep
+  // re-gates the task on the next pass.
+  describe("followups.completed gate release (issue #120)", () => {
+    function gatedParentStore() {
+      return [
+        {
+          id: "TASK-500",
+          title: "Gated parent",
+          status: "blocked",
+          metadata: {
+            auto_run: true,
+            chain_id: "chain-exec",
+            lifecycle_phase: "followup_blocked",
+            followup_task_ids: ["TASK-501", "TASK-502"],
+            last_run_decision_required: true,
+            last_run_id: "run-src",
+            last_run_status: "completed",
+            task_run_scope: {
+              version: 1,
+              taskId: "TASK-500",
+              runId: "run-src",
+              namespaceId: "default",
+              orgId: "default",
+            },
+            completion_audit_run_id: "run-src",
+            completion_audit_run_fingerprint: "completed:t1",
+            completion_audit_apply_status: "applied",
+            last_audit_verdict: "decision",
+          },
+        },
+        { id: "TASK-501", title: "Follow-up one", status: "closed", metadata: {} },
+        { id: "TASK-502", title: "Follow-up two", status: "resolved", metadata: {} },
+      ];
+    }
+
+    function wireInMemoryStore(store: Array<Record<string, unknown>>) {
+      mockTaskList.mockReturnValue(store);
+      mockTaskGet.mockImplementation((_orgId: string, taskId: string) => (
+        store.find((task) => task.id === taskId)
+      ));
+      mockTaskUpdate.mockImplementation((_orgId: string, taskId: string, fields: { status?: string; metadata?: Record<string, unknown> }) => {
+        const task = store.find((entry) => entry.id === taskId);
+        if (!task) return;
+        if (typeof fields.status === "string") task.status = fields.status;
+        if (fields.metadata) task.metadata = { ...fields.metadata };
+      });
+    }
+
+    function emptyRunsSnapshot(): RunsSnapshot {
+      return { namespaceId: "default", activeRuns: [], activeRunByTask: new Map() };
+    }
+
+    it("releases the decision gate and run scope when follow-ups complete, leaving the parent admittable by the real auto-run predicate", async () => {
+      wireInMemoryStore(gatedParentStore());
+
+      const res = await GET(makeRequest() as never);
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body.data.results).toEqual([
+        expect.objectContaining({ taskId: "TASK-500", newStatus: "followups_completed" }),
+      ]);
+
+      const parent = mockTaskList()[0] as unknown as TaskRecord;
+      const metadata = parent.metadata as Record<string, unknown>;
+      expect(parent.status).toBe("open");
+      expect(metadata.lifecycle_phase).toBe("resuming");
+      expect(metadata.last_run_status).toBe("retry_requested");
+      expect(metadata.last_run_id).toBeUndefined();
+      expect(metadata.task_run_scope).toBeUndefined();
+      expect(metadata.last_run_decision_required).toBe(false);
+      expect(metadata.decision_gate_released_run_id).toBe("run-src");
+
+      const admission = canAdmitAutoRun(
+        parent,
+        "default",
+        "default",
+        undefined,
+        emptyRunsSnapshot(),
+      );
+      expect(admission).toMatchObject({ admit: true, reason: "ready" });
+    });
+
+    it("does not re-gate the released task on a second reconcile pass", async () => {
+      wireInMemoryStore(gatedParentStore());
+
+      await GET(makeRequest() as never);
+      mockApplyCompletionAudit.mockClear();
+      mockTaskUpdate.mockClear();
+
+      const second = await GET(makeRequest() as never);
+      const body = await second.json();
+
+      expect(second.status).toBe(200);
+      expect(body.data).toMatchObject({ reconciled: 0, failed: 0 });
+      expect(mockApplyCompletionAudit).not.toHaveBeenCalled();
+      const parent = mockTaskList()[0] as unknown as TaskRecord;
+      expect((parent.metadata as Record<string, unknown>).lifecycle_phase).toBe("resuming");
+      expect(mockTaskUpdate).not.toHaveBeenCalled();
     });
   });
 });
