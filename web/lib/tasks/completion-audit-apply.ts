@@ -54,6 +54,12 @@ interface ApplyCompletionAuditInput {
    * linkage; an audit verdict must never infer these fields on its own.
    */
   sourceTerminalMetadata?: Record<string, unknown>;
+  /**
+   * Set when no audit verdict exists because the outcome-summary job itself
+   * failed past its limit. The lifecycle then receives summary.failed (not a
+   * fabricated summary.completed) and escalates to a human decision.
+   */
+  summaryFailureReason?: string;
 }
 
 interface DecisionGateResult extends ApplyCompletionAuditResult {
@@ -404,14 +410,23 @@ async function applySummaryLifecycle(input: ApplyCompletionAuditInput): Promise<
 
   const transition = await applyLifecycleEvent({
     state: initialState,
-    event: {
-      type: "summary.completed",
-      taskId: task.id,
-      summaryRunId: runId,
-      sourceRunId: runId,
-      fingerprint: runFingerprint ?? "",
-      verdict: audit.verdict,
-    },
+    event: input.summaryFailureReason
+      ? {
+          type: "summary.failed",
+          taskId: task.id,
+          sourceRunId: runId,
+          fingerprint: runFingerprint ?? "",
+          reason: input.summaryFailureReason,
+          exhausted: true,
+        }
+      : {
+          type: "summary.completed",
+          taskId: task.id,
+          summaryRunId: runId,
+          sourceRunId: runId,
+          fingerprint: runFingerprint ?? "",
+          verdict: audit.verdict,
+        },
     context: {
       request,
       namespaceId,

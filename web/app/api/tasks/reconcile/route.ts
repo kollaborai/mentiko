@@ -88,25 +88,29 @@ function isReconcilerNoOp(newStatus: string): boolean {
 // execution chain. The audit helper owns idempotency by run terminal
 // fingerprint; reconcile must not suppress a later terminal audit from a stale
 // completion_audit_run_id alone.
+function summaryFailuresExhausted(meta: Record<string, unknown>): boolean {
+  const summaryFailures = typeof meta.task_outcome_summary_failures === "number"
+    ? meta.task_outcome_summary_failures
+    : 0;
+  return (
+    meta.task_outcome_summary_status === "failed"
+    && meta.task_outcome_summary_source_run_id === meta.last_run_id
+    && summaryFailures >= OUTCOME_SUMMARY_FAILURE_LIMIT
+  );
+}
+
 function shouldAuditCompletedAutoRun(meta: Record<string, unknown>, autoRunEnabled: boolean): boolean {
   const generatedTaskHasExecutionChain =
     !meta.generation_job_id ||
     typeof meta.chain_id === "string" ||
     typeof meta.chain_name === "string" ||
     typeof meta.last_run_chain === "string";
-  const summaryFailures = typeof meta.task_outcome_summary_failures === "number"
-    ? meta.task_outcome_summary_failures
-    : 0;
-  const exhaustedCurrentSummary =
-    meta.task_outcome_summary_status === "failed"
-    && meta.task_outcome_summary_source_run_id === meta.last_run_id
-    && summaryFailures >= OUTCOME_SUMMARY_FAILURE_LIMIT;
 
   return (
     autoRunEnabled &&
     !!meta.last_run_id &&
     generatedTaskHasExecutionChain &&
-    !exhaustedCurrentSummary
+    !summaryFailuresExhausted(meta)
   );
 }
 
@@ -199,6 +203,17 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     return meta?.lifecycle_phase === "summarizing"
       && meta.task_outcome_summary_status === "running"
       && typeof meta.task_outcome_summary_job_id === "string";
+  });
+  // A summary that failed past its limit is never retried, so nothing else
+  // moves the task: hand it to a human decision instead of leaving it (and
+  // every task that depends on it) parked in `summarizing`.
+  const exhaustedOutcomeSummaryTasks = issues.filter((issue) => {
+    if (DONE_TASK_STATUSES.has(issue.status)) return false;
+    const meta = parseMetadata(issue.metadata);
+    return !!meta
+      && meta.lifecycle_phase === "summarizing"
+      && typeof meta.last_run_id === "string"
+      && summaryFailuresExhausted(meta);
   });
   // FEAT-001 stall class: a task parked at decision_blocked whose LINKED
   // decision has since resolved out-of-band (the approval's lifecycle pass
@@ -298,6 +313,7 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     followupBlockedTasks.length === 0 &&
     auditedExecutionMetadataRepairTasks.length === 0 &&
     stalledOutcomeSummaryTasks.length === 0 &&
+    exhaustedOutcomeSummaryTasks.length === 0 &&
     decisionBlockedTasks.length === 0
   ) {
     return apiSuccess({ reconciled: results.length, results, failed: failed.length, errors: failed });
@@ -338,6 +354,43 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
       }
     } catch (error) {
       failed.push({ taskId: issue.id, error: `Failed to recover outcome summary: ${(error as Error).message}` });
+    }
+  }
+
+  for (const issue of exhaustedOutcomeSummaryTasks) {
+    try {
+      const meta = parseMetadata(issue.metadata)!;
+      const runId = String(meta.last_run_id);
+      const failures = Number(meta.task_outcome_summary_failures);
+      const error = typeof meta.task_outcome_summary_error === "string" && meta.task_outcome_summary_error
+        ? meta.task_outcome_summary_error
+        : "no error was recorded";
+      const reason = `The outcome summary for run ${runId} failed ${failures} times, so this task has no audit verdict. Last error: ${error}`;
+      const outcome = await applyCompletionAudit({
+        request,
+        namespaceId,
+        orgId,
+        task: issue,
+        audit: {
+          verdict: "decision",
+          reason,
+          decision: { prompt: "Review the run, then either retry the task or close it by hand." },
+        },
+        runId,
+        runFingerprint: currentRunTerminalFingerprint(namespaceId, orgId, runId),
+        workspacePath: typeof issue.workspace_id === "string" ? issue.workspace_id : undefined,
+        metadata: meta,
+        summaryFailureReason: reason,
+      });
+      results.push({
+        taskId: issue.id,
+        runId,
+        previousStatus: "summarizing",
+        newStatus: "summary_escalated",
+        reason: `summary failure limit reached; ${outcome.action}${outcome.decisionTaskId ? ` ${outcome.decisionTaskId}` : ""}`,
+      });
+    } catch (error) {
+      failed.push({ taskId: issue.id, error: `Failed to escalate exhausted outcome summary: ${(error as Error).message}` });
     }
   }
 

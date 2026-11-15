@@ -292,6 +292,37 @@ describe("applyCompletionAudit", () => {
     expect(taskAddDep).toHaveBeenCalledWith("default", "TASK-42", "DEC-1", "default", "/repo");
   });
 
+  it("summary failure: an exhausted summary creates a human decision and blocks the task on it", async () => {
+    const task = makeTask();
+    const reason = "The outcome summary for run run-abc failed 2 times, so this task has no audit verdict.";
+
+    const result = await applyCompletionAudit({
+      ...makeInput(
+        task,
+        { verdict: "decision", reason, decision: { prompt: "Review the run, then either retry the task or close it by hand." } },
+        { lifecycle_phase: "summarizing" },
+      ),
+      runFingerprint: "completed:t1",
+      summaryFailureReason: reason,
+    });
+
+    expect(result.action).toBe("decision_created");
+    expect(createTaskDecision).toHaveBeenCalledTimes(1);
+    expect(taskClose).not.toHaveBeenCalled();
+    expect(taskMergeMeta).toHaveBeenCalledWith(
+      "default",
+      "TASK-42",
+      expect.objectContaining({
+        lifecycle_phase: "decision_blocked",
+        decision_subtask_id: "DEC-1",
+        gated_run_fingerprints: ["run-abc::completed:t1"],
+        last_run_decision_required: true,
+      }),
+      "default",
+    );
+    expect(taskAddDep).toHaveBeenCalledWith("default", "TASK-42", "DEC-1", "default", "/repo");
+  });
+
   it("decision: skips duplicate completion-audit DEC tasks for the same parent/source run/fingerprint", async () => {
     taskList.mockReturnValue([
       makeTask({

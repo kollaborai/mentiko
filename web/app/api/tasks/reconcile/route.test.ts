@@ -317,6 +317,63 @@ describe("GET /api/tasks/reconcile", () => {
     }));
   });
 
+  it("hands a task whose summary failed past the limit to a human decision", async () => {
+    mockTaskList.mockReturnValue([
+      {
+        id: "TASK-008",
+        title: "Summary failed twice",
+        status: "open",
+        metadata: {
+          lifecycle_phase: "summarizing",
+          last_run_id: "run-execution",
+          task_outcome_summary_status: "failed",
+          task_outcome_summary_source_run_id: "run-execution",
+          task_outcome_summary_failures: 2,
+          task_outcome_summary_error: "monitor: no real progress after 5 nudges",
+        },
+      },
+    ]);
+    mockApplyCompletionAudit.mockResolvedValueOnce({ action: "decision_created", decisionTaskId: "DEC-9" });
+
+    const res = await GET(makeRequest() as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(mockApplyCompletionAudit).toHaveBeenCalledWith(expect.objectContaining({
+      runId: "run-execution",
+      audit: expect.objectContaining({ verdict: "decision" }),
+      summaryFailureReason: expect.stringContaining("failed 2 times"),
+    }));
+    expect(body.data.results).toContainEqual(expect.objectContaining({
+      taskId: "TASK-008",
+      runId: "run-execution",
+      previousStatus: "summarizing",
+      newStatus: "summary_escalated",
+    }));
+  });
+
+  it("leaves a task with one summary failure for the bounded summary retry", async () => {
+    mockTaskList.mockReturnValue([
+      {
+        id: "TASK-008",
+        title: "Summary failed once",
+        status: "open",
+        metadata: {
+          lifecycle_phase: "summarizing",
+          last_run_id: "run-execution",
+          task_outcome_summary_status: "failed",
+          task_outcome_summary_source_run_id: "run-execution",
+          task_outcome_summary_failures: 1,
+        },
+      },
+    ]);
+
+    const res = await GET(makeRequest() as never);
+    const body = await res.json();
+
+    expect(body.data.results).not.toContainEqual(expect.objectContaining({ newStatus: "summary_escalated" }));
+  });
+
   it("repairs decision run pollution instead of auto-closing the task", async () => {
     mockReadFileSync.mockReturnValue(JSON.stringify({
       id: "run-decision",
