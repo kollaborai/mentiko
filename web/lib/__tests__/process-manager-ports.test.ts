@@ -66,6 +66,23 @@ describe('process-manager-ports', () => {
     expect(foreign.map(h => h.pid)).toContain(holder.pid);
   });
 
+  it('reports only the listener as the port holder, never a connected client', async () => {
+    const children: ChildProcess[] = [];
+    try {
+      const listener = spawn(process.execPath, ['-e', "const s=require('net').createServer(c=>{}).listen(0,'127.0.0.1',()=>console.log(s.address().port))"]);
+      children.push(listener);
+      const port = await new Promise<number>((resolve) => listener.stdout!.once('data', (d) => resolve(Number(String(d).trim()))));
+      const client = spawn(process.execPath, ['-e', `const c=require('net').connect(${port},'127.0.0.1',()=>console.log('up'));setInterval(()=>{},1000)`]);
+      children.push(client);
+      await new Promise((resolve) => client.stdout!.once('data', resolve));
+      const holders = portHolderPids(port);
+      expect(holders).toContain(listener.pid);
+      expect(holders).not.toContain(client.pid);
+    } finally {
+      for (const child of children) child.kill('SIGKILL');
+    }
+  });
+
   it('pid files round-trip and only recorded pids we can verify are "ours"', () => {
     const dir = mkdtempSync(join(tmpdir(), 'pm-ports-'));
     try {
