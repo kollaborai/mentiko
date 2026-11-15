@@ -29,7 +29,6 @@ Cards for each supported CLI:
 
   - claude code (anthropic)
   - codex (openai)
-  - aider (open source)
   - antigravity cli (google)
 
 Click a card -> goes to that tool's auth screen.
@@ -62,7 +61,6 @@ Each tool gets the same two-option layout:
     - claude-sonnet-4 (default), claude-opus-4, claude-haiku-4
     - saved to workspace model config
 
-  aider is different -- no own auth, uses provider keys.
   if user already configured claude with API key, offer to
   reuse the same ANTHROPIC_API_KEY.
 
@@ -269,7 +267,6 @@ web/components/onboarding/
   cli-auth/
     claude-auth.tsx             login vs key vs gateway
     codex-auth.tsx              login vs key
-    aider-auth.tsx              provider key (reuse existing)
     antigravity-auth.tsx        login vs key
   project-setup/
     git-clone-setup.tsx         clone + inline secret-form for private

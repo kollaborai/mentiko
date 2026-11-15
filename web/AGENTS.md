@@ -3,6 +3,25 @@
 This project uses a native SQLite task store for issue tracking.
 Tasks are managed via the web UI and REST API (web/lib/task-store.ts).
 
+Dev server port: 3000 by default; a local `.env.local` may set `PORT`/`WEB_PORT`
+(this checkout uses 3200). The examples below assume 3200 — adjust to whatever
+the process manager prints.
+
+## Dev Environment
+
+- Node 22, npm only. `npm run dev` runs a doctor preflight then the managed
+  process (web + worker + terminal ws). `npm run stop` tears it down.
+- `ERR_DLOPEN_FAILED` / `NODE_MODULE_VERSION` on better-sqlite3 after an nvm
+  LTS switch: `npm install-scripts approve better-sqlite3
+  better-sqlite-multiple-ciphers && npm rebuild better-sqlite3
+  better-sqlite3-multiple-ciphers`.
+- `npm run build` uses `--webpack` on purpose (turbopack hits an internal
+  error mid-build). Do not remove the flag.
+- Changing runner-v2 sources or the agent-provider catalog: run
+  `npm run build:bundles`, `node tests/runner-typed-bundle-parity.test.mjs`,
+  and commit the regenerated bundles in `../lib/`. Never ship source-only
+  agent config changes.
+
 ## Quick Reference
 
 ```bash
@@ -26,13 +45,16 @@ curl -s -X PATCH http://localhost:3200/api/tasks/<id> \
 curl -s -X POST http://localhost:3200/api/tasks/<id>/close
 ```
 
+Additional task endpoints: `/api/tasks/deps`, `/api/tasks/graph`,
+`/api/tasks/epics`, `/api/tasks/generate`, `/api/tasks/bulk`.
+
 ## Non-Interactive Shell Commands
 
 **ALWAYS use non-interactive flags** with file operations to avoid hanging on confirmation prompts.
 
 Shell commands like `cp`, `mv`, and `rm` may be aliased to include `-i` (interactive) mode on some systems, causing the agent to hang indefinitely waiting for y/n input.
 
-**Use these forms instead:**
+Use these forms instead:
 ```bash
 # Force overwrite without prompting
 cp -f source dest           # NOT: cp source dest
@@ -41,7 +63,7 @@ rm -f file                  # NOT: rm file
 
 # For recursive operations
 rm -rf directory            # NOT: rm -r directory
-cp -rf source dest          # NOT: cp -r source dest
+cp -rf source dest          # NOT: cp -r directory
 ```
 
 **Other commands that may prompt:**
@@ -108,10 +130,10 @@ curl -s http://localhost:3200/api/tasks/<id>/deps | jq .
 
 **When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
 
-**MANDATORY WORKFLOW:**
+MANDATORY WORKFLOW:
 
 1. **File issues for remaining work** - Create tasks for anything that needs follow-up
-2. **Run quality gates** (if code changed) - Tests, linters, builds
+2. **Run quality gates** (if code changed) - `npm run lint`, `npm test`, and for UI changes `npm run test:e2e`
 3. **Update task status** - Close finished work, update in-progress items
 4. **PUSH TO REMOTE** - This is MANDATORY:
    ```bash
@@ -119,11 +141,11 @@ curl -s http://localhost:3200/api/tasks/<id>/deps | jq .
    git push
    git status  # MUST show "up to date with origin"
    ```
-5. **Clean up** - Clear stashes, prune remote branches
+5. **Clean up** - Stop the dev server (`npm run stop`), clear stashes, prune remote branches
 6. **Verify** - All changes committed AND pushed
 7. **Hand off** - Provide context for next session
 
-**CRITICAL RULES:**
+CRITICAL RULES:
 - Work is NOT complete until `git push` succeeds
 - NEVER stop before pushing - that leaves work stranded locally
 - NEVER say "ready to push when you are" - YOU must push

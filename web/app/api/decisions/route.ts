@@ -5,6 +5,7 @@ import { listDecisions, createDecision } from "@/lib/decisions/decision-storage"
 import { getWorkspacePath } from "@/lib/workspaces/workspace-params";
 import { Unauthorized, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
+import { getSessionUser } from "@/lib/auth/auth-bridge";
 
 export const dynamic = "force-dynamic";
 
@@ -40,12 +41,23 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   const nsId = await getNamespaceIdFromRequest(request);
   const orgId = await getOrgIdFromRequest(request);
   const workspacePath = getWorkspacePath(request);
+  const session = await getSessionUser(request);
+  if (!session) {
+    throw new Unauthorized("Authenticated session user required");
+  }
   const { prompt } = await request.json();
 
   if (!prompt || typeof prompt !== "string") {
     throw new BadRequest("prompt is required");
   }
 
-  const decision = createDecision(nsId, orgId, { prompt }, workspacePath);
+  const decision = createDecision(nsId, orgId, {
+    prompt,
+    createdBy: {
+      user_id: session.id,
+      ...(session.sessionId ? { session_id: session.sessionId } : {}),
+      ...(session.role ? { org_role: session.role } : {}),
+    },
+  }, workspacePath);
   return apiSuccess({ decision }, undefined, 201);
 });

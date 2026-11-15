@@ -1,36 +1,63 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# mentiko web
 
-## Getting Started
+The web UI and API for [mentiko](../README.md) — the event-driven agent orchestration
+platform. Next.js 16 (App Router), React 19, TypeScript strict, Tailwind CSS 4,
+better-sqlite3 native task store.
 
-First, run the development server:
+## Prerequisites
+
+- Node 22 (nvm: `nvm use 22`)
+- npm. No yarn/pnpm/bun — lockfile and scripts are npm-only.
+
+## Setup
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+npm run setup      # first-run environment check + seed
 ```
 
-Open [http://localhost:3200](http://localhost:3200) with your browser to see the result.
+If you hit `ERR_DLOPEN_FAILED` / `NODE_MODULE_VERSION` on better-sqlite3 (fresh
+nvm LTS moved you to a newer Node), rebuild the addons:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+npm install-scripts approve better-sqlite3 better-sqlite-multiple-ciphers
+npm rebuild better-sqlite3 better-sqlite-multiple-ciphers
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Development
 
-## Learn More
+```bash
+npm run dev        # doctor preflight + managed process (next dev, worker, terminal ws)
+npm run dev:next   # plain next dev, no process manager
+npm run stop       # stop managed processes
+npm run doctor     # environment diagnostic
+```
 
-To learn more about Next.js, take a look at the following resources:
+Default port is 3000; a local `.env.local` can override via `PORT`/`WEB_PORT`
+(this checkout uses 3200). Open the URL printed by the process manager.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Scripts
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+| script | what it does |
+| --- | --- |
+| `npm run build` | production build (`--webpack`; turbopack fails mid-build) |
+| `npm run build:bundles` | regenerate tracked runner bundles in `../lib/` — run after any runner-v2 or agent-catalog source change, then `node tests/runner-typed-bundle-parity.test.mjs` |
+| `npm test` | jest unit tests |
+| `npm run test:e2e` | playwright e2e (uses port 3100 by default, or 3000 when reusing a dev server) |
+| `npm run lint` | eslint |
+| `npm run worker` | background worker standalone |
+| `npm run ws:terminal` | terminal websocket server standalone |
 
-## Deploy on Vercel
+## Layout
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- `app/` — pages and 69 API route groups (`app/api/...`)
+- `lib/` — core logic: process manager, task store (`lib/task-store.ts`), runner-v2
+- `server/` — background worker, terminal websocket
+- `e2e/` — playwright suites
+- `scripts/` — doctor, setup, seed, maintenance scripts
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## More
+
+- Platform docs: [docs/](../docs/)
+- Contributing: [CONTRIBUTING.md](../CONTRIBUTING.md)
+- Security policy: [SECURITY.md](../SECURITY.md)

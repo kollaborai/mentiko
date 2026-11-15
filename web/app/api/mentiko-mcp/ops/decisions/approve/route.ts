@@ -3,7 +3,8 @@ import { requireOpsAuth, requireOpsPermission } from "@/lib/ai-engine/mentiko-mc
 import { getDecision } from "@/lib/decisions/decision-storage";
 import { resolveDecisionToTasks } from "@/lib/decisions/decision-resolution";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { BadRequest, NotFound } from "@/lib/api-errors";
+import { BadRequest, NotFound, Unauthorized } from "@/lib/api-errors";
+import { getSessionUser } from "@/lib/auth/auth-bridge";
 
 export const dynamic = "force-dynamic";
 
@@ -12,6 +13,11 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   if (ctx instanceof NextResponse) return ctx;
   const perm = requireOpsPermission(ctx, "manage_tasks", "decisions:write");
   if (perm) return perm;
+
+  const session = await getSessionUser(request);
+  if (!session?.id || session.id !== ctx.userId || session.sessionId !== ctx.sessionId) {
+    throw new Unauthorized("Authenticated session user required");
+  }
 
   const body = await request.json() as {
     decisionId: string;
@@ -53,7 +59,12 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     notes: body.notes,
     workspaceId: body.workspacePath,
     workspacePath: body.workspacePath,
-    selectedBy: "mentiko-mcp",
+    actor: {
+      user_id: session.id,
+      ...(session.sessionId ? { session_id: session.sessionId } : {}),
+      ...(session.role ? { org_role: session.role } : {}),
+    },
+    channel: "mentiko-mcp",
   });
 
   return apiSuccess(result);

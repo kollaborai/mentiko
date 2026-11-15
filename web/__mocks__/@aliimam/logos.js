@@ -5,7 +5,7 @@ const React = require("react");
 // exist in the published package — same root cause @aliimam/icons already
 // has this sibling mock for). Mirrors icons.js: a stub SVG for every named
 // export, so any component that renders a provider logo (ProviderLogo,
-// steps/cli-setup-step.tsx, aider-auth.tsx, settings/agent-configs) is
+// steps/cli-setup-step.tsx, settings/agent-configs) is
 // testable without depending on the upstream package being fixed/republished.
 module.exports = new Proxy(
   {},

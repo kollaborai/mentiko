@@ -4,6 +4,7 @@ import { join } from "path";
 import { createInterface } from "readline";
 import { checkAuth } from "@/lib/auth/api-auth";
 import { resolveLogDir } from "@/lib/runs/session-log-resolver";
+import { detectAgentRoleLabel } from "@/lib/runs/agent-role-label";
 import { Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 
@@ -146,21 +147,10 @@ async function parseJsonlSummary(filePath: string): Promise<Partial<Conversation
             }
           }
 
-          // detect agent type from first message content
-          const msg = (result.firstMessage || "").toLowerCase();
-          // chain-spawned agents start with "you are: <role>"
-          const roleMatch = msg.match(/^you are:\s*(.+?)[\n\r]/);
-          if (roleMatch) {
-            result.agentRole = roleMatch[1].trim();
-          } else if (msg.includes("codex")) {
-            result.agentRole = "codex";
-          } else if (msg.includes("kollab")) {
-            result.agentRole = "kollab";
-          } else if (msg.includes("aider")) {
-            result.agentRole = "aider";
-          } else {
-            result.agentRole = "claude";
-          }
+          // label the agent behind this transcript (display/matching only,
+          // never a driver selection); removed agents keep a read-only
+          // historical label instead of being mislabeled
+          result.agentRole = detectAgentRoleLabel(result.firstMessage || "");
         }
       } catch {
         // skip malformed lines

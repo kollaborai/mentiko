@@ -55,7 +55,6 @@ type AgentProfileProvider =
   | "opencode"      // OpenCode
   | "kollabor"      // Kollabor
   | "glm"           // GLM / z.ai
-  | "aider"         // Aider
   | "antigravity"   // Google Antigravity CLI
   | "custom";       // user-defined
 ```

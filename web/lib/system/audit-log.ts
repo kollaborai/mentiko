@@ -123,7 +123,7 @@ export function writeAuditLog(input: {
   source?: string;
   ip?: string;
   /** Set only by trusted server-side callers that know the session identity. */
-  writer?: string;
+  userId?: string;
 }): AuditEntry {
   const paths = resolveAuditPaths(input.namespaceId);
   mkdirSync(paths.dir, { recursive: true, mode: 0o700 });
@@ -135,7 +135,7 @@ export function writeAuditLog(input: {
     timestamp: new Date().toISOString(),
     event_type: sanitizeText(input.eventType, "event type", MAX_EVENT_LENGTH),
     description: sanitizeText(input.description, "description", MAX_DESCRIPTION_LENGTH),
-    user: resolveWriter(input.writer),
+    user: resolveWriter(input.userId),
     source: input.source || "system",
     ip: input.ip || "",
     hostname: currentHost(),

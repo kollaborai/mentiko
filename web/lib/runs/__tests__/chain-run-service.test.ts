@@ -190,3 +190,16 @@ describe("typed chain launch boundary", () => {
     expect(source).not.toContain("chain-runner.sh");
   });
 });
+
+describe("resolveExecutorCli", () => {
+  it("maps executor short names to real catalog binaries", async () => {
+    const { resolveExecutorCli } = await import("@/lib/runs/chain-run-service");
+    expect(resolveExecutorCli("kollab")).toBe("kollab");
+    expect(resolveExecutorCli("kl")).toBe("kollab");
+    expect(resolveExecutorCli("cc")).toBe("claude");
+    expect(resolveExecutorCli("claude")).toBe("claude");
+    expect(resolveExecutorCli("codex")).toBe("codex");
+    expect(resolveExecutorCli("aider")).toBeUndefined();
+    expect(resolveExecutorCli(undefined)).toBeUndefined();
+  });
+});

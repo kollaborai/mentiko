@@ -62,7 +62,7 @@ jest.mock("@/lib/runs/auto-run-service", () => ({
   triggerAutoRunScan: (...a: unknown[]) => triggerAutoRunScan(...a),
 }));
 
-import { resolveDecisionToTasks } from "./decision-resolution";
+import { resolveDecisionToTasks as resolveDecisionToTasksWithActor } from "./decision-resolution";
 
 let seq = 0;
 
@@ -102,6 +102,16 @@ const planFlow = {
     },
   },
 };
+
+const TEST_ACTOR = { user_id: "session-user-1", session_id: "session-1", org_role: "owner" as const };
+type ResolveInput = Parameters<typeof resolveDecisionToTasksWithActor>[0];
+function resolveDecisionToTasks(input: Omit<ResolveInput, "actor" | "channel"> & Partial<Pick<ResolveInput, "actor" | "channel">>) {
+  return resolveDecisionToTasksWithActor({
+    ...input,
+    actor: input.actor ?? TEST_ACTOR,
+    channel: input.channel ?? "human",
+  });
+}
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -170,7 +180,11 @@ describe("resolveDecisionToTasks parenting", () => {
     ]);
 
     expect(taskCreate).toHaveBeenCalledTimes(3);
+    expect(taskCreate.mock.calls.map((call) => (call[1] as Record<string, unknown>).created_by))
+      .toEqual(["session-user-1", "session-user-1", "session-user-1"]);
     expect(updateDecision).toHaveBeenCalledTimes(1);
+    expect((updateDecision.mock.calls[0][3] as { resolution: { selectedBy: string; actor: unknown; channel: string } }).resolution)
+      .toMatchObject({ selectedBy: "session-user-1", actor: TEST_ACTOR, channel: "human" });
     expect(second).toEqual(first);
   });
 

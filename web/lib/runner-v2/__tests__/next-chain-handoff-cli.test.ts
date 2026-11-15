@@ -4,6 +4,10 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+// next-chain-launch -> direct-run -> session-token pulls in jose (ESM-only).
+// Crypto-backed HS256 mirror so minting works and mismatches fail loudly.
+jest.mock("jose", () => require("./helpers/functional-jose"));
+
 jest.mock("@/lib/pty/pty-client", () => ({
   pty: {
     remove: jest.fn(),
@@ -43,6 +47,16 @@ const cliSources: Array<[string, { reviewerCli?: string; chainCli?: string; envi
 ];
 
 describe("next-chain handoff CLI selection", () => {
+  // The CLI checks its minted token against the web app before launching;
+  // stand in for an accepting web app.
+  // (The Jest environment may lack fetch, so it is assigned, not spied.)
+  const originalFetch = globalThis.fetch;
+  let webTokenCheck: jest.Mock;
+  beforeEach(() => {
+    webTokenCheck = jest.fn().mockResolvedValue({ status: 200, json: async () => ({ digest: {} }) });
+    globalThis.fetch = webTokenCheck as unknown as typeof fetch;
+  });
+  afterEach(() => { globalThis.fetch = originalFetch; });
   beforeEach(() => {
     ptyMock.remove.mockReset().mockResolvedValue(undefined);
     ptyMock.list.mockReset().mockResolvedValue([]);
@@ -119,6 +133,11 @@ describe("next-chain handoff CLI selection", () => {
     const monitorCall = ptyMock.spawn.mock.calls.find(([name]) => String(name).startsWith("monitor-"));
     const monitorEnv = (monitorCall?.[3] as { env?: NodeJS.ProcessEnv } | undefined)?.env;
     expect(monitorEnv?.MENTIKO_CLI).toBe(selection.environmentCli);
+    // The launch minted an ops session token; a mint failure now aborts the
+    // run instead of warning, so its presence is itself the no-regression
+    // assertion for issue #95.
+    expect(typeof monitorEnv?.MENTIKO_SESSION_TOKEN).toBe("string");
+    expect(monitorEnv?.MENTIKO_SESSION_ID).toBe(`chain-${child.runId}`);
 
     if (!monitorEnv) throw new Error("writer monitor did not receive its run context");
     const completionContext = createCompletionLaunchContext(monitorEnv);
