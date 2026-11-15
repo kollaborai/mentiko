@@ -73,6 +73,9 @@ export interface BackgroundWorkerStatus {
     lastError?: string;
   };
   note?: string;
+  // job names past their overrun threshold and still in flight (issue #136);
+  // non-empty means the worker is degraded and those jobs are not ticking
+  overrunningJobs?: string[];
 }
 
 export interface BackgroundWorkerOwner {

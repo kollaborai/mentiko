@@ -5,6 +5,7 @@ import {
   formatReadinessTimeout,
   resolveReadinessTimeout,
   resolveRestartDelay,
+  reportedProcessStatus,
 } from "../process-manager-readiness";
 
 interface ConfiguredProcess {
@@ -66,15 +67,43 @@ describe("process-manager readiness policy", () => {
     const engine = devProcess("kollabor-engine");
 
     expect(terminal.restart.retryOnStartup).toBe(true);
-    expect(resolveRestartDelay(terminal.restart, 0, () => 0.5)).toEqual({ delayMs: 1000, maxRestarts: 5 });
-    expect(resolveRestartDelay(terminal.restart, 1, () => 0.5)).toEqual({ delayMs: 2000, maxRestarts: 5 });
-    expect(resolveRestartDelay(terminal.restart, 5, () => 0.5)).toBeNull();
+    expect(resolveRestartDelay(terminal.restart, 0, () => 0.5)).toEqual({ delayMs: 1000, maxRestarts: 5, exhausted: false });
+    expect(resolveRestartDelay(terminal.restart, 1, () => 0.5)).toEqual({ delayMs: 2000, maxRestarts: 5, exhausted: false });
+    expect(resolveRestartDelay(terminal.restart, 5, () => 0.5)?.exhausted).toBe(true);
 
-    expect(resolveRestartDelay(engine.restart, 0, () => 0.5)).toEqual({ delayMs: 2000, maxRestarts: 3 });
-    expect(resolveRestartDelay(engine.restart, 1, () => 0.5)).toEqual({ delayMs: 4000, maxRestarts: 3 });
+    expect(resolveRestartDelay(engine.restart, 0, () => 0.5)).toEqual({ delayMs: 2000, maxRestarts: 3, exhausted: false });
+    expect(resolveRestartDelay(engine.restart, 1, () => 0.5)).toEqual({ delayMs: 4000, maxRestarts: 3, exhausted: false });
 
     const source = readFileSync(join(process.cwd(), "lib/process-manager.ts"), "utf8");
     expect(source).toContain("config.restart?.retryOnStartup");
     expect(source).toContain("return startOne(config, options)");
+  });
+
+  it("never gives a restart-enabled service a permanent off state (issue #136)", () => {
+    const worker = devProcess("worker");
+
+    // at and past the budget the policy still schedules an attempt, capped at maxDelay
+    for (const restarts of [worker.restart.maxRestarts!, worker.restart.maxRestarts! + 1, 50]) {
+      const next = resolveRestartDelay(worker.restart, restarts, () => 0.5);
+      expect(next).not.toBeNull();
+      expect(next!.exhausted).toBe(true);
+      expect(next!.delayMs).toBeLessThanOrEqual(worker.restart.maxDelay!);
+      expect(next!.delayMs).toBeGreaterThan(0);
+    }
+
+    // inside the budget: normal backoff, not exhausted
+    expect(resolveRestartDelay(worker.restart, 0, () => 0.5)).toEqual({ delayMs: 2000, maxRestarts: 5, exhausted: false });
+
+    // restart disabled is still a hard stop
+    expect(resolveRestartDelay({ ...worker.restart, enabled: false }, 0, () => 0.5)).toBeNull();
+  });
+
+  it("does not report a service with no live process as ready (issue #136)", () => {
+    expect(reportedProcessStatus("ready", false)).toBe("crashed");
+    expect(reportedProcessStatus("ready", true)).toBe("ready");
+    expect(reportedProcessStatus("starting", true)).toBe("starting");
+    expect(reportedProcessStatus("crashed", false)).toBe("crashed");
+    expect(reportedProcessStatus("stopped", false)).toBe("stopped");
+    expect(reportedProcessStatus("failed", false)).toBe("failed");
   });
 });
