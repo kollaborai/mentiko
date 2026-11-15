@@ -131,4 +131,4 @@ jobs:
             -w /opt/mentiko-src \
             -e CI=true \
             "${REGISTRY}/kollaborai/mentiko-base:${BASE_TAG}" \
-            bash -c "cd web && npm ci --no-audit --no-fund && npx jest engine-event-contract run-json-lock && node ../tests/runner-typed-bundle-parity.test.mjs"
+            bash -c "cd web && npm ci --no-audit --no-fund && npx jest engine-event-contract run-json-lock && node ../tests/runner-typed-bundle-parity.test.mjs && node ../tests/pm-image-modules.test.mjs"

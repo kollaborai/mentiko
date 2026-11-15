@@ -2,7 +2,7 @@
 // runs as PID 2 under tini. spawns and manages all platform processes.
 // zero external dependencies. node built-ins only.
 
-import { spawn, execSync, execFileSync, type ChildProcess } from 'child_process';
+import { spawn, execFileSync, type ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as net from 'net';
@@ -26,12 +26,17 @@ import { formatReadinessTimeout, resolveReadinessTimeout, resolveRestartDelay } 
 import {
   pmStateDir, writePidFile, removePidFile, readPidFiles,
   pidAlive, recordedPidStillOurs, portHeldByOthers,
+  pidStartTime, pidIdentityMatches, findOwnedDaemonPid,
 } from './process-manager-ports';
 
 interface ManagedProcess {
   config: ProcessConfig;
   child: ChildProcess | null;
   pid: number;
+  /** pid as returned by spawn — never reset, survives daemon-fork rewrites. */
+  spawnPid: number;
+  /** OS start time of `pid` (process-instance identity). Null = unprovable. */
+  startAt: string | null;
   status: string;
   restarts: number;
   startedAt: number;
@@ -207,7 +212,9 @@ function spawnChild(config: ProcessConfig): ManagedProcess {
     detached: true,
   });
   const m: ManagedProcess = {
-    config, child, pid: child.pid || 0, status: 'starting',
+    config, child, pid: child.pid || 0, spawnPid: child.pid || 0,
+    startAt: child.pid ? pidStartTime(child.pid) : null,
+    status: 'starting',
     restarts: 0, startedAt: Date.now(),
     lastExit: null, lastExitCode: null,
     restartTimer: null, stoppedByUser: false,
@@ -220,9 +227,13 @@ function spawnChild(config: ProcessConfig): ManagedProcess {
     if (readinessPending && config.critical && config.restart?.retryOnStartup) return;
     scheduleRestart(m);
   });
-  // record the spawned pid so a later cleanup can tell our orphans from
-  // anyone else's process (issue #105). daemon-fork rewrites this on discovery.
-  writePidFile(stateDir(), { name: config.name, pid: m.pid, cmd: config.cmd });
+  // record the spawned pid + its OS start time (process-instance identity) so
+  // a later cleanup can tell our orphans from anyone else's process (issue
+  // #105). daemon-fork rewrites this on discovery. A pid alone is not ownership.
+  writePidFile(stateDir(), {
+    name: config.name, pid: m.pid, cmd: config.cmd,
+    ...(m.startAt ? { start: m.startAt } : {}),
+  });
   return m;
 }
 
@@ -247,13 +258,7 @@ function handleExit(m: ManagedProcess, code: number | null, signal: string | nul
   // some other random matching pid and spawn a duplicate on the next
   // restart tick — see EADDRINUSE :3000 incident on v0.3.21/22).
   if (m.config.daemonize && code === 0 && m.status === 'ready') {
-    const daemonPid = findDaemonPid(m.config);
-    if (daemonPid) {
-      m.pid = daemonPid;
-      writePidFile(stateDir(), { name: m.config.name, pid: daemonPid, cmd: m.config.cmd });
-      log(`${name} parent exited, daemon pid ${daemonPid}`);
-    }
-    else { log(`${name} parent exited (${desc}), daemon forked -- keeping ready`); }
+    adoptDaemonPid(m, 'parent exited');
     return;
   }
 
@@ -313,24 +318,36 @@ async function startOne(config: ProcessConfig, options: StartOptions = {}): Prom
   }
   // issue #105: never kill a foreign port holder. If the readiness port is
   // held by anything this manager did not record, refuse to start and say why.
+  // If the port cannot even be inspected, that is also a refusal — absence of
+  // tooling must not read as "port is free" (fail closed).
   const heldPort = readinessPort(config.readiness);
   if (heldPort !== null) {
     const ownPids = new Set<number>([process.pid]);
     managed.forEach(m => { if (m.pid) ownPids.add(m.pid); });
-    const holders = portHeldByOthers(heldPort, ownPids);
-    if (holders.length) {
-      for (const h of holders) {
-        logErr(`port ${heldPort} is held by ${h.command} (pid ${h.pid}); stop it or change the port in processes.dev.json`);
-      }
+    let holders: ReturnType<typeof portHeldByOthers> = [];
+    let inspectionFailed = false;
+    try {
+      holders = portHeldByOthers(heldPort, ownPids);
+    } catch (e: unknown) {
+      inspectionFailed = true;
+      logErr(`cannot verify port ${heldPort} for ${config.name}: ${errorMessage(e)}; refusing to start it`);
+    }
+    for (const h of holders) {
+      logErr(`port ${heldPort} is held by ${h.command} (pid ${h.pid}); stop it or change the port in ${configPath || 'the process config'}`);
+    }
+    if (inspectionFailed || holders.length) {
       const m: ManagedProcess = {
-        config, child: null, pid: 0, status: 'failed',
+        config, child: null, pid: 0, spawnPid: 0, startAt: null, status: 'failed',
         restarts: prev?.restarts ?? 0, startedAt: Date.now(),
         lastExit: null, lastExitCode: null,
         restartTimer: null, stoppedByUser: prev?.stoppedByUser ?? false,
       };
       managed.set(config.name, m);
-      if (options.abortCriticalReadinessTimeout && config.critical) {
-        logErr(`critical process ${config.name} cannot start (port ${heldPort} held), shutting down`);
+      // A critical process that cannot take its port goes through the same
+      // critical-failure policy on restart as at initial startup: exit nonzero
+      // and stop siblings, never sit failed forever (issue #105 round 2).
+      if (config.critical) {
+        logErr(`critical process ${config.name} cannot start (port ${heldPort} ${inspectionFailed ? 'unverifiable' : 'held by another process'}), shutting down`);
         exitCode = 1;
         await shutdown();
       }
@@ -352,12 +369,7 @@ async function startOne(config: ProcessConfig, options: StartOptions = {}): Prom
     // if parent process exited (daemon fork), find the real daemon PID.
     // gated on config.daemonize — see handleExit for why.
     if (config.daemonize && !m.child && !m.pid) {
-      const daemonPid = findDaemonPid(config);
-      if (daemonPid) {
-        m.pid = daemonPid;
-        writePidFile(stateDir(), { name: config.name, pid: daemonPid, cmd: config.cmd });
-        log(`${config.name} daemon pid ${daemonPid}`);
-      }
+      adoptDaemonPid(m, 'daemon forked before readiness');
     }
   } else if (!shuttingDown) {
     const timeoutMs = resolveReadinessTimeout(config.readiness);
@@ -388,20 +400,34 @@ async function startOne(config: ProcessConfig, options: StartOptions = {}): Prom
 
 // -- process control --
 
-function findDaemonPid(config: ProcessConfig): number | null {
-  try {
-    const cmd = config.cmd;
-    const pids = execSync(`pgrep -f "${cmd}.*${(config.args || [])[0] || ''}" 2>/dev/null`, { encoding: 'utf-8' }).trim();
-    const tracked = new Set<number>([process.pid]);
-    managed.forEach(m => { if (m.pid) tracked.add(m.pid); });
-    if (pids) {
-      for (const p of pids.split('\n').filter(Boolean)) {
-        const pid = Number(p);
-        if (!tracked.has(pid)) return pid;
-      }
-    }
-  } catch {}
-  return null;
+// Find the daemon forked by a daemonizing config. The candidate must descend
+// from our spawned parent or share its process group; a bare pgrep match is
+// someone else's daemon and is never adopted (issue #105).
+function findDaemonPid(config: ProcessConfig, parentPid: number): number | null {
+  const pattern = `${config.cmd}.*${(config.args || [])[0] || ''}`;
+  const tracked = new Set<number>([process.pid]);
+  managed.forEach(m => { if (m.pid) tracked.add(m.pid); });
+  return findOwnedDaemonPid(pattern, parentPid, tracked);
+}
+
+// Adopt a discovered daemon pid only when its process-instance identity (OS
+// start time) can be read; an unprovable pid is never recorded, because every
+// later signal re-checks that identity and would have to refuse anyway.
+function adoptDaemonPid(m: ManagedProcess, why: string): void {
+  const daemonPid = findDaemonPid(m.config, m.spawnPid);
+  if (!daemonPid) {
+    log(`${m.config.name} ${why}, daemon pid unknown (no candidate descends from pid ${m.spawnPid} or shares its process group) -- not tracked, will not be signaled`);
+    return;
+  }
+  const start = pidStartTime(daemonPid);
+  if (!start) {
+    log(`${m.config.name} ${why}, daemon pid ${daemonPid} identity unreadable -- not tracked, will not be signaled`);
+    return;
+  }
+  m.pid = daemonPid;
+  m.startAt = start;
+  writePidFile(stateDir(), { name: m.config.name, pid: daemonPid, cmd: m.config.cmd, start });
+  log(`${m.config.name} ${why}, daemon pid ${daemonPid}`);
 }
 
 function killTree(pid: number, signal: NodeJS.Signals) {
@@ -423,20 +449,37 @@ function readinessPort(readiness: ReadinessConfig | undefined): number | null {
   return null;
 }
 
+// Signal a recorded pid only if its process-instance identity still matches.
+// Before EVERY signal, including the SIGKILL escalation: a recycled pid has a
+// different OS start time and must never be signaled (issue #105). Fail
+// closed: unreadable identity = not ours.
+function signalIfOurs(m: ManagedProcess, signal: NodeJS.Signals, what: string): boolean {
+  if (!pidIdentityMatches(m.pid, m.startAt)) {
+    logErr(`${m.config.name}: refusing ${what} to pid ${m.pid} — identity cannot be verified (recorded start: ${m.startAt ?? 'none'}), pid may have been recycled; removing pid file`);
+    return false;
+  }
+  killTree(m.pid, signal);
+  return true;
+}
+
 async function killProc(m: ManagedProcess) {
   if (m.restartTimer) { clearTimeout(m.restartTimer); m.restartTimer = null; }
   if (!m.pid) return;
   m.status = 'stopping';
-  killTree(m.pid, 'SIGTERM');
+  if (!signalIfOurs(m, 'SIGTERM', 'SIGTERM')) { removePidFile(stateDir(), m.config.name); return; }
   if (m.child) {
     if (!await waitExit(m, SIGTERM_WAIT) && m.child) {
-      killTree(m.pid, 'SIGKILL');
+      signalIfOurs(m, 'SIGKILL', 'SIGKILL escalation');
       await waitExit(m, SIGKILL_WAIT);
     }
   } else {
     // daemon fork: no child handle, just wait for pid to die
     await sleep(SIGTERM_WAIT);
-    try { process.kill(m.pid, 0); killTree(m.pid, 'SIGKILL'); await sleep(SIGKILL_WAIT); } catch {}
+    try {
+      process.kill(m.pid, 0);
+      if (!signalIfOurs(m, 'SIGKILL', 'SIGKILL escalation')) { removePidFile(stateDir(), m.config.name); return; }
+      await sleep(SIGKILL_WAIT);
+    } catch {}
   }
   // issue #105: only pids this manager recorded are ever signaled. The stale
   // own-process case (a previous crashed PM leaving orphans) is handled from
@@ -470,7 +513,7 @@ async function shutdown() {
   // hard timeout: if cleanup takes too long, force exit
   const hardTimeout = setTimeout(() => {
     logErr('shutdown timed out, force exiting');
-    managed.forEach(m => { if (m.pid) { try { killTree(m.pid, 'SIGKILL'); } catch {} } });
+    managed.forEach(m => { if (m.pid) signalIfOurs(m, 'SIGKILL', 'shutdown timeout kill'); });
     process.exit(1);
   }, isDev ? 10000 : 15000);
 
@@ -869,15 +912,21 @@ async function housekeep(config: ProcessesFile) {
       if (self?.pid === entry.pid && self.child) continue; // current run's child
       if (!pidAlive(entry.pid)) { removePidFile(dir, entry.name); continue; }
       if (!recordedPidStillOurs(entry)) {
-        log(`stale pid file for ${entry.name} (pid ${entry.pid} now runs something else), ignoring`);
+        log(`stale pid file for ${entry.name} (pid ${entry.pid} is not the process we recorded — no identity match), ignoring`);
         removePidFile(dir, entry.name);
         continue;
       }
       try { killTree(entry.pid, 'SIGTERM'); log(`killed stale own pid ${entry.pid} (${entry.name})`); } catch {}
       const deadline = Date.now() + 2000;
       while (Date.now() < deadline && pidAlive(entry.pid)) await sleep(100);
+      // re-verify identity before the SIGKILL escalation: the pid may have
+      // exited and been recycled during the wait (issue #105 round 2).
       if (pidAlive(entry.pid)) {
-        try { killTree(entry.pid, 'SIGKILL'); log(`force-killed stale own pid ${entry.pid} (${entry.name})`); } catch {}
+        if (recordedPidStillOurs(entry)) {
+          try { killTree(entry.pid, 'SIGKILL'); log(`force-killed stale own pid ${entry.pid} (${entry.name})`); } catch {}
+        } else {
+          log(`stale pid ${entry.pid} (${entry.name}) identity changed during stop, not force-killing`);
+        }
         await sleep(200);
       }
       removePidFile(dir, entry.name);
@@ -898,7 +947,9 @@ async function main() {
   process.on('exit', () => {
     if (!shuttingDown) return;
     managed.forEach(m => {
-      if (m.pid) { try { process.kill(-m.pid, 'SIGKILL'); } catch {} try { process.kill(m.pid, 'SIGKILL'); } catch {} }
+      if (m.pid && pidIdentityMatches(m.pid, m.startAt)) {
+        try { process.kill(-m.pid, 'SIGKILL'); } catch {} try { process.kill(m.pid, 'SIGKILL'); } catch {}
+      }
     });
   });
 
@@ -923,7 +974,15 @@ async function main() {
       exitCode = 1; await shutdown(); return;
     }
   }
-  if (!shuttingDown) { log(`all processes running (${managed.size} total)`); bootTime = Date.now(); }
+  if (!shuttingDown) {
+    const failed = [...managed.values()].filter(m => m.status === 'failed');
+    if (failed.length) {
+      logErr(`degraded: ${failed.length} process(es) not running: ${failed.map(f => f.config.name).join(', ')} (see errors above)`);
+    } else {
+      log(`all processes running (${managed.size} total)`);
+    }
+    bootTime = Date.now();
+  }
 }
 
 main().catch(err => { logErr(`fatal: ${err.message}`); process.exit(1); });
