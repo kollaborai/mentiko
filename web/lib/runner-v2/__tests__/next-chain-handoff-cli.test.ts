@@ -4,6 +4,9 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+// next-chain-launch -> direct-run -> session-token pulls in jose (ESM-only).
+jest.mock("jose", () => ({ __esModule: true, SignJWT: jest.fn(), jwtVerify: jest.fn() }));
+
 jest.mock("@/lib/pty/pty-client", () => ({
   pty: {
     remove: jest.fn(),

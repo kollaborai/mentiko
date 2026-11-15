@@ -1,6 +1,7 @@
 import { mkdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import config from "@/lib/config";
+import { mintSessionToken } from "@/lib/auth/session-token";
 import { startRunnerV2Bootstrap } from "@/lib/runner-v2/bootstrap-executor";
 import { loadNormalizedChainDefinition, type ChainRecord } from "@/lib/runner-v2/chain-contract";
 import { validateChainFile } from "@/lib/runner-v2/chain-validation-cli";
@@ -126,7 +127,8 @@ export async function runTypedDirect(options: DirectRunOptions): Promise<DirectR
   const launch = await startRunnerV2Bootstrap({
     chainPath, runDir, runId: run.id, agentId: selected.id,
     chainId: typeof chain.id === "string" ? chain.id : basename(options.chainPath, ".json"),
-    chainName, workspacePath, taskId: options.taskId, debug: options.debug, logFd: 2, cwd: workspacePath || process.cwd(), env: { ...env, ...taskEnv },
+    chainName, workspacePath, taskId: options.taskId, debug: options.debug, logFd: 2, cwd: workspacePath || process.cwd(),
+    env: await withCliSessionContext({ ...env, ...taskEnv }, run.id),
   });
   if (launch.support === "unsupported") {
     updateRunStatus(join(runDir, "run.json"), "failed", `typed direct launch failed: ${launch.reason}`, undefined, undefined, undefined,
@@ -134,6 +136,39 @@ export async function runTypedDirect(options: DirectRunOptions): Promise<DirectR
     throw new Error(launch.reason);
   }
   return { runId: run.id, runDir, agentId: selected.id, launch };
+}
+
+/**
+ * CLI launches have no authenticated web session, so without this the agent
+ * env carries no MENTIKO_SESSION_TOKEN and the agent's first ops call fails
+ * with "session auth required". Mint the same run-scoped token the web Run
+ * button path mints (chain-run-service buildChainSessionEnv): jti
+ * `chain-<runId>`, ops:* scope, identity "cli" (same convention as the
+ * scheduler's "scheduler" identity). The launcher owns the service
+ * credential, so minting here grants no capability the CLI operator lacks.
+ * A caller-provided token context is never overridden.
+ */
+async function withCliSessionContext(env: NodeJS.ProcessEnv, runId: string): Promise<NodeJS.ProcessEnv> {
+  if (env.MENTIKO_SESSION_TOKEN?.trim()) return env;
+  try {
+    const sessionId = `chain-${runId}`;
+    const sessionToken = await mintSessionToken({
+      sub: "cli",
+      jti: sessionId,
+      ns: env.NAMESPACE_ID || "default",
+      org: env.ORG_ID || "default",
+      scopes: ["ops:*"],
+    });
+    return {
+      ...env,
+      MENTIKO_SESSION_ID: sessionId,
+      MENTIKO_SESSION_TOKEN: sessionToken,
+      MENTIKO_WEB_URL: env.MENTIKO_WEB_URL || env.BETTER_AUTH_URL || `http://127.0.0.1:${env.WEB_PORT || env.PORT || "3000"}`,
+    };
+  } catch (error) {
+    console.warn(`mentiko run could not mint a session token; agents will start without ops access: ${error instanceof Error ? error.message : String(error)}`);
+    return env;
+  }
 }
 
 async function loadTypedTaskContext(taskId: string, env: NodeJS.ProcessEnv): Promise<Record<string, string>> {

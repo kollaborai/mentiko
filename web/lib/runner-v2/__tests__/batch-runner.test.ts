@@ -1,6 +1,10 @@
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
+
+// batch-runner -> direct-run -> session-token pulls in jose (ESM-only).
+jest.mock("jose", () => ({ __esModule: true, SignJWT: jest.fn(), jwtVerify: jest.fn() }));
+
 import {
   parseBatchRunRecord,
   readBatchChainResult,
