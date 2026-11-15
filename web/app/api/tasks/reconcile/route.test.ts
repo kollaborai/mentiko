@@ -854,6 +854,109 @@ describe("GET /api/tasks/reconcile", () => {
     expect(mockCreateNotification).not.toHaveBeenCalled();
   });
 
+  it("does not stop a resumed run inside the run reconciler's resume grace window", async () => {
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      id: "run-exec",
+      taskId: "TASK-044",
+      status: "running",
+      started: new Date(Date.now() - 300_000).toISOString(),
+      resumedAt: new Date(Date.now() - 30_000).toISOString(),
+      chainId: "smoke-test-suite-generator",
+      metadata: {},
+      agents: [
+        {
+          id: "codebase-explorer",
+          status: "complete",
+          session: "finished-session",
+          completed: new Date(Date.now() - 600_000).toISOString(),
+        },
+        { id: "test-strategist", status: "running", session: "missing-session" },
+      ],
+    }));
+    mockTaskList.mockReturnValue([
+      {
+        id: "TASK-044",
+        title: "Run recommended chain",
+        status: "in_progress",
+        metadata: {
+          auto_run: true,
+          last_run_id: "run-exec",
+          last_run_status: "running",
+        },
+      },
+    ]);
+
+    const res = await GET(makeRequest() as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({ reconciled: 0, checked: 1, results: [] });
+    expect(mockWriteFileSync).not.toHaveBeenCalled();
+    expect(mockTaskUpdate).not.toHaveBeenCalled();
+  });
+
+  it("keeps the recorded failure reason when stopping a resumed run after the grace window", async () => {
+    const recordedReason = "quality gate agent summary status is partial";
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      id: "run-exec",
+      taskId: "TASK-044",
+      status: "running",
+      started: new Date(Date.now() - 1_800_000).toISOString(),
+      resumedAt: new Date(Date.now() - 300_000).toISOString(),
+      chainId: "smoke-test-suite-generator",
+      metadata: {},
+      statusReason: { actor: "system", reason: recordedReason },
+      agents: [
+        {
+          id: "codebase-explorer",
+          status: "complete",
+          session: "finished-session",
+          completed: new Date(Date.now() - 600_000).toISOString(),
+        },
+        { id: "test-strategist", status: "running", session: "missing-session" },
+      ],
+    }));
+    mockTaskList.mockReturnValue([
+      {
+        id: "TASK-044",
+        title: "Run recommended chain",
+        status: "in_progress",
+        metadata: {
+          auto_run: false,
+          last_run_id: "run-exec",
+          last_run_status: "running",
+        },
+      },
+    ]);
+
+    const res = await GET(makeRequest() as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      reconciled: 1,
+      results: [
+        expect.objectContaining({
+          taskId: "TASK-044",
+          newStatus: "stopped",
+          reason: recordedReason,
+        }),
+      ],
+    });
+    expect(mockWriteFileSync).toHaveBeenCalledWith(
+      "/tmp/mentiko-test/runs/run-exec/run.json",
+      expect.stringContaining(`"reason": "${recordedReason}"`),
+    );
+    expect(mockWriteFileSync).toHaveBeenCalledWith(
+      "/tmp/mentiko-test/runs/run-exec/run.json",
+      expect.stringContaining('"status": "stopped"'),
+    );
+    expect(mockWriteFileSync).not.toHaveBeenCalledWith(
+      "/tmp/mentiko-test/runs/run-exec/run.json",
+      expect.stringContaining("no live sessions found"),
+    );
+  });
+
   it("marks an old orphaned real run stopped and schedules retry before auditing", async () => {
     mockCurrentRunTerminalFingerprint.mockReturnValue("stopped:no-terminal-time");
     mockReadFileSync.mockReturnValue(JSON.stringify({

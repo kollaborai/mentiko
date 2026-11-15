@@ -48,6 +48,7 @@ import { isConcurrencyCapBlockedReason } from "@/lib/runner-v2/concurrency-admis
 import { isDecisionGateReleased } from "@/lib/tasks/decision-gate-release";
 import { unblockTaskViaResolvedDecision } from "@/lib/tasks/decision-unblock";
 import { updateRunJsonRecord } from "@/lib/runner-v2/run-state";
+import { RUN_RESUME_GRACE_MS } from "@/lib/runs/run-reconciler";
 
 export const dynamic = "force-dynamic";
 
@@ -419,7 +420,14 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
               const inHandoffWindow = lastCompletionMs
                 ? Date.now() - lastCompletionMs < RUN_HANDOFF_GRACE_MS
                 : false;
-              if (ageMs >= RUN_STARTUP_GRACE_MS && !inHandoffWindow) {
+              // Same resume grace the run reconciler applies: a resumed run
+              // needs time for the relaunched chain-runner to create its
+              // sessions before "no live sessions" is a verdict (#142).
+              const resumedAtMs = parseTimeMs(run.resumedAt);
+              const inResumeGrace = resumedAtMs
+                ? Date.now() - resumedAtMs < RUN_RESUME_GRACE_MS
+                : false;
+              if (ageMs >= RUN_STARTUP_GRACE_MS && !inHandoffWindow && !inResumeGrace) {
                 const stopReason = "no live sessions found";
                 // Recheck current run activity inside the shared file lock so a
                 // concurrent launch or completion cannot be overwritten.
@@ -440,17 +448,28 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
                   const currentInHandoffWindow = currentLastCompletionMs
                     ? Date.now() - currentLastCompletionMs < RUN_HANDOFF_GRACE_MS
                     : false;
-                  if (currentAgeMs < RUN_STARTUP_GRACE_MS || currentInHandoffWindow) return current;
+                  const currentResumedAtMs = parseTimeMs(currentRun.resumedAt);
+                  const currentInResumeGrace = currentResumedAtMs
+                    ? Date.now() - currentResumedAtMs < RUN_RESUME_GRACE_MS
+                    : false;
+                  if (currentAgeMs < RUN_STARTUP_GRACE_MS || currentInHandoffWindow || currentInResumeGrace) return current;
+                  // A resumed run that already carries a recorded terminal
+                  // reason (the failure that triggered the resume, e.g. a
+                  // quality-gate rejection) keeps it: overwriting with
+                  // "no live sessions found" hides the real cause (#142).
+                  const recordedReason = currentRun.statusReason;
                   return {
                     ...currentRun,
                     status: "stopped",
                     completed: currentRun.completed || new Date().toISOString(),
-                    statusReason: { actor: "reconciler", reason: stopReason },
+                    statusReason: recordedReason ?? { actor: "reconciler", reason: stopReason },
                   };
                 });
                 if (run.status === "stopped") {
                   newStatus = "stopped";
-                  reason = stopReason;
+                  reason = typeof run.statusReason?.reason === "string" && run.statusReason.reason
+                    ? run.statusReason.reason
+                    : stopReason;
                 }
               }
             }
