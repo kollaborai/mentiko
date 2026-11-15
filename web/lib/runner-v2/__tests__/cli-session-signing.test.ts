@@ -78,6 +78,16 @@ function makeFakeCodeRoot(): string {
 }
 
 describe("CLI session token signing across the CLI/web boundary", () => {
+  // The CLI checks its minted token against the web app before launching;
+  // stand in for an accepting web app.
+  // (The Jest environment may lack fetch, so it is assigned, not spied.)
+  const originalFetch = globalThis.fetch;
+  let webTokenCheck: jest.Mock;
+  beforeEach(() => {
+    webTokenCheck = jest.fn().mockResolvedValue({ status: 200 });
+    globalThis.fetch = webTokenCheck as unknown as typeof fetch;
+  });
+  afterEach(() => { globalThis.fetch = originalFetch; });
   beforeEach(() => {
     saveAndClearEnv();
     fakeCodeRoot = makeFakeCodeRoot();

@@ -2,7 +2,7 @@ import { mkdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import config from "@/lib/config";
 import { mintSessionToken } from "@/lib/auth/session-token";
-import { loadWebEnvForCliSigning, resolveWebOrigin } from "@/lib/runner-v2/cli-web-env";
+import { assertWebAcceptsToken, loadWebEnvForCliSigning, resolveWebOrigin } from "@/lib/runner-v2/cli-web-env";
 import { startRunnerV2Bootstrap } from "@/lib/runner-v2/bootstrap-executor";
 import { loadNormalizedChainDefinition, type ChainRecord } from "@/lib/runner-v2/chain-contract";
 import { validateChainFile } from "@/lib/runner-v2/chain-validation-cli";
@@ -173,11 +173,13 @@ async function withCliSessionContext(env: NodeJS.ProcessEnv, runId: string): Pro
     org: env.ORG_ID || "default",
     scopes: ["ops:*"],
   });
+  const webUrl = resolveWebOrigin(env);
+  await assertWebAcceptsToken(webUrl, sessionToken);
   return {
     ...env,
     MENTIKO_SESSION_ID: sessionId,
     MENTIKO_SESSION_TOKEN: sessionToken,
-    MENTIKO_WEB_URL: resolveWebOrigin(env),
+    MENTIKO_WEB_URL: webUrl,
   };
 }
 

@@ -59,6 +59,16 @@ afterAll(() => {
 });
 
 describe("typed direct run arguments", () => {
+  // The CLI checks its minted token against the web app before launching;
+  // stand in for an accepting web app.
+  // (The Jest environment may lack fetch, so it is assigned, not spied.)
+  const originalFetch = globalThis.fetch;
+  let webTokenCheck: jest.Mock;
+  beforeEach(() => {
+    webTokenCheck = jest.fn().mockResolvedValue({ status: 200 });
+    globalThis.fetch = webTokenCheck as unknown as typeof fetch;
+  });
+  afterEach(() => { globalThis.fetch = originalFetch; });
   it("accepts only one local initial agent with optional workspace and debug", () => {
     expect(parseDirectRunArgs(["chain.json", "--workspace", "/tmp/work", "--start", "first", "--debug"])).toMatchObject({
       chainPath: expect.stringMatching(/chain\.json$/), workspacePath: "/tmp/work", agentId: "first", debug: true,
@@ -193,6 +203,25 @@ describe("typed direct run arguments", () => {
       rmSync(root, { recursive: true, force: true });
       process.env.BETTER_AUTH_SECRET = "direct-run-test-secret";
       Object.defineProperty(process.env, "NODE_ENV", { value: "test", configurable: true, writable: true });
+    }
+  });
+
+  it("marks the run failed and never launches when the web app rejects the CLI token", async () => {
+    const bootstrapCalls = (startRunnerV2Bootstrap as jest.Mock).mock.calls.length;
+    webTokenCheck.mockResolvedValue({ status: 401 });
+    const root = mkdtempSync(join(tmpdir(), "mentiko-direct-token-rejected-"));
+    const runsDir = join(root, "runs");
+    try {
+      await expect(runTypedDirect({
+        chainPath: join(root, "chain.json"), runsDir, runId: "run-token-rejected", debug: false,
+        env: { NODE_ENV: "test", MENTIKO_WEB_URL: "http://127.0.0.1:3100" },
+      })).rejects.toThrow("rejected the CLI session token (HTTP 401)");
+      expect(webTokenCheck.mock.calls[0][0]).toBe("http://127.0.0.1:3100/api/mentiko-mcp/ops/monitor/status");
+      expect((startRunnerV2Bootstrap as jest.Mock).mock.calls.length).toBe(bootstrapCalls);
+      const runState = JSON.parse(readFileSync(join(runsDir, "run-token-rejected", "run.json"), "utf8"));
+      expect(runState.status).toBe("failed");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
   });
 

@@ -70,3 +70,34 @@ function devWebPort(): string | null {
     return null;
   }
 }
+
+/**
+ * Prove the minted token is accepted by the web app the agent will call,
+ * before any agent launches. Env-file loading can only guess the server's
+ * signing context (its mode, its secret); this asks the server itself, so a
+ * CLI and server that disagree for any reason fail here with a clear message
+ * instead of an agent hitting 401 on its first ops call.
+ */
+export async function assertWebAcceptsToken(origin: string, token: string, timeoutMs = 5000): Promise<void> {
+  const url = `${origin.replace(/\/+$/, "")}/api/mentiko-mcp/ops/monitor/status`;
+  let status: number;
+  try {
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    status = res.status;
+  } catch (error) {
+    throw new Error(
+      `mentiko web app at ${origin} is unreachable (${error instanceof Error ? error.message : String(error)}); start it or set MENTIKO_WEB_URL`,
+    );
+  }
+  if (status === 401 || status === 403) {
+    throw new Error(
+      `mentiko web app at ${origin} rejected the CLI session token (HTTP ${status}): the CLI and the web app are not using the same BETTER_AUTH_SECRET`,
+    );
+  }
+  if (status >= 500) {
+    throw new Error(`mentiko web app at ${origin} answered HTTP ${status} to the token check`);
+  }
+}
