@@ -104,17 +104,22 @@ export function readLinkedDecisionSignal(input: {
 }): LinkedDecisionSignal | undefined {
   const meta = input.metadata;
   const decisionTaskId = stringOrUndefined(meta.decision_subtask_id);
-  let decisionId = stringOrUndefined(meta.decision_id);
-
-  // The decision subtask is the durable pointer for completion-audit gates;
-  // it carries the decision id and the audited source run even when the
-  // parent task's own metadata does not.
+  // The decision subtask is the durable pointer for completion-audit gates,
+  // so when one is linked its decision id is the ONLY id that can prove the
+  // gate resolved. The task's own `decision_id` may be provenance instead: a
+  // task created from a decision plan carries the id of the decision that
+  // created it, which is already approved. Reading that as the gate released
+  // a fresh, unanswered decision and wired the task to depend on itself and
+  // on its own dependents (TASK-008, reproduced 2026-11-15).
+  let decisionId: string | undefined;
   let subtaskResolved = false;
   if (decisionTaskId) {
     const subtask = taskGet(input.orgId, decisionTaskId, input.namespaceId);
     const subMeta = toRecord(subtask?.metadata);
-    if (!decisionId) decisionId = stringOrUndefined(subMeta.decision_id);
+    decisionId = stringOrUndefined(subMeta.decision_id);
     subtaskResolved = subMeta.decision_status === "approved";
+  } else if (!stringOrUndefined(meta.decision_plan_task_id)) {
+    decisionId = stringOrUndefined(meta.decision_id);
   }
   if (!decisionId && !decisionTaskId) return undefined;
 
