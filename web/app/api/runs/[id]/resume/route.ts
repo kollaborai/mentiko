@@ -228,6 +228,25 @@ export const POST = withErrorHandling(async (
   const taskFlag = resumedRun.taskId ? ` --task ${shellEscape(resumedRun.taskId)}` : "";
   const debugFlag = resumedRun.debug ? " --debug" : "";
 
+  // Producer fix (#142): the spawned CLI creates a NEW child run (there is no
+  // same-run mechanism for a run with prior agents), so the child must inherit
+  // the original run's provenance. Without this the child record is thin — no
+  // chainId, metadata, workspaceId, profile fields, user_id, org_role — which
+  // is the record whose own resume then throws on the missing chainId.
+  const resumeProvenanceEnv = JSON.stringify({
+    resumedFromRunId: runId,
+    ...(typeof resumedRun.chainId === "string" && resumedRun.chainId ? { chainId: resumedRun.chainId } : {}),
+    ...(resumedRun.metadata && typeof resumedRun.metadata === "object" && !Array.isArray(resumedRun.metadata)
+      ? { metadata: resumedRun.metadata }
+      : {}),
+    ...(typeof resumedRun.workspaceId === "string" && resumedRun.workspaceId ? { workspaceId: resumedRun.workspaceId } : {}),
+    ...(typeof resumedRun.agentProfileId === "string" && resumedRun.agentProfileId ? { agentProfileId: resumedRun.agentProfileId } : {}),
+    ...(typeof resumedRun.agentProfileSource === "string" && resumedRun.agentProfileSource ? { agentProfileSource: resumedRun.agentProfileSource } : {}),
+    ...(typeof resumedRun.user_id === "string" && resumedRun.user_id ? { user_id: resumedRun.user_id } : {}),
+    ...(typeof resumedRun.session_id === "string" && resumedRun.session_id ? { session_id: resumedRun.session_id } : {}),
+    ...(typeof resumedRun.org_role === "string" && resumedRun.org_role ? { org_role: resumedRun.org_role } : {}),
+  });
+
   const logPath = join(runDir, "output.log");
   const logFd = openSync(logPath, "a");
 
@@ -252,6 +271,7 @@ export const POST = withErrorHandling(async (
           NAMESPACE_ID: nsId,
           ORG_ID: orgId,
           AGENT_CHAIN_RUN_ID: runId,
+          MENTIKO_RESUME_PROVENANCE: resumeProvenanceEnv,
         });
         delete e.CLAUDECODE;
         return e;

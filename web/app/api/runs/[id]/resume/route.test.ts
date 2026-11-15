@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 
-const mockSpawn = jest.fn(() => ({ pid: 4242, unref: jest.fn() }));
+const mockSpawn = jest.fn((..._args: unknown[]) => ({ pid: 4242, unref: jest.fn() }));
 jest.mock("child_process", () => ({
   spawn: (...args: unknown[]) => mockSpawn(...args),
 }));
@@ -136,7 +136,7 @@ describe("POST /api/runs/[id]/resume", () => {
     const runsDir = writeRun(validRun({ chainId: undefined }));
     writeChainSnapshot(runsDir);
 
-    const res = await POST(makeRequest("run-resume-1"), { params: Promise.resolve({ id: "run-resume-1" }) });
+    const res = await POST(makeRequest("run-resume-1") as never, { params: Promise.resolve({ id: "run-resume-1" }) } as never);
     const body = await res.json();
 
     expect(res.status).toBe(200);
@@ -149,7 +149,7 @@ describe("POST /api/runs/[id]/resume", () => {
   it("returns a clean 404, not a TypeError 500, when chainId is missing and no snapshot exists", async () => {
     writeRun(validRun({ chainId: undefined, id: "run-resume-2" }));
 
-    const res = await POST(makeRequest("run-resume-2"), { params: Promise.resolve({ id: "run-resume-2" }) });
+    const res = await POST(makeRequest("run-resume-2") as never, { params: Promise.resolve({ id: "run-resume-2" }) } as never);
     const body = await res.json();
 
     expect(res.status).toBe(404);
@@ -172,10 +172,38 @@ describe("POST /api/runs/[id]/resume", () => {
       ],
     }));
 
-    const res = await POST(makeRequest("run-resume-3"), { params: Promise.resolve({ id: "run-resume-3" }) });
+    const res = await POST(makeRequest("run-resume-3") as never, { params: Promise.resolve({ id: "run-resume-3" }) } as never);
 
     expect(res.status).toBe(200);
     const command = (mockSpawn.mock.calls[0][1] as string[])[1];
     expect(command).toContain(chainsCopy);
+  });
+
+  it("passes the original run's provenance to the child launch env so the child record is complete", async () => {
+    const runsDir = writeRun(validRun({
+      chainId: "release-review",
+      metadata: { generationJobId: "job-9" },
+      workspaceId: "ws-1",
+      agentProfileId: "profile-1",
+      agentProfileSource: "workspace",
+      user_id: "user-1",
+      org_role: "admin",
+    }));
+    writeChainSnapshot(runsDir);
+
+    const res = await POST(makeRequest("run-resume-1") as never, { params: Promise.resolve({ id: "run-resume-1" }) } as never);
+
+    expect(res.status).toBe(200);
+    const env = (mockSpawn.mock.calls[0][2] as { env: Record<string, string> }).env;
+    expect(JSON.parse(env.MENTIKO_RESUME_PROVENANCE)).toEqual({
+      resumedFromRunId: "run-resume-1",
+      chainId: "release-review",
+      metadata: { generationJobId: "job-9" },
+      workspaceId: "ws-1",
+      agentProfileId: "profile-1",
+      agentProfileSource: "workspace",
+      user_id: "user-1",
+      org_role: "admin",
+    });
   });
 });
