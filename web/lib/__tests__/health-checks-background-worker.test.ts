@@ -18,8 +18,8 @@ function tmpPaths(): BackgroundWorkerStatePaths {
   };
 }
 
-function writeOwner(paths: BackgroundWorkerStatePaths, pid: number) {
-  fs.writeFileSync(paths.ownerFile, JSON.stringify({ pid }));
+function writeOwner(paths: BackgroundWorkerStatePaths, pid: number, processIdentity?: string) {
+  fs.writeFileSync(paths.ownerFile, JSON.stringify({ pid, ...(processIdentity ? { processIdentity } : {}) }));
 }
 
 function writeStatus(paths: BackgroundWorkerStatePaths, status: "running" | "stopped") {
@@ -54,7 +54,41 @@ describe("checkBackgroundWorker (issue #136)", () => {
 
     const result = await checkBackgroundWorker(paths);
     expect(result.status).toBe("fail");
-    expect(result.message).toContain("not running");
+    expect(result.message).toContain("stale owner");
+  });
+
+  it("reports fail on pid reuse: a live pid that is not the registered process (codex rev2 P2)", async () => {
+    const paths = freshPaths();
+    // the jest process is alive, but the owner claims a different identity
+    writeOwner(paths, process.pid, "proc:12345");
+    writeStatus(paths, "running");
+
+    const result = await checkBackgroundWorker(paths);
+    expect(result.status).toBe("fail");
+    expect(result.message).toContain("stale owner");
+  });
+
+  it("passes when the live pid still matches the recorded process identity", async () => {
+    const paths = freshPaths();
+    const { claimProcessIdentity } = await import("../runner-v2/file-claim");
+    const identity = claimProcessIdentity(process.pid);
+    // identity probing is best-effort; without an identity the check degrades to liveness
+    if (!identity) return;
+    writeOwner(paths, process.pid, identity);
+    writeStatus(paths, "running");
+
+    const result = await checkBackgroundWorker(paths);
+    expect(result.status).toBe("pass");
+  });
+
+  it("reports fail when the status file says stopped while an owner is still registered", async () => {
+    const paths = freshPaths();
+    writeOwner(paths, process.pid);
+    writeStatus(paths, "stopped");
+
+    const result = await checkBackgroundWorker(paths);
+    expect(result.status).toBe("fail");
+    expect(result.message).toContain("stopped");
   });
 
   it("reports pass when the worker pid is alive and its heartbeat is fresh", async () => {

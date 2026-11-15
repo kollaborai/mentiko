@@ -291,6 +291,7 @@ export async function checkBackgroundWorker(
 ): Promise<HealthCheckResult> {
   try {
     const workerState = await import("@/lib/system/background-worker-state");
+    const { claimProcessMatchesIdentity } = await import("@/lib/runner-v2/file-claim");
     const statePaths = paths ?? workerState.getBackgroundWorkerPaths();
     const owner = workerState.readBackgroundWorkerOwner(statePaths);
     const status = workerState.readBackgroundWorkerStatusFile(statePaths);
@@ -302,10 +303,18 @@ export async function checkBackgroundWorker(
           : "background worker not registered",
       };
     }
-    if (!workerState.isProcessAlive(owner.pid)) {
+    if (!claimProcessMatchesIdentity(owner.pid, owner.processIdentity)) {
+      // pid existence alone is not identity: a recycled pid (or one rewritten
+      // by another actor) must not pass for a live worker (codex rev2 P2).
       return {
         status: "fail",
-        message: `background worker pid ${owner.pid} is not running (last status: ${status?.status ?? "unknown"})`,
+        message: `background worker pid ${owner.pid} is not the registered process (stale owner, last status: ${status?.status ?? "unknown"})`,
+      };
+    }
+    if (status?.status === "stopped") {
+      return {
+        status: "fail",
+        message: `background worker status reports stopped while pid ${owner.pid} is registered`,
       };
     }
     const heartbeatAge = Date.now() - statSync(statePaths.statusFile).mtimeMs;
@@ -359,4 +368,24 @@ export function overallHealthStatus(checks: HealthChecks): "healthy" | "degraded
   if (hasFail) return "unhealthy";
   if (hasWarn) return "degraded";
   return "healthy";
+}
+
+/**
+ * Checks excluded from the platform readiness verdict (codex rev2 P1, issue
+ * #136). The background worker starts AFTER the platform (processes.json:
+ * worker dependsOn platform), and the pm's critical platform readiness probe
+ * polls /api/health and fails the platform on 503. A stale dead worker owner
+ * from a previous run must not fail the platform that is about to start the
+ * replacement worker. The worker check stays in `checks` and in the monitor
+ * digest's full roll-up — it is only excluded from the readiness decision.
+ */
+const PLATFORM_READINESS_EXCLUDE = new Set(["background_worker"]);
+
+/** Readiness verdict for the platform process itself, used for the HTTP status code. */
+export function readinessHealthStatus(checks: HealthChecks): "healthy" | "degraded" | "unhealthy" {
+  const scoped: HealthChecks = {};
+  for (const [key, value] of Object.entries(checks)) {
+    if (!PLATFORM_READINESS_EXCLUDE.has(key)) scoped[key] = value;
+  }
+  return overallHealthStatus(scoped);
 }
