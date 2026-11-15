@@ -2,31 +2,70 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import config from "@/lib/config";
 
-let webEnvLoaded = false;
+/** The only web env-file values the CLI needs: the signing secret and the web origin. */
+const CLI_WEB_ENV_KEYS = ["BETTER_AUTH_SECRET", "SECRET_KEY", "MENTIKO_WEB_URL", "BETTER_AUTH_URL"] as const;
+export type CliWebEnv = Partial<Record<(typeof CLI_WEB_ENV_KEYS)[number], string>>;
+
+let cachedWebEnv: CliWebEnv | null = null;
 
 /**
  * CLI-side token minting must sign with the same root secret the web server
  * verifies with. The documented local setup keeps BETTER_AUTH_SECRET in
  * web/.env.local, which Next loads for the server but a plain CLI shell does
- * not — without this, a CLI-minted token is signed with the separate local
- * development secret and every ops call returns 401. Loads the web app's env
- * files once per process; @next/env never overrides variables already present
- * in process.env.
+ * not; without it, a CLI-minted token is signed with the separate local
+ * development secret and every ops call returns 401.
+ *
+ * Reads the web app's env files and returns ONLY the signing secret and web
+ * origin. process.env is restored afterwards: the web env files also hold
+ * OAuth secrets, tokens and runtime switches (e.g. MENTIKO_PTY_MGR_BIN) that
+ * must not leak into the CLI process or the agents it launches.
  */
-export async function loadWebEnvForCliSigning(): Promise<void> {
-  if (webEnvLoaded) return;
-  webEnvLoaded = true;
+export async function loadWebEnvForCliSigning(): Promise<CliWebEnv> {
+  if (cachedWebEnv) return cachedWebEnv;
+  cachedWebEnv = {};
+  const snapshot = { ...process.env };
   try {
     const webDir = join(config.codeRoot, "web");
-    if (!existsSync(webDir)) return;
+    if (!existsSync(webDir)) return cachedWebEnv;
     const { loadEnvConfig } = await import("@next/env");
     // Match the server's file set: `next dev` loads .env.development*, a
     // production server loads .env.production*. Without the flag @next/env
     // always picks the production files.
     loadEnvConfig(webDir, process.env.NODE_ENV !== "production");
+    for (const key of CLI_WEB_ENV_KEYS) {
+      const value = process.env[key];
+      // keep only values the files added; caller-set values stay the caller's
+      if (value && snapshot[key] === undefined) cachedWebEnv[key] = value;
+    }
   } catch {
     // Env files are best effort; a missing root secret fails at mint time
     // with a clear error instead of launching an agent without ops access.
+  } finally {
+    for (const key of Object.keys(process.env)) {
+      if (!(key in snapshot)) delete process.env[key];
+    }
+    Object.assign(process.env, snapshot);
+  }
+  return cachedWebEnv;
+}
+
+/**
+ * Run fn with the web env-file signing secret visible to mintSessionToken
+ * (which reads process.env), then remove it again so nothing launched later
+ * inherits it.
+ */
+export async function withWebSigningSecret<T>(webEnv: CliWebEnv, fn: () => Promise<T>): Promise<T> {
+  const added: string[] = [];
+  for (const key of ["BETTER_AUTH_SECRET", "SECRET_KEY"] as const) {
+    if (webEnv[key] && process.env[key] === undefined) {
+      process.env[key] = webEnv[key];
+      added.push(key);
+    }
+  }
+  try {
+    return await fn();
+  } finally {
+    for (const key of added) delete process.env[key];
   }
 }
 
@@ -36,11 +75,13 @@ export async function loadWebEnvForCliSigning(): Promise<void> {
  * files are loaded); the local dev fallback is the web app's port from
  * web/processes.dev.json. Never silently default to :3000.
  */
-export function resolveWebOrigin(env: NodeJS.ProcessEnv): string {
+export function resolveWebOrigin(env: NodeJS.ProcessEnv, webEnv: CliWebEnv = {}): string {
   const fromCaller = originFrom(env);
   if (fromCaller) return fromCaller;
   const fromProcess = originFrom(process.env);
   if (fromProcess) return fromProcess;
+  const fromWebFiles = originFrom(webEnv);
+  if (fromWebFiles) return fromWebFiles;
   if (process.env.NODE_ENV !== "production") {
     const port = devWebPort();
     if (port) return `http://127.0.0.1:${port}`;
@@ -54,7 +95,7 @@ export function resolveWebOrigin(env: NodeJS.ProcessEnv): string {
 // what the caller set. WEB_PORT/PORT are deliberately not read: bin/mentiko's
 // lib/config.sh always exports WEB_PORT=3000 as a default, so it cannot tell a
 // real override from the default.
-function originFrom(source: NodeJS.ProcessEnv): string | null {
+function originFrom(source: Record<string, string | undefined>): string | null {
   return source.MENTIKO_WEB_URL?.trim() || source.BETTER_AUTH_URL?.trim() || null;
 }
 

@@ -47,7 +47,7 @@ function setNodeEnv(value: string): void {
 const WEB_ENV_SECRET = "web-env-file-secret";
 
 const savedEnv: Record<string, string | undefined> = {};
-const TRACKED = ["BETTER_AUTH_SECRET", "SECRET_KEY", "MENTIKO_WEB_URL", "BETTER_AUTH_URL", "MENTIKO_DEV_SECRET"];
+const TRACKED = ["BETTER_AUTH_SECRET", "SECRET_KEY", "MENTIKO_WEB_URL", "BETTER_AUTH_URL", "MENTIKO_DEV_SECRET", "MENTIKO_PTY_MGR_BIN", "GITHUB_TOKEN"];
 
 function saveAndClearEnv(): void {
   for (const key of TRACKED) {
@@ -69,7 +69,7 @@ function makeFakeCodeRoot(): string {
   mkdirSync(webDir, { recursive: true });
   // NODE_ENV=test makes @next/env skip .env.local, so the documented
   // web/.env.local secret is represented here by web/.env, which always loads.
-  writeFileSync(join(webDir, ".env"), `BETTER_AUTH_SECRET=${WEB_ENV_SECRET}\n`);
+  writeFileSync(join(webDir, ".env"), `BETTER_AUTH_SECRET=${WEB_ENV_SECRET}\nMENTIKO_PTY_MGR_BIN=/web-only/pty-mgr\nGITHUB_TOKEN=web-only-token\n`);
   writeFileSync(join(webDir, "processes.dev.json"), JSON.stringify({
     version: 1,
     processes: [{ name: "platform", env: { PORT: "4199" } }],
@@ -116,9 +116,20 @@ describe("CLI session token signing across the CLI/web boundary", () => {
     const launchEnv = (startRunnerV2Bootstrap as jest.Mock).mock.calls.at(-1)![0].env as Record<string, string>;
     expect(launchEnv.MENTIKO_WEB_URL).toBe("http://127.0.0.1:4199");
 
-    // The CLI process loaded the web env file before minting, so the server
-    // side verifier (same root secret) accepts the token.
-    await expect(verifySessionToken(launchEnv.MENTIKO_SESSION_TOKEN)).resolves.toMatchObject({
+    // Nothing from the web env files leaks into the CLI process or the agent:
+    // not the secret, not unrelated tokens, not runtime switches.
+    for (const key of ["BETTER_AUTH_SECRET", "MENTIKO_PTY_MGR_BIN", "GITHUB_TOKEN"]) {
+      expect(process.env[key]).toBeUndefined();
+      expect(launchEnv[key]).toBeUndefined();
+    }
+
+    // The web server process loads the same env file; its verifier accepts
+    // the CLI-minted token.
+    process.env.BETTER_AUTH_SECRET = WEB_ENV_SECRET;
+    jest.resetModules();
+    const { verifySessionToken: serverVerify } = await import("@/lib/auth/session-token");
+    void verifySessionToken;
+    await expect(serverVerify(launchEnv.MENTIKO_SESSION_TOKEN)).resolves.toMatchObject({
       sub: "cli",
       jti: "chain-run-cross-boundary",
       ns: "ns-a",
