@@ -3,6 +3,7 @@ import config from "@/lib/config";
 import {
   detectMode,
   overallHealthStatus,
+  readinessHealthStatus,
   runAllHealthChecks,
   type HealthChecks,
   type RuntimeMode,
@@ -32,12 +33,23 @@ export async function GET(_request: NextRequest) {
 
   const checks = await runAllHealthChecks(runtimeMode);
 
+  // issue #136 (codex rev2 P1): the reported status is the full truth — a
+  // down background worker makes the platform "unhealthy". But the HTTP
+  // status code drives the pm's critical platform readiness probe, and the
+  // worker starts only after the platform is ready; a stale worker owner from
+  // a previous run must not 503 the platform that would start the
+  // replacement worker. So the code keys off the platform's own readiness,
+  // with the background_worker check excluded from that verdict only.
   let status: HealthStatus["status"] = overallHealthStatus(checks);
+  let readiness: HealthStatus["status"] = readinessHealthStatus(checks);
 
   // during grace period, downgrade "unhealthy" to "degraded" so the process
   // manager doesn't kill us before services finish initializing
   if (inGracePeriod && status === "unhealthy") {
     status = "degraded";
+  }
+  if (inGracePeriod && readiness === "unhealthy") {
+    readiness = "degraded";
   }
 
   // namespace identity — allows control plane to verify tenant isolation
@@ -52,7 +64,12 @@ export async function GET(_request: NextRequest) {
     ...(process.env.ENV_SCHEMA_VERSION && { envSchemaVersion: process.env.ENV_SCHEMA_VERSION }),
   };
 
-  const response: HealthStatus & { mode: RuntimeMode; grace_period?: boolean; identity?: typeof identity } = {
+  const response: HealthStatus & {
+    mode: RuntimeMode;
+    grace_period?: boolean;
+    readiness?: HealthStatus["status"];
+    identity?: typeof identity;
+  } = {
     status,
     mode: runtimeMode,
     timestamp: new Date().toISOString(),
@@ -60,9 +77,10 @@ export async function GET(_request: NextRequest) {
     checks,
     identity,
     ...(inGracePeriod && { grace_period: true }),
+    readiness,
   };
 
-  const statusCode = status === "unhealthy" ? 503 : 200;
+  const statusCode = readiness === "unhealthy" ? 503 : 200;
 
   return NextResponse.json(response, {
     status: statusCode,
