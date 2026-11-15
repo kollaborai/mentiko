@@ -129,6 +129,16 @@ try {
   scenario = JSON.parse(process.env.MOCK_CLI_SCENARIO || "{}");
 } catch {}
 
+// #138: exit without touching stdin so the worker's prompt write hits EPIPE
+// on a closed pipe (deterministic once the prompt exceeds the pipe buffer).
+if (scenario.exitImmediately) {
+  const out = Object.prototype.hasOwnProperty.call(scenario, "output")
+    ? scenario.output
+    : {};
+  process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
+  process.exit(Math.max(0, Number(scenario.exitCode || 0)));
+}
+
 const chunks = [];
 process.stdin.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
 process.stdin.on("end", () => {
@@ -906,6 +916,46 @@ test("marks job failed when mocked CLI exits non-zero", () => {
   assert(result.status === 1, `expected process exit 1, got ${result.status}`);
   assert(job.status === "failed", `expected failed, got ${job.status}`);
   assert(job.error.includes("credit balance is too low"), `unexpected error: ${job.error}`);
+});
+
+// ── EPIPE regression (#138) ───────────────────────────────────────────
+
+test("completes job despite EPIPE when CLI exits before reading a large prompt (#138)", () => {
+  makeDefaultProfile({
+    cli: MOCK_CLI_PATH,
+    pipe_flag: "",
+    env: {},
+  });
+  // 256 KiB exceeds every default pipe buffer (64 KiB on Linux, 16-64 KiB on
+  // macOS), so the write cannot silently fit once the CLI has exited.
+  makeJobFile("epipe-large-prompt", { prompt: "x".repeat(256 * 1024) }, "generate");
+
+  runJobWithMock("epipe-large-prompt", {
+    exitImmediately: true,
+    output: { name: "epipe-survivor" },
+  });
+  const job = readJob("epipe-large-prompt");
+  assert(job.status === "complete", `expected complete, got ${job.status}: ${job.error || ""}`);
+  assert(job.result.name === "epipe-survivor", `unexpected result: ${JSON.stringify(job.result)}`);
+});
+
+test("EPIPE on stdin still fails the job when the CLI exits non-zero (#138)", () => {
+  makeDefaultProfile({
+    cli: MOCK_CLI_PATH,
+    pipe_flag: "",
+    env: {},
+  });
+  makeJobFile("epipe-exit-fail", { prompt: "y".repeat(256 * 1024) }, "generate");
+
+  const result = runJobWithMockFail("epipe-exit-fail", {
+    exitImmediately: true,
+    exitCode: 3,
+    output: { name: "ignored" },
+  });
+  const job = readJob("epipe-exit-fail");
+  assert(result !== null, "should fail");
+  assert(result.status === 1, `expected process exit 1, got ${result.status}`);
+  assert(job.status === "failed", `expected failed, got ${job.status}`);
 });
 
 // ── secret decryption in job context ───────────────────────────────────

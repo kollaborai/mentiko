@@ -617,6 +617,16 @@ child.stdout.on("data", (data) => {
 child.stderr.on("data", (data) => { stderr += data.toString(); });
 
 // write prompt to stdin (no shell interpolation = no escaping bugs)
+// EPIPE here is expected when the CLI exits before reading the whole prompt
+// (#138): log it and let the child's exit code decide the job result. Any
+// other stdin error still fails the worker through uncaughtException.
+child.stdin.on("error", (err) => {
+  if (err && (err.code === "EPIPE" || err.code === "ERR_STREAM_DESTROYED")) {
+    sysLog("warn", `job stdin closed early: ${jobId}`, `${err.code}: CLI exited before reading the full prompt`);
+    return;
+  }
+  throw err;
+});
 child.stdin.write(prompt);
 child.stdin.end();
 
@@ -726,12 +736,15 @@ child.on("close", async (code) => {
   // the server-side import, but every successful run reports "complete".
   const callbackStatus = "complete";
   job.status = job.type === "task" ? "running" : "complete";
-  persistedForServerImport = job.type === "task";
   job.completedAt = job.status === "complete" ? new Date().toISOString() : undefined;
   job.result = result;
 
   try {
     persistJob(job);
+    // Set only after the write succeeds: a failed write must fall through to
+    // the exit handler's last-resort failure record instead of leaving a
+    // "running" task job stranded with no import callback.
+    persistedForServerImport = job.type === "task";
   } catch (writeErr) {
     console.error("Failed to write completed job:", writeErr.message);
     process.exit(1);
