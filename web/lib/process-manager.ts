@@ -23,6 +23,10 @@ import {
 } from './process-manager-env';
 import { registerKollabMentikoMcpServer } from './kollabor-mcp-settings';
 import { formatReadinessTimeout, resolveReadinessTimeout, resolveRestartDelay } from './process-manager-readiness';
+import {
+  pmStateDir, writePidFile, removePidFile, readPidFiles,
+  pidAlive, recordedPidStillOurs, portHeldByOthers,
+} from './process-manager-ports';
 
 interface ManagedProcess {
   config: ProcessConfig;
@@ -216,6 +220,9 @@ function spawnChild(config: ProcessConfig): ManagedProcess {
     if (readinessPending && config.critical && config.restart?.retryOnStartup) return;
     scheduleRestart(m);
   });
+  // record the spawned pid so a later cleanup can tell our orphans from
+  // anyone else's process (issue #105). daemon-fork rewrites this on discovery.
+  writePidFile(stateDir(), { name: config.name, pid: m.pid, cmd: config.cmd });
   return m;
 }
 
@@ -241,7 +248,11 @@ function handleExit(m: ManagedProcess, code: number | null, signal: string | nul
   // restart tick — see EADDRINUSE :3000 incident on v0.3.21/22).
   if (m.config.daemonize && code === 0 && m.status === 'ready') {
     const daemonPid = findDaemonPid(m.config);
-    if (daemonPid) { m.pid = daemonPid; log(`${name} parent exited, daemon pid ${daemonPid}`); }
+    if (daemonPid) {
+      m.pid = daemonPid;
+      writePidFile(stateDir(), { name: m.config.name, pid: daemonPid, cmd: m.config.cmd });
+      log(`${name} parent exited, daemon pid ${daemonPid}`);
+    }
     else { log(`${name} parent exited (${desc}), daemon forked -- keeping ready`); }
     return;
   }
@@ -300,6 +311,32 @@ async function startOne(config: ProcessConfig, options: StartOptions = {}): Prom
     log(`${config.name} already ready, skipping duplicate start`);
     return prev;
   }
+  // issue #105: never kill a foreign port holder. If the readiness port is
+  // held by anything this manager did not record, refuse to start and say why.
+  const heldPort = readinessPort(config.readiness);
+  if (heldPort !== null) {
+    const ownPids = new Set<number>([process.pid]);
+    managed.forEach(m => { if (m.pid) ownPids.add(m.pid); });
+    const holders = portHeldByOthers(heldPort, ownPids);
+    if (holders.length) {
+      for (const h of holders) {
+        logErr(`port ${heldPort} is held by ${h.command} (pid ${h.pid}); stop it or change the port in processes.dev.json`);
+      }
+      const m: ManagedProcess = {
+        config, child: null, pid: 0, status: 'failed',
+        restarts: prev?.restarts ?? 0, startedAt: Date.now(),
+        lastExit: null, lastExitCode: null,
+        restartTimer: null, stoppedByUser: prev?.stoppedByUser ?? false,
+      };
+      managed.set(config.name, m);
+      if (options.abortCriticalReadinessTimeout && config.critical) {
+        logErr(`critical process ${config.name} cannot start (port ${heldPort} held), shutting down`);
+        exitCode = 1;
+        await shutdown();
+      }
+      return m;
+    }
+  }
   const m = spawnChild(config);
   m.restarts = prev?.restarts ?? 0;
   m.stoppedByUser = prev?.stoppedByUser ?? false;
@@ -316,7 +353,11 @@ async function startOne(config: ProcessConfig, options: StartOptions = {}): Prom
     // gated on config.daemonize — see handleExit for why.
     if (config.daemonize && !m.child && !m.pid) {
       const daemonPid = findDaemonPid(config);
-      if (daemonPid) { m.pid = daemonPid; log(`${config.name} daemon pid ${daemonPid}`); }
+      if (daemonPid) {
+        m.pid = daemonPid;
+        writePidFile(stateDir(), { name: config.name, pid: daemonPid, cmd: config.cmd });
+        log(`${config.name} daemon pid ${daemonPid}`);
+      }
     }
   } else if (!shuttingDown) {
     const timeoutMs = resolveReadinessTimeout(config.readiness);
@@ -351,10 +392,12 @@ function findDaemonPid(config: ProcessConfig): number | null {
   try {
     const cmd = config.cmd;
     const pids = execSync(`pgrep -f "${cmd}.*${(config.args || [])[0] || ''}" 2>/dev/null`, { encoding: 'utf-8' }).trim();
+    const tracked = new Set<number>([process.pid]);
+    managed.forEach(m => { if (m.pid) tracked.add(m.pid); });
     if (pids) {
       for (const p of pids.split('\n').filter(Boolean)) {
         const pid = Number(p);
-        if (pid !== process.pid) return pid;
+        if (!tracked.has(pid)) return pid;
       }
     }
   } catch {}
@@ -366,45 +409,6 @@ function killTree(pid: number, signal: NodeJS.Signals) {
   try { process.kill(-pid, signal); } catch {}
   // also kill the process directly in case it's not a group leader
   try { process.kill(pid, signal); } catch {}
-}
-
-function portHolderPids(port: number): number[] {
-  try {
-    const cmd =
-      `if command -v fuser >/dev/null 2>&1; then ` +
-      `fuser -n tcp ${port} 2>/dev/null; ` +
-      `elif command -v lsof >/dev/null 2>&1; then ` +
-      `lsof -ti :${port} 2>/dev/null; fi`;
-    const out = execSync(cmd, { encoding: 'utf-8' }).trim();
-    if (!out) return [];
-    return out
-      .split(/\s+/)
-      .map((p) => Number(p))
-      .filter((pid) => Number.isInteger(pid) && pid > 0);
-  } catch {
-    return [];
-  }
-}
-
-async function killPortHolders(port: number, reason: string) {
-  try {
-    const pids = portHolderPids(port);
-    if (!pids.length) return;
-    for (const pid of pids) {
-      if (pid === process.pid) continue;
-      try { process.kill(pid, 'SIGTERM'); log(`${reason}: killed pid ${pid} on port ${port}`); } catch {}
-    }
-    const deadline = Date.now() + 2000;
-    while (Date.now() < deadline) {
-      await sleep(100);
-      if (!portHolderPids(port).length) return;
-    }
-    for (const pid of portHolderPids(port)) {
-      if (pid === process.pid) continue;
-      try { process.kill(pid, 'SIGKILL'); log(`${reason}: force-killed pid ${pid} on port ${port}`); } catch {}
-    }
-    await sleep(200);
-  } catch {}
 }
 
 function readinessPort(readiness: ReadinessConfig | undefined): number | null {
@@ -434,8 +438,14 @@ async function killProc(m: ManagedProcess) {
     await sleep(SIGTERM_WAIT);
     try { process.kill(m.pid, 0); killTree(m.pid, 'SIGKILL'); await sleep(SIGKILL_WAIT); } catch {}
   }
-  const port = readinessPort(m.config.readiness);
-  if (port) await killPortHolders(port, `${m.config.name} cleanup`);
+  // issue #105: only pids this manager recorded are ever signaled. The stale
+  // own-process case (a previous crashed PM leaving orphans) is handled from
+  // our own pid files at housekeeping time, never by port scanning here.
+  removePidFile(stateDir(), m.config.name);
+}
+
+function stateDir(): string {
+  return pmStateDir(os.homedir());
 }
 
 function waitExit(m: ManagedProcess, timeout: number): Promise<boolean> {
@@ -848,36 +858,29 @@ async function housekeep(config: ProcessesFile) {
     try { await shutdownPriorPm(); } catch (e: unknown) { logErr(`prior-pm shutdown failed: ${errorMessage(e)}`); }
   }
 
-  // dev mode: kill stale processes on ports we need, then wait for ports to free
+  // dev mode: clean up only our own stale processes, identified by pid files in
+  // our own state dir with a command-line check. Anything else holding a port is
+  // someone else's program (e.g. the Kollab desktop engine) and is left alone;
+  // startOne reports the holder and refuses to start instead (issue #105).
   if (isDev) {
-    for (const port of [Number(webPort), 3099, 7443].filter((p) => Number.isFinite(p))) {
-      try {
-        const pids = execSync(`lsof -ti :${port} 2>/dev/null`, { encoding: 'utf-8' }).trim();
-        if (!pids) continue;
-        const pidList = pids.split('\n').filter(Boolean).map(Number);
-        for (const pid of pidList) {
-          try { process.kill(pid, 'SIGTERM'); log(`killed stale pid ${pid} on port ${port}`); } catch {}
-        }
-        // wait up to 2s for port to free, then SIGKILL
-        const deadline = Date.now() + 2000;
-        while (Date.now() < deadline) {
-          await sleep(100);
-          try {
-            const still = execSync(`lsof -ti :${port} 2>/dev/null`, { encoding: 'utf-8' }).trim();
-            if (!still) break;
-          } catch { break; }
-        }
-        // force-kill anything still holding the port
-        try {
-          const stuck = execSync(`lsof -ti :${port} 2>/dev/null`, { encoding: 'utf-8' }).trim();
-          if (stuck) {
-            for (const pid of stuck.split('\n').filter(Boolean).map(Number)) {
-              try { process.kill(pid, 'SIGKILL'); log(`force-killed stale pid ${pid} on port ${port}`); } catch {}
-            }
-            await sleep(200);
-          }
-        } catch {}
-      } catch {} // no stale processes
+    const dir = stateDir();
+    for (const entry of readPidFiles(dir)) {
+      const self = managed.get(entry.name);
+      if (self?.pid === entry.pid && self.child) continue; // current run's child
+      if (!pidAlive(entry.pid)) { removePidFile(dir, entry.name); continue; }
+      if (!recordedPidStillOurs(entry)) {
+        log(`stale pid file for ${entry.name} (pid ${entry.pid} now runs something else), ignoring`);
+        removePidFile(dir, entry.name);
+        continue;
+      }
+      try { killTree(entry.pid, 'SIGTERM'); log(`killed stale own pid ${entry.pid} (${entry.name})`); } catch {}
+      const deadline = Date.now() + 2000;
+      while (Date.now() < deadline && pidAlive(entry.pid)) await sleep(100);
+      if (pidAlive(entry.pid)) {
+        try { killTree(entry.pid, 'SIGKILL'); log(`force-killed stale own pid ${entry.pid} (${entry.name})`); } catch {}
+        await sleep(200);
+      }
+      removePidFile(dir, entry.name);
     }
   }
 
