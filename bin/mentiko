@@ -68,6 +68,10 @@ case "$CMD" in
         ;;
 
     graph)
+        if [[ $# -lt 1 ]]; then
+            echo "usage: mentiko graph <chain.json>"
+            exit 1
+        fi
         exec node "$LIB_DIR/runner-chain-graph.js" "$@"
         ;;
 
