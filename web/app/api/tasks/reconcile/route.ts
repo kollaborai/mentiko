@@ -327,6 +327,14 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
           newStatus: "summary_superseded",
           reason: "summary artifact source run is no longer current",
         });
+      } else if (recovery.status === "failed") {
+        results.push({
+          taskId: issue.id,
+          runId: recovery.sourceRunId || "unknown",
+          previousStatus: "summarizing",
+          newStatus: "summary_failed",
+          reason: `summary job ${recovery.jobId} failed with no artifact; summary marked failed so the lifecycle can admit a bounded retry`,
+        });
       }
     } catch (error) {
       failed.push({ taskId: issue.id, error: `Failed to recover outcome summary: ${(error as Error).message}` });

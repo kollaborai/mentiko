@@ -35,12 +35,13 @@ export async function runStandaloneMonitorCli(
     MENTIKO_RUNNER_V2_COMPLETION: "1",
   };
   try {
-    await pty.sendRaw(sessionName, standaloneCompletionInstruction({
+    // sendKeys separates the Enter from the text; a bare sendRaw pair with no
+    // gap leaves the instruction unsent in a paste-burst TUI (issue #123).
+    await pty.sendKeys(sessionName, standaloneCompletionInstruction({
       runId: standalone.runId,
       agentId: standalone.agent.sessionPrefix,
       eventsDir: env.EVENTS_DIR || config.eventsDir,
     }));
-    await pty.sendRaw(sessionName, "\r");
   } catch (error) {
     const reason = `standalone monitor could not deliver its typed completion contract: ${error instanceof Error ? error.message : String(error)}`;
     updateRunAgent(standalone.runJsonPath, standalone.agent.sessionPrefix, "blocked", undefined, undefined, undefined, { actor: "system", reason });

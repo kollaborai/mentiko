@@ -98,8 +98,9 @@ export async function launchStandaloneAgent(
 
   try {
     await dependencies.delay(3_000);
+    // sendKeys submits with its own separate Enter; a second bare Enter here
+    // would land on whatever the CLI shows next.
     await dependencies.pty.sendKeys(sessionName, standaloneAgentInstruction({ agent, specPath, workspacePath }));
-    await dependencies.pty.sendRaw(sessionName, "\r");
     await dependencies.delay(1_000);
   } catch (error) {
     await rollbackStandaloneLaunch({ dependencies, statePath, sessionName, reason: `prompt delivery failed: ${errorMessage(error)}` });

@@ -17,6 +17,9 @@ import {
   isTerminalTaskStatus,
   closeAll,
   _getDb,
+  selectFollowUpTaskIds,
+  taskDepWouldCycle,
+  TaskDependencyCycleError,
 } from "../tasks/task-store";
 
 jest.mock("../config", () => ({
@@ -540,6 +543,194 @@ describe("task-store", () => {
       expect(dep.title).toBe("Expanded");
       expect(dep.issue_type).toBe("bug");
       expect(dep.priority).toBe(0);
+    });
+  });
+
+  // ---- dependency cycle guard (issue #113) ----
+
+  describe("dependency cycle guard", () => {
+    const ORG = "cycle-org";
+
+    it("rejects a self-dependency with TaskDependencyCycleError and writes no edge", () => {
+      const a = taskCreate(ORG, { title: "Self" });
+      let error: unknown;
+      try {
+        taskAddDep(ORG, a.id, a.id);
+      } catch (e) {
+        error = e;
+      }
+      expect(error).toBeInstanceOf(TaskDependencyCycleError);
+      expect((error as TaskDependencyCycleError).reason).toBe("self");
+      expect(taskGet(ORG, a.id)!.dependencies!.length).toBe(0);
+    });
+
+    it("rejects a direct cycle: b depends on a, then a on b", () => {
+      const a = taskCreate(ORG, { title: "A" });
+      const b = taskCreate(ORG, { title: "B" });
+      taskAddDep(ORG, b.id, a.id); // b -> a is fine
+      expect(() => taskAddDep(ORG, a.id, b.id)).toThrow(TaskDependencyCycleError);
+      expect(taskGet(ORG, a.id)!.dependencies!.length).toBe(0);
+      // the original edge is untouched
+      expect(taskGet(ORG, b.id)!.dependencies!.length).toBe(1);
+    });
+
+    it("rejects a transitive cycle: b->a, c->b, then a->c", () => {
+      const a = taskCreate(ORG, { title: "A" });
+      const b = taskCreate(ORG, { title: "B" });
+      const c = taskCreate(ORG, { title: "C" });
+      taskAddDep(ORG, b.id, a.id);
+      taskAddDep(ORG, c.id, b.id);
+      let error: unknown;
+      try {
+        taskAddDep(ORG, a.id, c.id); // c reaches a via b
+      } catch (e) {
+        error = e;
+      }
+      expect(error).toBeInstanceOf(TaskDependencyCycleError);
+      expect((error as TaskDependencyCycleError).reason).toBe("cycle");
+      expect(taskGet(ORG, a.id)!.dependencies!.length).toBe(0);
+    });
+
+    it("allows a diamond (non-cyclic) shape", () => {
+      const a = taskCreate(ORG, { title: "A" });
+      const b = taskCreate(ORG, { title: "B" });
+      const c = taskCreate(ORG, { title: "C" });
+      const d = taskCreate(ORG, { title: "D" });
+      taskAddDep(ORG, b.id, a.id);
+      taskAddDep(ORG, c.id, a.id);
+      taskAddDep(ORG, d.id, b.id);
+      taskAddDep(ORG, d.id, c.id);
+      expect(taskGet(ORG, d.id)!.dependencies!.length).toBe(2);
+    });
+
+    it("skips a cycle-shaped edge without touching existing edges (issue #113 incident shape)", () => {
+      // TASK-005 with dependents TASK-006/TASK-007; a resolution tries to make
+      // TASK-005 depend on TASK-005 (self) and on TASK-006 (already downstream).
+      const parent = taskCreate(ORG, { title: "TASK-005" });
+      const d1 = taskCreate(ORG, { title: "TASK-006" });
+      const d2 = taskCreate(ORG, { title: "TASK-007" });
+      taskAddDep(ORG, d1.id, parent.id);
+      taskAddDep(ORG, d2.id, parent.id);
+      for (const target of [parent.id, d1.id]) {
+        expect(() => taskAddDep(ORG, parent.id, target)).toThrow(TaskDependencyCycleError);
+      }
+      // graph stays a healthy DAG: both dependents still only block on parent
+      expect(taskGet(ORG, parent.id)!.dependencies!.length).toBe(0);
+      expect(taskGet(ORG, d1.id)!.dependencies!.length).toBe(1);
+      expect(taskGet(ORG, d2.id)!.dependencies!.length).toBe(1);
+      // taskDepsAllClosed still resolves: dependents are runnable once parent closes
+      taskClose(ORG, parent.id);
+      expect(taskDepsAllClosed(ORG, d1.id)).toBe(true);
+      expect(taskDepsAllClosed(ORG, d2.id)).toBe(true);
+    });
+
+    it("runs endpoint validation, traversal and insert inside ONE write transaction", () => {
+      const NS = "dep-tx-ns";
+      const ORG = "dep-tx-org";
+      const a = taskCreate(ORG, { title: "A" }, NS);
+      const b = taskCreate(ORG, { title: "B" }, NS);
+      const db = _getDb(NS);
+      const origPrepare = db.prepare.bind(db);
+      const txState = { traversal: undefined as boolean | undefined, insert: undefined as boolean | undefined };
+      const patchedDb = db as unknown as { prepare: (sql: string) => ReturnType<typeof origPrepare> };
+      patchedDb.prepare = (sql: string) => {
+        const stmt = origPrepare(sql);
+        if (sql.includes("FROM task_dependencies d")) txState.traversal = db.inTransaction;
+        if (sql.includes("INSERT OR IGNORE INTO task_dependencies")) txState.insert = db.inTransaction;
+        return stmt;
+      };
+      try {
+        taskAddDep(ORG, b.id, a.id, NS);
+      } finally {
+        patchedDb.prepare = origPrepare as typeof patchedDb.prepare;
+      }
+      // The write transaction (BEGIN IMMEDIATE) is open BEFORE the traversal
+      // reads and stays open through the insert: the check-then-insert race
+      // between two connections is closed (issue #113).
+      expect(txState.traversal).toBe(true);
+      expect(txState.insert).toBe(true);
+      expect(taskGet(ORG, b.id, NS)!.dependencies!.length).toBe(1);
+    });
+
+    it("two connections inserting A->B and B->A: exactly one succeeds", () => {
+      const NS = "dep-race-ns";
+      const ORG = "dep-race-org";
+      const a = taskCreate(ORG, { title: "A" }, NS);
+      const b = taskCreate(ORG, { title: "B" }, NS);
+
+      // Connection 1 (this module's cached handle) writes A -> B first.
+      taskAddDep(ORG, a.id, b.id, NS);
+
+      // Connection 2: a fresh module instance opens its OWN Database handle
+      // to the same file — the same view a second process would have.
+      let error: { name?: string; message?: string } | undefined;
+      let second: typeof import("../tasks/task-store") | undefined;
+      jest.isolateModules(() => {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        second = require("../tasks/task-store");
+      });
+      try {
+        second!.taskAddDep(ORG, b.id, a.id, NS);
+      } catch (e) {
+        error = e as { name?: string; message?: string };
+      }
+      // The second connection saw the committed edge inside its transaction
+      // and refused the reverse edge. (Class identity differs across module
+      // instances, so assert on name — the real class sets this.)
+      expect(error?.name).toBe("TaskDependencyCycleError");
+      const edges = taskGetAllDeps(ORG, NS).map((d) => `${d.task_id}->${d.depends_on_id}`);
+      expect(edges).toEqual([`${a.id}->${b.id}`]);
+    });
+  });
+
+  // ---- follow-up selection (issue #113: lifecycle must only wait on
+  // blockers that can complete) ----
+
+  describe("selectFollowUpTaskIds", () => {
+    const NS = "followup-ns";
+    const ORG = "followup-org";
+
+    it("keeps only the valid task from a list containing the parent, a dependent and a ghost", () => {
+      const parent = taskCreate(ORG, { title: "Parent" }, NS);
+      const dependent = taskCreate(ORG, { title: "Dependent" }, NS);
+      taskAddDep(ORG, dependent.id, parent.id, NS); // dependent -> parent
+      const valid = taskCreate(ORG, { title: "Valid" }, NS);
+
+      const selected = selectFollowUpTaskIds({
+        orgId: ORG,
+        parentTaskId: parent.id,
+        namespaceId: NS,
+        candidates: [
+          parent.id,          // the parent itself — can never complete while blocked
+          dependent.id,       // already downstream of the parent
+          "GHOST-1",          // does not exist in this org
+          valid.id,
+          valid.id,           // duplicate
+          "",                 // junk
+          42 as unknown as string,
+        ],
+      });
+
+      expect(selected).toEqual([valid.id]);
+      // sanity: the kept follow-up really is wireable
+      expect(taskDepWouldCycle(ORG, parent.id, valid.id, NS)).toBe(false);
+      expect(taskDepWouldCycle(ORG, parent.id, dependent.id, NS)).toBe(true);
+    });
+
+    it("transitively rejects follow-ups that only depend on the parent through a chain", () => {
+      const parent = taskCreate(ORG, { title: "P2" }, NS);
+      const mid = taskCreate(ORG, { title: "Mid" }, NS);
+      const leaf = taskCreate(ORG, { title: "Leaf" }, NS);
+      taskAddDep(ORG, mid.id, parent.id, NS);
+      taskAddDep(ORG, leaf.id, mid.id, NS);
+
+      const selected = selectFollowUpTaskIds({
+        orgId: ORG,
+        parentTaskId: parent.id,
+        namespaceId: NS,
+        candidates: [leaf.id, mid.id],
+      });
+      expect(selected).toEqual([]);
     });
   });
 

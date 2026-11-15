@@ -71,7 +71,8 @@ describe("typed standalone agent launch", () => {
       name: result.sessionName,
       text: expect.stringContaining(`Your agent spec is at: ${specPath}`),
     })]);
-    expect(raw).toEqual([{ name: result.sessionName, text: "\r" }]);
+    // sendKeys carries the submit; no second bare Enter follows it (issue #123).
+    expect(raw).toEqual([]);
     expect(parseRunnerAgentState(readFileSync(result.statePath, "utf8"))).toMatchObject({
       status: "running",
       session: result.sessionName,

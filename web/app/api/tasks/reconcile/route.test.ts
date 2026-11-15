@@ -45,6 +45,19 @@ jest.mock("@/lib/tasks/task-store", () => ({
   // decision-unblock's create_followup_dependencies effect uses this when a
   // resolved decision carries follow-up plan tasks.
   taskAddDep: jest.fn(),
+  // decision-unblock filters follow-ups through this before the reducer; keep
+  // the real policy shape (dedupe, drop the parent) without the DB behind it.
+  selectFollowUpTaskIds: jest.fn(({ parentTaskId, candidates }: { parentTaskId: string; candidates: readonly unknown[] }) => {
+    const seen = new Set<string>();
+    const valid: string[] = [];
+    for (const candidate of candidates) {
+      if (typeof candidate !== "string" || candidate.length === 0) continue;
+      if (candidate === parentTaskId || seen.has(candidate)) continue;
+      seen.add(candidate);
+      valid.push(candidate);
+    }
+    return valid;
+  }),
   validateTaskId: (id: string) => id,
 }));
 
@@ -278,6 +291,42 @@ describe("GET /api/tasks/reconcile", () => {
       taskId: "TASK-107",
       runId: "run-execution",
       newStatus: "summary_recovered",
+    }));
+  });
+
+  it("moves a monitor-escalated summary failure off summarizing", async () => {
+    mockTaskList.mockReturnValue([
+      {
+        id: "TASK-008",
+        title: "Stalled behind a failed summary job",
+        status: "open",
+        metadata: {
+          lifecycle_phase: "summarizing",
+          task_outcome_summary_status: "running",
+          task_outcome_summary_job_id: "job-1793323422067-mw0k4ov",
+        },
+      },
+    ]);
+    mockRecoverTaskOutcomeAudit.mockResolvedValueOnce({
+      status: "failed",
+      jobId: "job-1793323422067-mw0k4ov",
+      sourceRunId: "run-1793323422098-42a7d4a9",
+    });
+
+    const res = await GET(makeRequest() as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(mockRecoverTaskOutcomeAudit).toHaveBeenCalledWith(expect.objectContaining({
+      taskId: "TASK-008",
+      namespaceId: "default",
+      orgId: "default",
+    }));
+    expect(body.data.results).toContainEqual(expect.objectContaining({
+      taskId: "TASK-008",
+      runId: "run-1793323422098-42a7d4a9",
+      previousStatus: "summarizing",
+      newStatus: "summary_failed",
     }));
   });
 
