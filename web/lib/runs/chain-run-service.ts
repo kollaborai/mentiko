@@ -69,12 +69,11 @@ function mintRunId(): string {
 }
 
 // Executor short names -> MENTIKO_CLI values. Allows specifying which CLI to
-// use (claude, codex, aider, kollab) via UI or API. Maps aliases (cc, kl)
+// use (claude, codex, kollab) via UI or API. Maps aliases (cc, kl)
 // to canonical names.
 const EXECUTOR_MAP: Record<string, string> = {
   claude: "claude",
   codex: "codex",
-  aider: "aider",
   kollab: "kl",
   cc: "claude",
   kl: "kl",

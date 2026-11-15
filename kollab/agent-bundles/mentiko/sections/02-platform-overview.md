@@ -109,7 +109,6 @@ agents run with one of these CLIs (depending on profile):
   claude     Anthropic Claude Code CLI
   codex      OpenAI Codex CLI
   agy        Google Antigravity CLI
-  aider      OSS coding assistant
   kollabor   kollabor.ai CLI
 
 agents can be mixed across providers in the same chain.
@@ -288,7 +287,7 @@ types:
   docker  container environment
 
 key config per workspace:
-  cli           which AI CLI to use (claude, codex, agy, aider)
+  cli           which AI CLI to use (claude, codex, agy, kollab)
   model         default model override
   maxAgents     concurrency limit
   maxRounds     default round cap
