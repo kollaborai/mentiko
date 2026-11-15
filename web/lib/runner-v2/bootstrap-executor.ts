@@ -1283,7 +1283,11 @@ async function confirmInstructionSubmission(
   }, {
     pollMs,
     deadlineMs,
-    maxEnterRetries: 4,
+    // Retry for the whole deadline, not only its first few seconds: a CLI
+    // that is still starting drops Enters, and four retries 1.5s apart all
+    // landed inside that window (issue #123). Evidence of submission stops
+    // the loop; an empty Codex composer never receives a retry.
+    maxEnterRetries: Number.POSITIVE_INFINITY,
     captureLines: 60,
     acceptCodexWorking: true,
   });

@@ -1512,8 +1512,10 @@ describe("runner-v2 bootstrap executor", () => {
 
     const attempts = (JSON.parse(readFileSync(runJsonPath, "utf8")).runnerV2 || {}).attempts || [];
     expect(attempts[0]?.phase).toBe("stuck");
-    expect(executor.sendRaw.mock.calls.length).toBeGreaterThanOrEqual(1);
-    expect(executor.sendRaw.mock.calls.length).toBeLessThanOrEqual(4);
+    // Issue #123: bare-Enter retries continue for the whole confirmation
+    // deadline. Four retries 1.5s apart all landed while the CLI was still
+    // starting, and nothing retried after it became ready.
+    expect(executor.sendRaw.mock.calls.length).toBeGreaterThan(4);
     // session must be left alive for monitor rescue, and the monitor must
     // still be watching it
     expect(executor.remove).toHaveBeenCalledTimes(2); // only the pre-spawn idempotent removes

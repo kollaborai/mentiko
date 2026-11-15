@@ -170,6 +170,31 @@ describe("monitor-v2 live IO", () => {
     }
   });
 
+  it("retries a bare Enter when a Codex composer still holds the nudge and no transcript exists yet (issue #123)", async () => {
+    const f = fixture();
+    ptyMock.capture.mockResolvedValue([
+      "› You are Mentiko agent: writer.",
+      "  continue only the current assigned task",
+      "",
+      "  GPT-5.6-Luna default · ~/work",
+      "                                    ⚠ 2 warnings · f2 to view",
+    ].join("\n"));
+    ptyMock.sendKeys.mockResolvedValue(undefined);
+    ptyMock.sendRaw.mockResolvedValue(undefined);
+    const logSpy = jest.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      await liveIo(f, {
+        MENTIKO_MONITOR_NUDGE_SUBMIT_POLL_MS: "1",
+        MENTIKO_MONITOR_NUDGE_SUBMIT_DEADLINE_MS: "100",
+      }).sendNudge("writer-run-123", "continue only the current assigned task");
+
+      expect(ptyMock.sendRaw.mock.calls).toEqual([["writer-run-123", "\r"], ["writer-run-123", "\r"]]);
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
   it("does not hold the monitor loop open when no transcript or composer can confirm a nudge", async () => {
     const f = fixture();
     ptyMock.capture.mockResolvedValue("stub echo-stall ready for agents");

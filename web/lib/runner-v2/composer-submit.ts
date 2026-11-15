@@ -30,6 +30,24 @@
  */
 export type ComposerState = "holding" | "empty" | "absent" | "codex-empty";
 
+const CODEX_PLACEHOLDER = /^\s*›\s*Ask Codex to do anything\s*$/;
+
+/**
+ * Codex draws its composer and its transcript user messages with the same `›`
+ * glyph. A submitted message is always followed by agent output (a `•` line:
+ * the reply, or "• Working"). So the last `›` block with no `•` line after it
+ * is text still sitting in the composer (issue #123: pointer and nudges piled
+ * up there unsent while this module reported "absent" and sent no Enter).
+ */
+function codexComposerState(lines: string[]): "holding" | "codex-empty" | undefined {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (/^\s*•/.test(lines[i])) return undefined;
+    if (!/^\s*›/.test(lines[i])) continue;
+    return CODEX_PLACEHOLDER.test(lines[i]) ? "codex-empty" : "holding";
+  }
+  return undefined;
+}
+
 export function composerState(output: string): ComposerState {
   const lines = output.split("\n");
   const lastVisibleLine = [...lines].reverse().find((line) => line.trim().length > 0);
@@ -39,6 +57,8 @@ export function composerState(output: string): ComposerState {
   if (/^\s*›\s*Ask Codex to do anything\s*$/.test(lastVisibleLine ?? "")) {
     return "codex-empty";
   }
+  const codex = codexComposerState(lines);
+  if (codex) return codex;
   for (let i = lines.length - 1; i >= 0; i--) {
     const idx = lines[i].indexOf("❯"); // ❯
     if (idx === -1) continue;

@@ -28,6 +28,14 @@ interface ResolvePtyMgrPathOptions {
   exists?: (path: string) => boolean;
 }
 
+// Gap between pasted text and its Enter. Env-tunable so tests need not wait.
+function submitGapMs(): number {
+  const configured = Number(process.env.MENTIKO_PTY_SUBMIT_GAP_MS);
+  return Number.isFinite(configured) && configured >= 0 && process.env.MENTIKO_PTY_SUBMIT_GAP_MS !== undefined
+    ? configured
+    : 1_000;
+}
+
 export function resolvePtyMgrPath({
   codeRoot,
   cwd = process.cwd(),
@@ -219,19 +227,21 @@ class PtyClient {
     return { name: res.name as string, pid: res.pid as number };
   }
 
-  // send text + enter to a session. Include the return in the payload rather
-  // than relying only on the daemon's newer `enter` flag: existing local
-  // daemons can be older than this client and silently ignore that flag. The
-  // explicit frame keeps agent instructions, completion commands, and monitor
-  // nudges submit-capable during a rolling daemon upgrade.
+  // send text, then enter as a SEPARATE write after a short gap. A TUI that
+  // detects paste bursts (Codex) treats an Enter arriving with the pasted
+  // text as part of the paste and leaves the text unsent in its composer
+  // (issue #123). The gap matches what `pty-mgr send` does for a human. The
+  // return still travels as explicit raw bytes, not the daemon's `enter`
+  // flag, so an older local daemon cannot silently drop it.
   async sendKeys(name: string, text: string): Promise<void> {
-    const submittedText = /[\r\n]$/.test(text) ? text : `${text}\r`;
-    const res = await sendCommand({
-      cmd: "send",
-      name,
-      args: { text: submittedText, raw: true },
-    });
-    if (!res.ok) throw new Error(res.error || "send failed");
+    const body = text.replace(/[\r\n]+$/, "");
+    if (body.length > 0) {
+      const res = await sendCommand({ cmd: "send", name, args: { text: body, raw: true } });
+      if (!res.ok) throw new Error(res.error || "send failed");
+      await new Promise((resolve) => setTimeout(resolve, submitGapMs()));
+    }
+    const enter = await sendCommand({ cmd: "send", name, args: { text: "\r", raw: true } });
+    if (!enter.ok) throw new Error(enter.error || "send failed");
   }
 
   // send raw text (no enter)
