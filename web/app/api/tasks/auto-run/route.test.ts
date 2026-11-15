@@ -708,6 +708,59 @@ describe("POST /api/tasks/auto-run", () => {
     expect(mockTaskUpdate).not.toHaveBeenCalled();
   });
 
+  it("counts a failed resume against auto_run_retries so the retry ceiling ends the loop", async () => {
+    mockTaskGet.mockReturnValue({
+      id: "TASK-RESUME-FAIL",
+      title: "Resume failing run",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      metadata: {
+        auto_run: true,
+        chain_id: "release-review",
+        last_run_id: "run-resume-fail",
+        last_run_status: "stopped",
+        auto_run_retries: 1,
+      },
+    });
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      taskId: "TASK-RESUME-FAIL",
+      chainId: "release-review",
+      status: "stopped",
+      agents: [
+        { id: "planner", status: "complete" },
+        { id: "reviewer", status: "stopped" },
+      ],
+    }));
+    (global.fetch as jest.Mock).mockResolvedValue(jsonResponse({
+      error: { message: "Run run-resume-fail not found" },
+    }, 404));
+
+    const res = await POST(makeRequest({ taskId: "TASK-RESUME-FAIL" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      triggered: false,
+      taskId: "TASK-RESUME-FAIL",
+      runId: "run-resume-fail",
+      action: "resume_failed",
+      error: "Run run-resume-fail not found",
+    });
+    expect(mockTaskUpdate).toHaveBeenCalledWith(
+      "default",
+      "TASK-RESUME-FAIL",
+      {
+        metadata: expect.objectContaining({
+          auto_run_retries: 2,
+          resume_last_error: "Run run-resume-fail not found",
+        }),
+      },
+      "default",
+    );
+  });
+
   it("resumes a terminal run from its persisted nondefault scope without reading the request root", async () => {
     const task = {
       id: "TASK-SCOPED-RESUME",
