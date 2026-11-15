@@ -28,7 +28,7 @@ import { runTypedWatchdogScan } from "../lib/runner-v2/watchdog";
 import { reconcileRoutedLaunchJobs } from "../lib/runner-v2/launch-job-runner";
 import { reconcileGitNodeWorkspaceCleanups } from "../lib/runner-v2/workspace-cleanup";
 import { createBackgroundWorkerShutdown } from "./background-worker-shutdown";
-import { describeJobError, runGuardedJob } from "./guarded-job";
+import { createBoundedJob, describeJobError, runGuardedJob } from "./guarded-job";
 import config from "../lib/config";
 import { writeLog } from "../lib/system/system-logger";
 
@@ -46,10 +46,6 @@ let watchdogInterval: ReturnType<typeof setInterval> | null = null;
 let launchJobInterval: ReturnType<typeof setInterval> | null = null;
 let workspaceCleanupInterval: ReturnType<typeof setInterval> | null = null;
 let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
-let externalDrainInFlight = false;
-let watchdogInFlight = false;
-let decisionReconcileInFlight = false;
-let workspaceCleanupInFlight = false;
 
 const startedAt = new Date().toISOString();
 const workerOwner = captureBackgroundWorkerOwner(process.pid);
@@ -177,13 +173,23 @@ function currentStatus(note?: string) {
   };
 }
 
-function runLaunchJobReconciler(label: string) {
+// codex rev2 P2: job errors must reach the system log (system.jsonl), not
+// only the terminal. Runners rethrow after updating their state so the
+// bounded wrapper logs job name + stack; callbacks that cannot rethrow
+// (per-job onError during a reconciler pass) log through here.
+function logWorkerError(context: string, error: unknown) {
+  const { message, detail } = describeJobError(error);
+  writeLog(config.namespaceId, config.orgId, "error", "worker", `${context}: ${message}`, detail);
+}
+
+const runLaunchJobReconciler = createBoundedJob("launch-jobs", (label: string) => {
   try {
     const runtimeErrors: string[] = [];
     const result = reconcileRoutedLaunchJobs({
       onError: (error) => {
         runtimeErrors.push(error.message);
         console.warn(`[worker] routed launch job ${label} failed:`, error);
+        logWorkerError(`launch job (${label})`, error);
       },
     });
     launchJobState.lastCheck = new Date().toISOString();
@@ -200,14 +206,13 @@ function runLaunchJobReconciler(label: string) {
     launchJobState.checkCount += 1;
     launchJobState.lastError = error instanceof Error ? error.message : String(error);
     console.warn(`[worker] routed launch reconciler ${label} failed:`, error);
+    throw error;
   } finally {
     persistStatus();
   }
-}
+});
 
-function runWorkspaceCleanupReconciler(label: string) {
-  if (workspaceCleanupInFlight) return;
-  workspaceCleanupInFlight = true;
+const runWorkspaceCleanupReconciler = createBoundedJob("workspace-cleanup", (label: string) => {
   try {
     const result = reconcileGitNodeWorkspaceCleanups();
     workspaceCleanupState.lastCheck = new Date().toISOString();
@@ -227,15 +232,13 @@ function runWorkspaceCleanupReconciler(label: string) {
     workspaceCleanupState.checkCount += 1;
     workspaceCleanupState.lastError = error instanceof Error ? error.message : String(error);
     console.warn(`[worker] workspace cleanup reconciler ${label} failed:`, error);
+    throw error;
   } finally {
-    workspaceCleanupInFlight = false;
     persistStatus();
   }
-}
+});
 
-async function runDecisionReconciler(label: string) {
-  if (decisionReconcileInFlight) return;
-  decisionReconcileInFlight = true;
+const runDecisionReconciler = createBoundedJob("decision-reconciler", (label: string) => {
   try {
     const result = reconcileDecisions();
     decisionReconcilerState.lastCheck = new Date().toISOString();
@@ -268,17 +271,17 @@ async function runDecisionReconciler(label: string) {
     decisionReconcilerState.checkCount += 1;
     decisionReconcilerState.lastError = error instanceof Error ? error.message : String(error);
     console.warn(`[worker] decision reconciler ${label} failed:`, error);
+    throw error;
   } finally {
-    decisionReconcileInFlight = false;
     persistStatus();
   }
-}
+});
 
 function persistStatus(note?: string) {
   writeBackgroundWorkerStatusFile(workerOwner, currentStatus(note));
 }
 
-async function runReconciler(label: string) {
+const runReconciler = createBoundedJob("reconciler", async (label: string) => {
   try {
     const result = await reconcileOrphanedRuns();
     reconcilerState.lastRun = new Date().toISOString();
@@ -294,19 +297,18 @@ async function runReconciler(label: string) {
     reconcilerState.lastRun = new Date().toISOString();
     reconcilerState.note = err instanceof Error ? err.message : String(err);
     console.warn(`[worker] reconciler ${label} failed:`, err);
+    throw err;
   } finally {
     persistStatus();
   }
-}
+});
 
 /**
  * Recover stalled runs from the same long-lived TypeScript worker that owns
  * scheduling and event-triggered launches. PTY observation failure is surfaced
  * in status and the watchdog itself fails closed without mutating runs.
  */
-async function runWatchdog(label: string) {
-  if (watchdogInFlight) return;
-  watchdogInFlight = true;
+const runWatchdog = createBoundedJob("watchdog", async (label: string) => {
   try {
     const result = await runTypedWatchdogScan();
     watchdogState.lastCheck = new Date().toISOString();
@@ -327,20 +329,18 @@ async function runWatchdog(label: string) {
     watchdogState.checkCount += 1;
     watchdogState.lastError = err instanceof Error ? err.message : String(err);
     console.warn(`[worker] watchdog ${label} failed:`, err);
+    throw err;
   } finally {
-    watchdogInFlight = false;
     persistStatus();
   }
-}
+});
 
 /**
  * Deliver runner-v2 queued external effects (notifications, webhooks, task
  * status, plugins). Typed completion records them in an outbox instead of
  * firing them from the tenant runtime; this worker is the live dispatcher.
  */
-async function runExternalDrain(label: string) {
-  if (externalDrainInFlight) return;
-  externalDrainInFlight = true;
+const runExternalDrain = createBoundedJob("external-drain", async (label: string) => {
   try {
     const result = await drainRunnerV2ExternalEffects();
     externalDrainState.lastRun = new Date().toISOString();
@@ -359,11 +359,11 @@ async function runExternalDrain(label: string) {
     externalDrainState.lastRun = new Date().toISOString();
     externalDrainState.note = err instanceof Error ? err.message : String(err);
     console.warn(`[worker] external drain ${label} failed:`, err);
+    throw err;
   } finally {
-    externalDrainInFlight = false;
     persistStatus();
   }
-}
+});
 
 async function start() {
   registerBackgroundWorker(workerOwner);
@@ -377,41 +377,35 @@ async function start() {
       void shutdown("chainWatcherFailure", 1);
     },
   });
-  persistStatus("scheduler + auto-run + chain watcher started");
 
-  await new Promise((resolve) => setTimeout(resolve, RECONCILE_STARTUP_DELAY_MS));
-  await runGuardedJob("reconciler", () => runReconciler("startup"));
-  await runGuardedJob("decision-reconciler", () => runDecisionReconciler("startup"));
-  await runGuardedJob("watchdog", () => runWatchdog("startup"));
-  await runGuardedJob("external-drain", () => runExternalDrain("startup"));
-  void runGuardedJob("launch-jobs", () => runLaunchJobReconciler("startup"));
-  void runGuardedJob("workspace-cleanup", () => runWorkspaceCleanupReconciler("startup"));
-
-  // issue #136: every job tick is isolated — a throw inside any runner (or in
-  // its persistStatus finally) is caught and logged, never an unhandled
-  // rejection that would exit the worker process.
+  // issue #136 (codex rev2 P1): periodic scheduling and the heartbeat are
+  // installed BEFORE any startup work is awaited. One startup job that never
+  // settles must not block every later tick, and the heartbeat keeps the
+  // status file fresh even while startup work hangs. Every tick below is a
+  // bounded job (createBoundedJob): a throw is isolated, and a hang is
+  // abandoned after its bound with the overrun logged.
   reconcileInterval = setInterval(() => {
-    void runGuardedJob("reconciler", () => runReconciler("periodic"));
+    void runReconciler("periodic");
   }, CHECK_INTERVAL_MS);
 
   decisionReconcileInterval = setInterval(() => {
-    void runGuardedJob("decision-reconciler", () => runDecisionReconciler("periodic"));
+    void runDecisionReconciler("periodic");
   }, CHECK_INTERVAL_MS);
 
   externalDrainInterval = setInterval(() => {
-    void runGuardedJob("external-drain", () => runExternalDrain("periodic"));
+    void runExternalDrain("periodic");
   }, EXTERNAL_DRAIN_INTERVAL_MS);
 
   watchdogInterval = setInterval(() => {
-    void runGuardedJob("watchdog", () => runWatchdog("periodic"));
+    void runWatchdog("periodic");
   }, WATCHDOG_INTERVAL_MS);
 
   launchJobInterval = setInterval(() => {
-    void runGuardedJob("launch-jobs", () => runLaunchJobReconciler("periodic"));
+    void runLaunchJobReconciler("periodic");
   }, LAUNCH_JOB_INTERVAL_MS);
 
   workspaceCleanupInterval = setInterval(() => {
-    void runGuardedJob("workspace-cleanup", () => runWorkspaceCleanupReconciler("periodic"));
+    void runWorkspaceCleanupReconciler("periodic");
   }, WORKSPACE_CLEANUP_INTERVAL_MS);
 
   heartbeatInterval = setInterval(() => {
@@ -419,6 +413,17 @@ async function start() {
   }, 5000);
 
   console.log("[worker] background worker started");
+
+  // startup pass, fire-and-forget: nothing here is awaited, so a hung startup
+  // job cannot stall the timers above. Each job is bounded on its own.
+  setTimeout(() => {
+    void runReconciler("startup");
+    void runDecisionReconciler("startup");
+    void runWatchdog("startup");
+    void runExternalDrain("startup");
+    void runLaunchJobReconciler("startup");
+    void runWorkspaceCleanupReconciler("startup");
+  }, RECONCILE_STARTUP_DELAY_MS);
 }
 
 async function stopWorkerServices() {
@@ -485,11 +490,18 @@ function shutdown(signal: string, exitCode = 0): Promise<void> {
 
 // issue #136: a fatal error still exits the process (the process manager
 // restarts it), but the cause is written to the system log first so it is on
-// disk instead of only on the terminal that started the stack.
+// disk instead of only on the terminal that started the stack. A disk/log
+// failure must never swallow the shutdown that follows (codex rev2 P2): the
+// write is guarded, stderr is the fallback, and this function never throws.
 function logFatalAndPersist(kind: string, error: unknown) {
   const { message, detail } = describeJobError(error);
   console.error(`[worker] ${kind}:`, error);
-  writeLog(config.namespaceId, config.orgId, "error", "worker", `${kind}: ${message}`, detail);
+  try {
+    writeLog(config.namespaceId, config.orgId, "error", "worker", `${kind}: ${message}`, detail);
+  } catch (logError) {
+    // stderr fallback — no disk write can be guaranteed on a full disk
+    console.error(`[worker] system log write failed for ${kind}:`, logError);
+  }
   try { persistStatus(message); } catch { /* already failing */ }
 }
 
