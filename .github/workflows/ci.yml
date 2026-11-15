@@ -38,12 +38,12 @@ jobs:
       # full history + tags: lib/__tests__/release-version-guard.test.ts
       # resolves the latest stable vX.Y.Z tag, which is undefined on a
       # shallow, tag-less checkout.
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
           persist-credentials: false
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: "22"
           cache: npm
@@ -79,11 +79,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: "22"
           cache: npm
@@ -112,7 +112,7 @@ jobs:
       # - tests/session-transport.test.mjs — needs a live pty-manager daemon,
       #   which only exists inside the mentiko-base image; no workflow in
       #   this repo runs this exact suite elsewhere (known coverage gap,
-      #   tracked under #121).
+      #   follow-up of #121).
       # - tests/chain-runner-activity-start.test.mjs — asserts activity
       #   delegation markers inside lib/chain-runner.sh that no longer exist;
       #   the delegation now lives in lib/agent-activity-capture.sh and is
@@ -147,7 +147,7 @@ jobs:
       # for (substitute_placeholders, _monitor_v2_script) no longer exist in
       # lib/. These exact suites are NOT run by the engine-tests workflow
       # (it runs its own engine harnesses, not these files) — the coverage
-      # gap is known and tracked under #121:
+      # gap is known and is a follow-up of #121:
       # - tests/bash/test-bug022-durable-completion.sh
       # - tests/bash/test-monitor-completion.sh
       # - tests/bash/test-chain-runner-placeholders.sh
@@ -204,11 +204,11 @@ jobs:
       run:
         working-directory: web
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: "22"
           cache: npm
@@ -232,7 +232,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -240,40 +240,50 @@ jobs:
       - name: Install Gitleaks
         env:
           GITLEAKS_VERSION: "8.30.1"
+          # sha256 of gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz,
+          # recorded in this file when the version was pinned. The digest is
+          # NOT fetched from the release at run time — a checksum pulled from
+          # the same release as the binary pins nothing.
+          GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
         run: |
           cd "$RUNNER_TEMP"
           curl -fsSLO "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
-          curl -fsSLO "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
-          grep "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" "gitleaks_${GITLEAKS_VERSION}_checksums.txt" | sha256sum -c -
+          echo "${GITLEAKS_SHA256}  gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" | sha256sum -c -
           mkdir -p "$RUNNER_TEMP/gitleaks-bin"
           tar -xzf "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" -C "$RUNNER_TEMP/gitleaks-bin" gitleaks
           echo "$RUNNER_TEMP/gitleaks-bin" >> "$GITHUB_PATH"
 
-      # The scan gates what a change ADDS, not history: main already carries
-      # pre-existing generic-api-key findings (triage list kept out of band;
-      # they live in the secrets/crypto subsystem and its test fixtures).
-      # Two scans over the same base..HEAD range, each fail-closed:
+      # The scan gates what a change ADDS, not full history: main already
+      # carries pre-existing generic-api-key findings (triage list kept out
+      # of band; they live in the secrets/crypto subsystem and its test
+      # fixtures), so whole-file text scans of PR-modified files would fail
+      # every PR that touches those files. Two gitleaks-native scans over
+      # the same base..HEAD range, each fail-closed — any non-zero gitleaks
+      # exit fails the job (1 = leaks found; anything else = scanner
+      # error), and an unresolvable range fails the job: a gate that
+      # silently passes on a range it could not inspect is decorative.
       #
-      # (a) HISTORY scan of every added line in every commit in
-      #     merge-base..HEAD: catches a secret committed and later removed
-      #     in the same PR (it stays reachable through the PR's commits even
-      #     though the final tree no longer has it).
-      # (b) TREE scan of the added lines of the final tree diff against the
-      #     merge base: `git log -p` omits merge-commit diffs, so a secret
-      #     introduced only during conflict resolution could escape (a);
-      #     the tree diff contains every added line, merge or not.
-      #
-      # Both extract only '+' CONTENT lines with a stateful awk parser: a
-      # naive `grep -v '^+++'` drops real added lines that begin with '++'.
-      # Here a '+++'-prefixed line is skipped only in the file-header block
-      # (before the first '@@' of each file); inside a hunk it is content.
-      # Added BINARY files carry no textual '+' lines, so each added binary
-      # path is additionally scanned by gitleaks' file mode; a binary that
-      # cannot be scanned fails the job. An unresolvable range fails the
-      # job — a gate that silently passes on a range it could not inspect
-      # is decorative. A range that resolves but adds no lines (a
-      # deletion-only change) is a valid empty delta, not an error.
-      - name: Run Gitleaks (history + final tree, vs merge base)
+      # (a) HISTORY scan (text additions): `gitleaks git` over every
+      #     commit in merge-base..HEAD, merge diffs included — the `-m`
+      #     log option makes git emit a merge commit's patch against EACH
+      #     parent, so content introduced only in a merge resolution is
+      #     scanned even when a later commit removes it (plain `git log
+      #     -p` omits merge diffs). Only diff content lines are scanned,
+      #     never pre-existing lines, so triaged findings stay quiet.
+      # (b) BLOB scan (binary additions): every blob object the range
+      #     introduces — `git rev-list --objects base..HEAD` covers any
+      #     commit in the range, merge resolutions included, and blobs
+      #     that a later commit removed. Diff patches never carry binary
+      #     content, so scan (a) cannot see these. Binary blobs are
+      #     written to extensionless temp files and scanned as one
+      #     directory: gitleaks skips files by EXTENSION (.bin .png .zip
+      #     ... — a plaintext secret in a .bin escapes `gitleaks dir`) but
+      #     does scan NUL-laden files, so an extensionless copy of every
+      #     binary blob is always scannable. Text blobs are skipped here —
+      #     their added lines are scan (a)'s job, and scanning whole text
+      #     blobs would trip the triaged pre-existing findings. A blob
+      #     that cannot be extracted fails the job.
+      - name: Run Gitleaks (history + binary blobs, vs merge base)
         env:
           EVENT_NAME: ${{ github.event_name }}
           PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
@@ -290,7 +300,7 @@ jobs:
           elif [ "$EVENT_NAME" = "push" ]; then
             if [[ "$PUSH_BEFORE" =~ ^0+$ ]]; then
               # first push on a new branch: the empty tree covers the root
-              # commit too (a root-only commit range would scan nothing).
+              # commit too (git accepts a tree sha as a range base).
               base="$empty_tree"
             else
               git cat-file -e "$PUSH_BEFORE" 2>/dev/null \
@@ -307,64 +317,37 @@ jobs:
           fi
           echo "scan range: $base..$(git rev-parse HEAD)"
 
-          # awk state machine: skip each file's header block (diff --git,
-          # index, ---/+++ path lines, mode/binary notices, commit metadata)
-          # and hunk headers; print every '+' line inside a hunk as content.
-          added_lines='
-            /^diff --git / { inhunk=0; next }
-            /^@@ /         { inhunk=1; next }
-            inhunk==0      { next }
-            /^\\/          { next }
-            /^\+/          { print }
-          '
+          # (a) history scan: every commit in the range; -m adds a merge
+          #     commit's diff against each parent.
+          echo "history scan: $(git rev-list --count "$base..HEAD") commits (merge diffs included)"
+          gitleaks git --log-opts="-m -p -U0 $base..HEAD" --redact --verbose
 
-          # (a) history scan: added lines of every commit in the range
-          # (--format= drops commit metadata; merge-commit diffs are absent
-          # from `git log -p` output by design — scan (b) covers them).
-          hist_file="$RUNNER_TEMP/history-added.diff"
-          git log --format= -p --unified=0 "$base..HEAD" | awk "$added_lines" > "$hist_file"
-          echo "history scan: $(wc -l < "$hist_file") added lines across $(git rev-list --count "$base..HEAD") commits"
-          if [ -s "$hist_file" ]; then
-            gitleaks stdin --redact --verbose < "$hist_file"
+          # (b) blob scan: every binary blob the range introduces, at any
+          #     commit, extensionless so gitleaks cannot skip it.
+          blobdir="$RUNNER_TEMP/binary-blobs"
+          stagdir="$RUNNER_TEMP/blob-staging"
+          mkdir -p "$blobdir" "$stagdir"
+          git rev-list --objects "$base..HEAD" \
+            | git cat-file --batch-check='%(objectname) %(objecttype) %(rest)' \
+            | while read -r sha type path; do
+                [ "$type" = "blob" ] || continue
+                tmp="$stagdir/$sha"
+                git cat-file blob "$sha" > "$tmp"
+                # text blob (grep -I: binary = has NUL bytes)? scan (a)
+                # already gates its added lines — whole-file text scanning
+                # would trip main's triaged pre-existing findings. The
+                # check reads the written file, not a pipe: under
+                # pipefail, `git cat-file | grep -q` dies of SIGPIPE on
+                # large blobs and every big text file would be
+                # misclassified as binary.
+                if LC_ALL=C grep -Iq . "$tmp"; then
+                  continue
+                fi
+                echo "binary blob: ${path:-<unnamed>} ($sha)"
+                mv "$tmp" "$blobdir/$sha"
+              done
+          if [ -n "$(command ls -A "$blobdir")" ]; then
+            gitleaks dir --redact --no-banner "$blobdir"
           else
-            echo "history scan: range adds no lines (deletion-only commits); nothing to scan"
+            echo "blob scan: range introduces no binary blobs; nothing to scan"
           fi
-
-          # (b) final-tree scan: added lines of the tree diff vs merge base
-          tree_file="$RUNNER_TEMP/tree-added.diff"
-          git diff --no-prefix --unified=0 "$base" HEAD | awk "$added_lines" > "$tree_file"
-          echo "tree scan: $(wc -l < "$tree_file") added lines"
-          if [ -s "$tree_file" ]; then
-            gitleaks stdin --redact --verbose < "$tree_file"
-          else
-            if git diff --quiet "$base" HEAD; then
-              echo "::error::tree scan: no diff at all vs base; unexpected for a PR/push event, failing closed"
-              exit 1
-            fi
-            echo "tree scan: deletion-only diff; no added lines to scan"
-          fi
-
-          # added binary files carry no textual '+' lines above, so scan
-          # each by path: gitleaks dir for files its own filter accepts,
-          # plus a `strings` extraction piped to gitleaks stdin — dir mode
-          # alone silently skips .bin-style and content-binary files (a
-          # plaintext secret embedded in a .bin escapes it). numstat -z
-          # emits per file: "<added>\t<deleted>\0<path>\0"; binaries show
-          # "-" for both counts. An unscannable binary fails the job.
-          while IFS=$'\t' read -r -d '' nums _ && IFS= read -r -d '' path; do
-            [ "${nums%%$'\t'*}" = "-" ] || continue
-            echo "binary added: $path — scanning by path (dir + strings)"
-            set +e
-            gitleaks dir --redact --no-banner "$path"
-            rc=$?
-            strings "$path" | gitleaks stdin --redact --no-banner
-            rc2=$?
-            set -e
-            if [ "$rc" -eq 1 ] || [ "$rc2" -eq 1 ]; then
-              echo "::error::leak detected in added binary file $path"
-              exit 1
-            elif [ "$rc" -ne 0 ] || [ "$rc2" -ne 0 ]; then
-              echo "::error::cannot scan added binary file $path (gitleaks exits: dir=$rc strings=$rc2); failing closed"
-              exit 1
-            fi
-          done < <(git diff --numstat --diff-filter=A -z "$base" HEAD)
