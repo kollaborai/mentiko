@@ -7,7 +7,6 @@ import { startRunnerV2Bootstrap } from "@/lib/runner-v2/bootstrap-executor";
 import { loadNormalizedChainDefinition, type ChainRecord } from "@/lib/runner-v2/chain-contract";
 import { validateChainFile } from "@/lib/runner-v2/chain-validation-cli";
 import { createRunRecord, updateRunJson, updateRunStatus } from "@/lib/runner-v2/run-state";
-import { resumeProvenanceFromEnv, resumeProvenanceRecordFields } from "@/lib/runner-v2/resume-provenance";
 import { loadTaskContext, taskContextEnvironment } from "@/lib/runner-v2/task-context";
 import type { RunnerV2LaunchStarted } from "@/lib/runner-v2/types";
 
@@ -111,20 +110,14 @@ export async function runTypedDirect(options: DirectRunOptions): Promise<DirectR
   if (options.dryRun) return { dryRun: true, chainName, agentId: selected.id, workspacePath };
   const taskEnv = options.taskId ? await loadTypedTaskContext(options.taskId, env) : {};
   const runsDir = runtimeRunsDir(options.runsDir);
-  // A resume spawns this CLI as a child run; carry the original run's
-  // provenance so the child record is complete instead of thin (#142).
-  const resumeProvenance = resumeProvenanceFromEnv(env);
-  const run = {
-    ...createRunRecord({
-      runId: options.runId,
-      chainName,
-      goal: options.goal ?? (typeof chain.description === "string" ? chain.description : ""),
-      workspacePath,
-      taskId: options.taskId,
-      parentRunId: options.parentRunId,
-    }),
-    ...(resumeProvenance ? resumeProvenanceRecordFields(resumeProvenance) : {}),
-  };
+  const run = createRunRecord({
+    runId: options.runId,
+    chainName,
+    goal: options.goal ?? (typeof chain.description === "string" ? chain.description : ""),
+    workspacePath,
+    taskId: options.taskId,
+    parentRunId: options.parentRunId,
+  });
   const runDir = join(runsDir, run.id);
   // A caller-provided identity is a durable reservation, never permission to
   // replace an existing run's immutable chain snapshot or provenance.

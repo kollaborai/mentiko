@@ -1276,7 +1276,6 @@ function launchNextChain(
     const nextChainEnv = { ...process.env };
     delete nextChainEnv.MENTIKO_RUN_ID;
     delete nextChainEnv.AGENT_CHAIN_RUN_ID;
-    delete nextChainEnv.MENTIKO_RESUME_PROVENANCE;
     delete nextChainEnv.RUN_ID;
     delete nextChainEnv.MENTIKO_RUN_DIR;
     delete nextChainEnv.RUN_DIR;
