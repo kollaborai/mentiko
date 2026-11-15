@@ -640,6 +640,44 @@ function resumableRunIdFromRecord(
   return runId;
 }
 
+/**
+ * A failed resume (non-OK response OR transport failure) is a transient
+ * auto-run failure like the others here: consume one auto_run_retries so the
+ * shared MAX_AUTO_RUN_RETRIES ceiling ends the every-minute resume loop
+ * instead of parking the task in `resuming` with no next step (#142). The
+ * update is durable and concurrency-safe through the task store; a persistence
+ * failure is surfaced in the result error instead of swallowed, because the
+ * next scan cannot be assumed to run.
+ */
+function consumeResumeRetry(
+  taskId: string,
+  runId: string,
+  namespaceId: string,
+  orgId: string,
+  metadata: Record<string, unknown>,
+  message: string
+): { persisted: boolean; persistenceError?: string } {
+  const currentMeta = taskMetadataForUpdate(orgId, taskId, namespaceId, metadata);
+  const nextRetries = Math.min(
+    MAX_AUTO_RUN_RETRIES,
+    ((currentMeta.auto_run_retries as number) || 0) + 1,
+  );
+  try {
+    taskUpdate(orgId, taskId, {
+      metadata: {
+        ...currentMeta,
+        auto_run_retries: nextRetries,
+        resume_last_error: message,
+      },
+    }, namespaceId);
+    return { persisted: true };
+  } catch (error) {
+    const persistenceError = error instanceof Error ? error.message : String(error);
+    console.error(`auto-run resume retry accounting failed for task ${taskId}: ${persistenceError}`);
+    return { persisted: false, persistenceError };
+  }
+}
+
 async function resumeExistingRun(
   taskId: string,
   runId: string,
@@ -648,40 +686,38 @@ async function resumeExistingRun(
   request: NextRequest,
   metadata: Record<string, unknown>
 ): Promise<TriggerResult> {
-  const resumeRes = await fetch(internalApiUrl(`/api/runs/${encodeURIComponent(runId)}/resume`, request.url), {
-    method: "POST",
-    headers: forwardedHeaders(request, namespaceId, orgId),
-  });
+  let resumeMessage: string;
+  try {
+    const resumeRes = await fetch(internalApiUrl(`/api/runs/${encodeURIComponent(runId)}/resume`, request.url), {
+      method: "POST",
+      headers: forwardedHeaders(request, namespaceId, orgId),
+    });
 
-  const resumeData = await resumeRes.json().catch(() => ({}));
-  if (!resumeRes.ok) {
-    const message =
-      (resumeData as { error?: { message?: string } }).error?.message ||
-      (resumeData as { error?: string }).error ||
-      `Failed to resume run ${runId}`;
-    // A failed resume is a transient auto-run failure like the others here:
-    // consume one auto_run_retries so the shared MAX_AUTO_RUN_RETRIES ceiling
-    // ends the every-minute resume loop instead of parking the task in
-    // `resuming` with no next step (#142).
-    try {
-      const currentMeta = taskMetadataForUpdate(orgId, taskId, namespaceId, metadata);
-      taskUpdate(orgId, taskId, {
-        metadata: {
-          ...currentMeta,
-          auto_run_retries: Math.min(
-            MAX_AUTO_RUN_RETRIES,
-            ((currentMeta.auto_run_retries as number) || 0) + 1,
-          ),
-          resume_last_error: message,
-        },
-      }, namespaceId);
-    } catch { /* non-fatal: the next scan consumes the retry instead */ }
+    if (resumeRes.ok) {
+      resumeMessage = "";
+    } else {
+      const resumeData = await resumeRes.json().catch(() => ({}));
+      const errorBody = (resumeData as { error?: { message?: string } | string }).error;
+      resumeMessage = (typeof errorBody === "string" ? errorBody : errorBody?.message)
+        || `Failed to resume run ${runId}`;
+    }
+  } catch (error) {
+    // Transport failures (rejected fetch, connection reset) are inside the
+    // retry accounting too: without this a dead web origin left the task
+    // `resuming` forever while consuming no retry (#142).
+    resumeMessage = `Resume transport failure for run ${runId}: ${error instanceof Error ? error.message : String(error)}`;
+  }
+
+  if (resumeMessage) {
+    const accounting = consumeResumeRetry(taskId, runId, namespaceId, orgId, metadata, resumeMessage);
     return {
       triggered: false,
       taskId,
       runId,
       action: "resume_failed",
-      error: message,
+      error: accounting.persisted
+        ? resumeMessage
+        : `${resumeMessage}; retry accounting could not persist (task update failed: ${accounting.persistenceError})`,
     };
   }
 
