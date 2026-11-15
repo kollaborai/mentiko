@@ -333,7 +333,7 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
           runId: recovery.sourceRunId || "unknown",
           previousStatus: "summarizing",
           newStatus: "summary_failed",
-          reason: `summary job ${recovery.jobId} failed with no artifact; task moved off summarizing`,
+          reason: `summary job ${recovery.jobId} failed with no artifact; summary marked failed so the lifecycle can admit a bounded retry`,
         });
       }
     } catch (error) {
