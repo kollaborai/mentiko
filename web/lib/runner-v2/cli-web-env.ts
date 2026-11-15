@@ -80,24 +80,32 @@ function devWebPort(): string | null {
  */
 export async function assertWebAcceptsToken(origin: string, token: string, timeoutMs = 5000): Promise<void> {
   const url = `${origin.replace(/\/+$/, "")}/api/mentiko-mcp/ops/monitor/status`;
-  let status: number;
+  let res: Response;
   try {
-    const res = await fetch(url, {
+    res = await fetch(url, {
       headers: { Authorization: `Bearer ${token}` },
+      // a redirect (e.g. to a login page) is not proof the token was verified
+      redirect: "manual",
       signal: AbortSignal.timeout(timeoutMs),
     });
-    status = res.status;
   } catch (error) {
     throw new Error(
       `mentiko web app at ${origin} is unreachable (${error instanceof Error ? error.message : String(error)}); start it or set MENTIKO_WEB_URL`,
     );
   }
-  if (status === 401 || status === 403) {
+  if (res.status === 401) {
     throw new Error(
-      `mentiko web app at ${origin} rejected the CLI session token (HTTP ${status}): the CLI and the web app are not using the same BETTER_AUTH_SECRET`,
+      `mentiko web app at ${origin} rejected the CLI session token (HTTP 401); the usual cause is that the CLI and the web app use different BETTER_AUTH_SECRET values`,
     );
   }
-  if (status >= 500) {
-    throw new Error(`mentiko web app at ${origin} answered HTTP ${status} to the token check`);
+  // Only the route's own authenticated answer counts: a 200 carrying its
+  // monitor digest. Anything else (404/405 from an older server or a proxy,
+  // a redirect, an unrelated 200) proves nothing about the token.
+  let body: unknown = null;
+  if (res.status === 200) body = await res.json().catch(() => null);
+  if (res.status !== 200 || !body || typeof body !== "object" || !("digest" in body)) {
+    throw new Error(
+      `mentiko web app at ${origin} did not confirm the CLI session token (HTTP ${res.status} from ${url}); check MENTIKO_WEB_URL points at the mentiko web app`,
+    );
   }
 }

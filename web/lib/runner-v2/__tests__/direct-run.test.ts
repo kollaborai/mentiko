@@ -65,7 +65,7 @@ describe("typed direct run arguments", () => {
   const originalFetch = globalThis.fetch;
   let webTokenCheck: jest.Mock;
   beforeEach(() => {
-    webTokenCheck = jest.fn().mockResolvedValue({ status: 200 });
+    webTokenCheck = jest.fn().mockResolvedValue({ status: 200, json: async () => ({ digest: {} }) });
     globalThis.fetch = webTokenCheck as unknown as typeof fetch;
   });
   afterEach(() => { globalThis.fetch = originalFetch; });
@@ -217,8 +217,32 @@ describe("typed direct run arguments", () => {
         env: { NODE_ENV: "test", MENTIKO_WEB_URL: "http://127.0.0.1:3100" },
       })).rejects.toThrow("rejected the CLI session token (HTTP 401)");
       expect(webTokenCheck.mock.calls[0][0]).toBe("http://127.0.0.1:3100/api/mentiko-mcp/ops/monitor/status");
+      expect(webTokenCheck.mock.calls[0][1].headers.Authorization).toMatch(/^Bearer .+\..+\..+$/);
       expect((startRunnerV2Bootstrap as jest.Mock).mock.calls.length).toBe(bootstrapCalls);
       const runState = JSON.parse(readFileSync(join(runsDir, "run-token-rejected", "run.json"), "utf8"));
+      expect(runState.status).toBe("failed");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["a 404 from a server without the route", { status: 404, json: async () => ({}) }],
+    ["a redirect", { status: 307, json: async () => ({}) }],
+    ["a 200 that is not the monitor digest", { status: 200, json: async () => ({ ok: true }) }],
+  ])("does not launch when the token check gets %s", async (_label, reply) => {
+    const bootstrapCalls = (startRunnerV2Bootstrap as jest.Mock).mock.calls.length;
+    webTokenCheck.mockResolvedValue(reply);
+    const root = mkdtempSync(join(tmpdir(), "mentiko-direct-token-unconfirmed-"));
+    const runsDir = join(root, "runs");
+    try {
+      await expect(runTypedDirect({
+        chainPath: join(root, "chain.json"), runsDir, runId: "run-token-unconfirmed", debug: false,
+        env: { NODE_ENV: "test", MENTIKO_WEB_URL: "http://127.0.0.1:3100" },
+      })).rejects.toThrow("did not confirm the CLI session token");
+      expect(webTokenCheck.mock.calls[0][1].redirect).toBe("manual");
+      expect((startRunnerV2Bootstrap as jest.Mock).mock.calls.length).toBe(bootstrapCalls);
+      const runState = JSON.parse(readFileSync(join(runsDir, "run-token-unconfirmed", "run.json"), "utf8"));
       expect(runState.status).toBe("failed");
     } finally {
       rmSync(root, { recursive: true, force: true });

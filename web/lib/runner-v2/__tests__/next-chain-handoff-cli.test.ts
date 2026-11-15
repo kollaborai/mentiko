@@ -53,7 +53,7 @@ describe("next-chain handoff CLI selection", () => {
   const originalFetch = globalThis.fetch;
   let webTokenCheck: jest.Mock;
   beforeEach(() => {
-    webTokenCheck = jest.fn().mockResolvedValue({ status: 200 });
+    webTokenCheck = jest.fn().mockResolvedValue({ status: 200, json: async () => ({ digest: {} }) });
     globalThis.fetch = webTokenCheck as unknown as typeof fetch;
   });
   afterEach(() => { globalThis.fetch = originalFetch; });
