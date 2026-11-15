@@ -139,7 +139,12 @@ describe("CLI session token signing across the CLI/web boundary", () => {
     process.env.BETTER_AUTH_URL = "http://from-process-auth-url";
     expect(resolveWebOrigin({ NODE_ENV: "test" })).toBe("http://from-process-auth-url");
     delete process.env.BETTER_AUTH_URL;
-    expect(resolveWebOrigin({ NODE_ENV: "test" })).toBe("http://127.0.0.1:4199");
+    // caller settings win as a group over file-loaded process values
+    process.env.MENTIKO_WEB_URL = "http://from-env-file";
+    expect(resolveWebOrigin({ NODE_ENV: "test", BETTER_AUTH_URL: "http://caller-auth-url" })).toBe("http://caller-auth-url");
+    delete process.env.MENTIKO_WEB_URL;
+    // the shell's default WEB_PORT=3000 must not beat the dev process config
+    expect(resolveWebOrigin({ NODE_ENV: "test", WEB_PORT: "3000" })).toBe("http://127.0.0.1:4199");
 
     setNodeEnv("production");
     delete process.env.MENTIKO_WEB_URL;

@@ -20,7 +20,10 @@ export async function loadWebEnvForCliSigning(): Promise<void> {
     const webDir = join(config.codeRoot, "web");
     if (!existsSync(webDir)) return;
     const { loadEnvConfig } = await import("@next/env");
-    loadEnvConfig(webDir);
+    // Match the server's file set: `next dev` loads .env.development*, a
+    // production server loads .env.production*. Without the flag @next/env
+    // always picks the production files.
+    loadEnvConfig(webDir, process.env.NODE_ENV !== "production");
   } catch {
     // Env files are best effort; a missing root secret fails at mint time
     // with a clear error instead of launching an agent without ops access.
@@ -34,10 +37,10 @@ export async function loadWebEnvForCliSigning(): Promise<void> {
  * web/processes.dev.json. Never silently default to :3000.
  */
 export function resolveWebOrigin(env: NodeJS.ProcessEnv): string {
-  const explicit =
-    env.MENTIKO_WEB_URL?.trim() || process.env.MENTIKO_WEB_URL?.trim() ||
-    env.BETTER_AUTH_URL?.trim() || process.env.BETTER_AUTH_URL?.trim();
-  if (explicit) return explicit;
+  const fromCaller = originFrom(env);
+  if (fromCaller) return fromCaller;
+  const fromProcess = originFrom(process.env);
+  if (fromProcess) return fromProcess;
   if (process.env.NODE_ENV !== "production") {
     const port = devWebPort();
     if (port) return `http://127.0.0.1:${port}`;
@@ -45,6 +48,14 @@ export function resolveWebOrigin(env: NodeJS.ProcessEnv): string {
   throw new Error(
     "cannot resolve the mentiko web origin for CLI ops access: set MENTIKO_WEB_URL or BETTER_AUTH_URL",
   );
+}
+
+// One source at a time, so a value loaded from an env file never overrides
+// what the caller set. WEB_PORT/PORT are deliberately not read: bin/mentiko's
+// lib/config.sh always exports WEB_PORT=3000 as a default, so it cannot tell a
+// real override from the default.
+function originFrom(source: NodeJS.ProcessEnv): string | null {
+  return source.MENTIKO_WEB_URL?.trim() || source.BETTER_AUTH_URL?.trim() || null;
 }
 
 function devWebPort(): string | null {

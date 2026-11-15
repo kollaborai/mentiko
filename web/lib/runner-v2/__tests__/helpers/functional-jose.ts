@@ -1,3 +1,6 @@
+// Signing-side test double for jose (HS256). It does not mirror every jose
+// verification rule (nbf, clock tolerance, aud arrays, alg pinning); verify
+// real-token behavior against the running web app, not this helper.
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 /**
