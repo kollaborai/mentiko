@@ -28,6 +28,15 @@ describe("typed audit index", () => {
     expect(entry.metadata).not.toHaveProperty("ignored_email");
   });
 
+  it("attributes entries to the session actor, else to the service principal, never the OS account", async () => {
+    delete process.env.MENTIKO_AUDIT_SERVICE_PRINCIPAL;
+    const { writeAuditLog } = await import("@/lib/system/audit-log");
+    expect(writeAuditLog({ eventType: "auth_login", description: "user logged in", userId: "user-42" }).user).toBe("user-42");
+    expect(writeAuditLog({ eventType: "chain_start", description: "Started chain" }).user).toBe("mentiko-server");
+    process.env.MENTIKO_AUDIT_SERVICE_PRINCIPAL = "tenant-acme";
+    expect(writeAuditLog({ eventType: "chain_start", description: "Started chain" }).user).toBe("tenant-acme");
+  });
+
   it("fails closed on a malformed persisted index instead of treating it as an empty registry", async () => {
     const { queryAuditLog, resolveAuditPaths } = await import("@/lib/system/audit-log");
     const paths = resolveAuditPaths();
