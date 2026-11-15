@@ -15,7 +15,11 @@ export type { AuditLogMetadata };
 export interface AuditExecOptions {
   source?: string;
   ip?: string;
-  /** Authenticated application actor, used instead of the process account. */
+  /**
+   * Authenticated application actor, set only by trusted server-side code
+   * from the session; never copy it from request JSON. Without it the entry
+   * is attributed to the service principal.
+   */
   userId?: string;
   timeoutMs?: number;
   namespaceId?: string;

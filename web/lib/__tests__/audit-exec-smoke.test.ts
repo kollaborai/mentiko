@@ -24,6 +24,7 @@ describe("audit-exec smoke test", () => {
       ...originalEnv,
       MENTIKO_GLOBAL_ROOT: tmpGlobalRoot,
       MENTIKO_CODE_ROOT: join(__dirname, "..", "..", ".."),
+      MENTIKO_AUDIT_SERVICE_PRINCIPAL: "audit-smoke-service",
       NAMESPACE_ID: "default",
       ORG_ID: "default",
     };
@@ -62,6 +63,7 @@ describe("audit-exec smoke test", () => {
     expect(parsed.description).toBe(uniqueTag);
     expect(parsed.metadata.foo).toBe("bar");
     expect(parsed.metadata.number).toBe("42");
+    expect(parsed.user).toBe("audit-smoke-service");
     expect(parsed.source).toBe("web");
     expect(parsed.id).toBe(id);
   });
