@@ -28,6 +28,9 @@ import { runTypedWatchdogScan } from "../lib/runner-v2/watchdog";
 import { reconcileRoutedLaunchJobs } from "../lib/runner-v2/launch-job-runner";
 import { reconcileGitNodeWorkspaceCleanups } from "../lib/runner-v2/workspace-cleanup";
 import { createBackgroundWorkerShutdown } from "./background-worker-shutdown";
+import { describeJobError, runGuardedJob } from "./guarded-job";
+import config from "../lib/config";
+import { writeLog } from "../lib/system/system-logger";
 
 const CHECK_INTERVAL_MS = 60_000;
 const RECONCILE_STARTUP_DELAY_MS = 3000;
@@ -377,39 +380,42 @@ async function start() {
   persistStatus("scheduler + auto-run + chain watcher started");
 
   await new Promise((resolve) => setTimeout(resolve, RECONCILE_STARTUP_DELAY_MS));
-  await runReconciler("startup");
-  await runDecisionReconciler("startup");
-  await runWatchdog("startup");
-  await runExternalDrain("startup");
-  runLaunchJobReconciler("startup");
-  runWorkspaceCleanupReconciler("startup");
+  await runGuardedJob("reconciler", () => runReconciler("startup"));
+  await runGuardedJob("decision-reconciler", () => runDecisionReconciler("startup"));
+  await runGuardedJob("watchdog", () => runWatchdog("startup"));
+  await runGuardedJob("external-drain", () => runExternalDrain("startup"));
+  void runGuardedJob("launch-jobs", () => runLaunchJobReconciler("startup"));
+  void runGuardedJob("workspace-cleanup", () => runWorkspaceCleanupReconciler("startup"));
 
+  // issue #136: every job tick is isolated — a throw inside any runner (or in
+  // its persistStatus finally) is caught and logged, never an unhandled
+  // rejection that would exit the worker process.
   reconcileInterval = setInterval(() => {
-    void runReconciler("periodic");
+    void runGuardedJob("reconciler", () => runReconciler("periodic"));
   }, CHECK_INTERVAL_MS);
 
   decisionReconcileInterval = setInterval(() => {
-    void runDecisionReconciler("periodic");
+    void runGuardedJob("decision-reconciler", () => runDecisionReconciler("periodic"));
   }, CHECK_INTERVAL_MS);
 
   externalDrainInterval = setInterval(() => {
-    void runExternalDrain("periodic");
+    void runGuardedJob("external-drain", () => runExternalDrain("periodic"));
   }, EXTERNAL_DRAIN_INTERVAL_MS);
 
   watchdogInterval = setInterval(() => {
-    void runWatchdog("periodic");
+    void runGuardedJob("watchdog", () => runWatchdog("periodic"));
   }, WATCHDOG_INTERVAL_MS);
 
   launchJobInterval = setInterval(() => {
-    runLaunchJobReconciler("periodic");
+    void runGuardedJob("launch-jobs", () => runLaunchJobReconciler("periodic"));
   }, LAUNCH_JOB_INTERVAL_MS);
 
   workspaceCleanupInterval = setInterval(() => {
-    runWorkspaceCleanupReconciler("periodic");
+    void runGuardedJob("workspace-cleanup", () => runWorkspaceCleanupReconciler("periodic"));
   }, WORKSPACE_CLEANUP_INTERVAL_MS);
 
   heartbeatInterval = setInterval(() => {
-    persistStatus();
+    void runGuardedJob("heartbeat", () => persistStatus());
   }, 5000);
 
   console.log("[worker] background worker started");
@@ -477,21 +483,28 @@ function shutdown(signal: string, exitCode = 0): Promise<void> {
   return shutdownController.request(signal, exitCode);
 }
 
+// issue #136: a fatal error still exits the process (the process manager
+// restarts it), but the cause is written to the system log first so it is on
+// disk instead of only on the terminal that started the stack.
+function logFatalAndPersist(kind: string, error: unknown) {
+  const { message, detail } = describeJobError(error);
+  console.error(`[worker] ${kind}:`, error);
+  writeLog(config.namespaceId, config.orgId, "error", "worker", `${kind}: ${message}`, detail);
+  try { persistStatus(message); } catch { /* already failing */ }
+}
+
 process.on("SIGTERM", () => { void shutdown("SIGTERM"); });
 process.on("SIGINT", () => { void shutdown("SIGINT"); });
 process.on("uncaughtException", (err) => {
-  console.error("[worker] uncaught exception:", err);
-  persistStatus(err instanceof Error ? err.message : String(err));
+  logFatalAndPersist("uncaught exception", err);
   void shutdown("uncaughtException", 1);
 });
 process.on("unhandledRejection", (err) => {
-  console.error("[worker] unhandled rejection:", err);
-  persistStatus(err instanceof Error ? err.message : String(err));
+  logFatalAndPersist("unhandled rejection", err);
   void shutdown("unhandledRejection", 1);
 });
 
 void start().catch((err) => {
-  console.error("[worker] failed to start:", err);
-  persistStatus(err instanceof Error ? err.message : String(err));
+  logFatalAndPersist("startup failure", err);
   void shutdown("startupFailure", 1);
 });
