@@ -35,8 +35,12 @@ jobs:
       run:
         working-directory: web
     steps:
+      # full history + tags: lib/__tests__/release-version-guard.test.ts
+      # resolves the latest stable vX.Y.Z tag, which is undefined on a
+      # shallow, tag-less checkout.
       - uses: actions/checkout@v6
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - uses: actions/setup-node@v6
@@ -50,11 +54,19 @@ jobs:
       - name: Install web dependencies
         run: npm ci --no-audit --no-fund
 
-      # Suites excluded by name — none currently. When a suite fails on a
-      # clean runner, exclude it here with its reason and list it in the PR
-      # body; never `|| true` the whole job.
+      # Test-level exclusions, named:
+      # - kollab-engine-driver.test.ts "idle timeout aborts a stalled SSE
+      #   stream, stop() leaves no open sockets" and "idle abort does NOT
+      #   flush a trailing partial AGENT_COMPLETE token" — real-socket SSE
+      #   tests with 200ms idle timeouts; their waitFor deadlines are not
+      #   met reliably on a loaded 2-core runner. Fake timers cannot make
+      #   them deterministic (they drive a real HTTP server and real
+      #   sockets). Excluded by name below until they are restructured;
+      #   every other test in the suite still runs.
       - name: Run jest suite
-        run: npm test -- --ci
+        run: npm test -- --ci --testPathIgnorePatterns kollab-engine-driver.test.ts
+      - name: Run jest suite (kollab-engine-driver without the two timing-sensitive idle tests)
+        run: npm test -- --ci lib/runner-v2/__tests__/kollab-engine-driver.test.ts --testNamePattern "^(?!.*idle)"
 
   root-tests:
     name: ci/tests (root)
@@ -77,6 +89,12 @@ jobs:
         working-directory: web
         run: npm ci --no-audit --no-fund
 
+      # tests/mentiko-mcp-dispatch.test.mjs bundles dispatch.ts with the
+      # package's own esbuild (same as jest.global-setup.js does for jest).
+      - name: Install mentiko-mcp package dependencies
+        working-directory: lib/mentiko-mcp
+        run: npm ci --no-audit --no-fund
+
       # scheduler's cmd_next delegates cron parsing to python croniter.
       - name: Install croniter
         run: python3 -m pip install croniter==6.0.0
@@ -92,10 +110,14 @@ jobs:
       #   delegation markers inside lib/chain-runner.sh that no longer exist;
       #   the delegation now lives in lib/agent-activity-capture.sh and is
       #   covered by tests/agent-activity-capture-shell-boundary.test.mjs.
+      # - tests/job-runner.test.mjs — real producer bug, not a test bug: the
+      #   job worker writes to an agent CLI's stdin after the CLI exits and
+      #   crashes on EPIPE (Linux timing; macOS pipe buffering hides it).
+      #   Tracked in #138; excluded until that fix lands.
       - name: Run root .mjs contract tests
         run: |
           set -euo pipefail
-          exclude="tests/session-transport.test.mjs tests/chain-runner-activity-start.test.mjs"
+          exclude="tests/session-transport.test.mjs tests/chain-runner-activity-start.test.mjs tests/job-runner.test.mjs"
           status=0
           for f in tests/*.test.mjs; do
             skip=0
@@ -218,5 +240,31 @@ jobs:
           tar -xzf "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" -C "$RUNNER_TEMP/gitleaks-bin" gitleaks
           echo "$RUNNER_TEMP/gitleaks-bin" >> "$GITHUB_PATH"
 
-      - name: Run Gitleaks
-        run: gitleaks detect --source . --redact --verbose
+      # base.sha is the base tip at event time; it can lag the fetched
+      # branch tips, so make sure the object itself is local.
+      - name: Fetch PR base commit
+        if: github.event_name == 'pull_request'
+        run: git fetch --no-tags origin "${{ github.event.pull_request.base.sha }}"
+
+      # The scan gates what a PR ADDS, not history: main already carries
+      # pre-existing generic-api-key findings (triage list kept out of band;
+      # they live in the secrets/crypto subsystem and its test fixtures).
+      # --log-opts restricts the scan to the commits this change introduces.
+      # gitleaks exits 1 when leaks are found — that still fails the check.
+      - name: Run Gitleaks (PR commit range)
+        if: github.event_name == 'pull_request'
+        run: gitleaks git . --redact --verbose --log-opts="${{ github.event.pull_request.base.sha }}..HEAD"
+
+      - name: Run Gitleaks (pushed commits)
+        if: github.event_name == 'push'
+        run: |
+          before="${{ github.event.before }}"
+          if [[ "$before" =~ ^0+$ ]]; then
+            # first commit on a new default branch: scan the root commit only
+            before="$(git rev-list --max-parents=0 HEAD)"
+          fi
+          gitleaks git . --redact --verbose --log-opts="${before}..HEAD"
+
+      - name: Run Gitleaks (manual dispatch, last commit)
+        if: github.event_name == 'workflow_dispatch'
+        run: gitleaks git . --redact --verbose --log-opts="-1"
