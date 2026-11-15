@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 
 // batch-runner -> direct-run -> session-token pulls in jose (ESM-only).
-jest.mock("jose", () => ({ __esModule: true, SignJWT: jest.fn(), jwtVerify: jest.fn() }));
+// Crypto-backed HS256 mirror so minting works and mismatches fail loudly.
+jest.mock("jose", () => require("./helpers/functional-jose"));
 
 import {
   parseBatchRunRecord,

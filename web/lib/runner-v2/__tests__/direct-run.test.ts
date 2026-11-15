@@ -33,28 +33,30 @@ jest.mock("@/lib/runner-v2/task-context", () => ({
   taskContextEnvironment: jest.fn((result: { task: { id: string }; context: string }) => ({ TASK_ID: result.task.id, TASK_CONTEXT: result.context })),
 }));
 
-// jose v6 is ESM-only; jest (CJS) cannot load it. Mirror the module mock
-// pattern from lib/__tests__/session-token.test.ts so mintSessionToken runs
-// with a deterministic fake signer and the token payload stays inspectable.
-jest.mock("jose", () => {
-  const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
-  class SignJWT {
-    private payload: Record<string, unknown>;
-    constructor(payload: Record<string, unknown>) { this.payload = { ...payload }; }
-    setProtectedHeader() { return this; }
-    setIssuer(value: string) { this.payload.iss = value; return this; }
-    setAudience(value: string) { this.payload.aud = value; return this; }
-    setSubject(value: string) { this.payload.sub = value; return this; }
-    setJti(value: string) { this.payload.jti = value; return this; }
-    setIssuedAt() { return this; }
-    setExpirationTime(value: string) { this.payload.exp = value; return this; }
-    async sign() { return `header.${encode(this.payload)}.signature`; }
-  }
-  return { __esModule: true, SignJWT, jwtVerify: jest.fn() };
-});
+// jose v6 is ESM-only; jest (CJS) cannot load it. Use the crypto-backed HS256
+// mirror so mintSessionToken really signs and verification fails on secret
+// mismatches, instead of a mock that hides mint failures.
+jest.mock("jose", () => require("./helpers/functional-jose"));
 
 import { runTypedDirect, parseDirectRunArgs } from "@/lib/runner-v2/direct-run";
 import { startRunnerV2Bootstrap } from "@/lib/runner-v2/bootstrap-executor";
+
+// resolveAppSecret reads process.env, and lib/secrets/dev-secret caches its
+// fallback per module instance. Pinning BETTER_AUTH_SECRET before any mint
+// makes every token in this file sign deterministically regardless of cache
+// state or the host's ~/.mentiko dev secret.
+const previousAuthSecret = process.env.BETTER_AUTH_SECRET;
+const previousSecretKey = process.env.SECRET_KEY;
+const previousNodeEnv = process.env.NODE_ENV;
+beforeAll(() => {
+  process.env.BETTER_AUTH_SECRET = "direct-run-test-secret";
+});
+afterAll(() => {
+  if (previousAuthSecret === undefined) delete process.env.BETTER_AUTH_SECRET;
+  else process.env.BETTER_AUTH_SECRET = previousAuthSecret;
+  if (previousSecretKey !== undefined) process.env.SECRET_KEY = previousSecretKey;
+  Object.defineProperty(process.env, "NODE_ENV", { value: previousNodeEnv, configurable: true, writable: true });
+});
 
 describe("typed direct run arguments", () => {
   it("accepts only one local initial agent with optional workspace and debug", () => {
@@ -89,6 +91,7 @@ describe("typed direct run arguments", () => {
         runId: "run-reserved-batch",
         goal: "batch invocation goal",
         debug: false,
+        env: { NODE_ENV: "test", MENTIKO_WEB_URL: "http://127.0.0.1:3100" },
       });
       expect(result).toMatchObject({ runId: "run-reserved-batch", runDir: join(realpathSync(runsDir), "run-reserved-batch") });
       expect(JSON.parse(readFileSync(join(runsDir, "run-reserved-batch", "run.json"), "utf8"))).toMatchObject({
@@ -103,6 +106,7 @@ describe("typed direct run arguments", () => {
         runId: "run-reserved-batch",
         goal: "replacement attempt",
         debug: false,
+        env: { NODE_ENV: "test", MENTIKO_WEB_URL: "http://127.0.0.1:3100" },
       })).rejects.toThrow("EEXIST");
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -115,6 +119,7 @@ describe("typed direct run arguments", () => {
     try {
       const result = await runTypedDirect({
         chainPath: join(root, "task-chain.json"), runsDir, runId: "run-task-bound", taskId: "TASK-12", debug: false,
+        env: { NODE_ENV: "test", MENTIKO_WEB_URL: "http://127.0.0.1:3100" },
       });
       if (result.dryRun) throw new Error("unexpected dry run");
       expect(JSON.parse(readFileSync(join(runsDir, result.runId, "run.json"), "utf8"))).toMatchObject({ taskId: "TASK-12" });
@@ -141,15 +146,13 @@ describe("typed direct run arguments", () => {
     }
   });
 
-  it("mints a run-scoped ops session token for CLI launches without one", async () => {
-    const previousSecret = process.env.MENTIKO_DEV_SECRET;
-    process.env.MENTIKO_DEV_SECRET = "direct-run-test-secret";
+  it("mints an ops session token for CLI launches without one", async () => {
     const root = mkdtempSync(join(tmpdir(), "mentiko-direct-token-"));
     const runsDir = join(root, "runs");
     try {
       const result = await runTypedDirect({
         chainPath: join(root, "chain.json"), runsDir, runId: "run-cli-token", debug: false,
-        env: { NODE_ENV: "test", NAMESPACE_ID: "ns-1", ORG_ID: "org-1", WEB_PORT: "3100" },
+        env: { NODE_ENV: "test", NAMESPACE_ID: "ns-1", ORG_ID: "org-1", MENTIKO_WEB_URL: "http://127.0.0.1:3100" },
       });
       if (result.dryRun) throw new Error("unexpected dry run");
       const launchEnv = (startRunnerV2Bootstrap as jest.Mock).mock.calls.at(-1)![0].env as Record<string, string>;
@@ -165,9 +168,31 @@ describe("typed direct run arguments", () => {
       });
       expect(launchEnv.MENTIKO_WEB_URL).toBe("http://127.0.0.1:3100");
     } finally {
-      if (previousSecret === undefined) delete process.env.MENTIKO_DEV_SECRET;
-      else process.env.MENTIKO_DEV_SECRET = previousSecret;
       rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("marks the run failed and never launches when no secret can mint the token", async () => {
+    const bootstrapCalls = (startRunnerV2Bootstrap as jest.Mock).mock.calls.length;
+    delete process.env.BETTER_AUTH_SECRET;
+    delete process.env.SECRET_KEY;
+    Object.defineProperty(process.env, "NODE_ENV", { value: "production", configurable: true, writable: true });
+    const root = mkdtempSync(join(tmpdir(), "mentiko-direct-mint-fail-"));
+    const runsDir = join(root, "runs");
+    try {
+      await expect(runTypedDirect({
+        chainPath: join(root, "chain.json"), runsDir, runId: "run-mint-fail", debug: false,
+        env: { NODE_ENV: "production", MENTIKO_WEB_URL: "http://127.0.0.1:3100" },
+      })).rejects.toThrow("cli session token setup failed");
+      expect((startRunnerV2Bootstrap as jest.Mock).mock.calls.length).toBe(bootstrapCalls);
+      const runState = JSON.parse(readFileSync(join(runsDir, "run-mint-fail", "run.json"), "utf8"));
+      expect(runState.status).toBe("failed");
+      expect(runState.statusReason).toMatchObject({ actor: "system" });
+      expect(runState.statusReason.reason).toContain("BETTER_AUTH_SECRET is required in production");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      process.env.BETTER_AUTH_SECRET = "direct-run-test-secret";
+      Object.defineProperty(process.env, "NODE_ENV", { value: "test", configurable: true, writable: true });
     }
   });
 

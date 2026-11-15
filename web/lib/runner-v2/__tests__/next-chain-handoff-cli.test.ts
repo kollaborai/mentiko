@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 // next-chain-launch -> direct-run -> session-token pulls in jose (ESM-only).
-jest.mock("jose", () => ({ __esModule: true, SignJWT: jest.fn(), jwtVerify: jest.fn() }));
+// Crypto-backed HS256 mirror so minting works and mismatches fail loudly.
+jest.mock("jose", () => require("./helpers/functional-jose"));
 
 jest.mock("@/lib/pty/pty-client", () => ({
   pty: {
@@ -122,6 +123,11 @@ describe("next-chain handoff CLI selection", () => {
     const monitorCall = ptyMock.spawn.mock.calls.find(([name]) => String(name).startsWith("monitor-"));
     const monitorEnv = (monitorCall?.[3] as { env?: NodeJS.ProcessEnv } | undefined)?.env;
     expect(monitorEnv?.MENTIKO_CLI).toBe(selection.environmentCli);
+    // The launch minted an ops session token; a mint failure now aborts the
+    // run instead of warning, so its presence is itself the no-regression
+    // assertion for issue #95.
+    expect(typeof monitorEnv?.MENTIKO_SESSION_TOKEN).toBe("string");
+    expect(monitorEnv?.MENTIKO_SESSION_ID).toBe(`chain-${child.runId}`);
 
     if (!monitorEnv) throw new Error("writer monitor did not receive its run context");
     const completionContext = createCompletionLaunchContext(monitorEnv);
