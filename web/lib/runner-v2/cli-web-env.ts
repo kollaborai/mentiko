@@ -15,58 +15,58 @@ let cachedWebEnv: CliWebEnv | null = null;
  * not; without it, a CLI-minted token is signed with the separate local
  * development secret and every ops call returns 401.
  *
- * Reads the web app's env files and returns ONLY the signing secret and web
- * origin. process.env is restored afterwards: the web env files also hold
+ * Reads ONLY the signing secret and web origin from the web app's env files,
+ * in Next's file order, without touching process.env: those files also hold
  * OAuth secrets, tokens and runtime switches (e.g. MENTIKO_PTY_MGR_BIN) that
- * must not leak into the CLI process or the agents it launches.
+ * must not reach the CLI process or the agents it launches. Synchronous, so
+ * parallel batch launches cannot observe a half-loaded result.
  */
-export async function loadWebEnvForCliSigning(): Promise<CliWebEnv> {
+export function loadWebEnvForCliSigning(): CliWebEnv {
   if (cachedWebEnv) return cachedWebEnv;
-  cachedWebEnv = {};
-  const snapshot = { ...process.env };
+  const found: CliWebEnv = {};
   try {
     const webDir = join(config.codeRoot, "web");
-    if (!existsSync(webDir)) return cachedWebEnv;
-    const { loadEnvConfig } = await import("@next/env");
-    // Match the server's file set: `next dev` loads .env.development*, a
-    // production server loads .env.production*. Without the flag @next/env
-    // always picks the production files.
-    loadEnvConfig(webDir, process.env.NODE_ENV !== "production");
-    for (const key of CLI_WEB_ENV_KEYS) {
-      const value = process.env[key];
-      // keep only values the files added; caller-set values stay the caller's
-      if (value && snapshot[key] === undefined) cachedWebEnv[key] = value;
+    for (const file of webEnvFiles()) {
+      const path = join(webDir, file);
+      if (!existsSync(path)) continue;
+      const parsed = parseEnvKeys(readFileSync(path, "utf8"));
+      // the first file that defines a key wins, like Next
+      for (const key of CLI_WEB_ENV_KEYS) if (found[key] === undefined && parsed[key]) found[key] = parsed[key];
     }
   } catch {
     // Env files are best effort; a missing root secret fails at mint time
     // with a clear error instead of launching an agent without ops access.
-  } finally {
-    for (const key of Object.keys(process.env)) {
-      if (!(key in snapshot)) delete process.env[key];
-    }
-    Object.assign(process.env, snapshot);
   }
-  return cachedWebEnv;
+  cachedWebEnv = found;
+  return found;
 }
 
-/**
- * Run fn with the web env-file signing secret visible to mintSessionToken
- * (which reads process.env), then remove it again so nothing launched later
- * inherits it.
- */
-export async function withWebSigningSecret<T>(webEnv: CliWebEnv, fn: () => Promise<T>): Promise<T> {
-  const added: string[] = [];
-  for (const key of ["BETTER_AUTH_SECRET", "SECRET_KEY"] as const) {
-    if (webEnv[key] && process.env[key] === undefined) {
-      process.env[key] = webEnv[key];
-      added.push(key);
-    }
+// Next's precedence: .env.$mode.local, .env.local (skipped in test), .env.$mode, .env
+function webEnvFiles(): string[] {
+  const mode = process.env.NODE_ENV === "production" ? "production" : process.env.NODE_ENV === "test" ? "test" : "development";
+  return [`.env.${mode}.local`, ...(mode === "test" ? [] : [".env.local"]), `.env.${mode}`, ".env"];
+}
+
+// ponytail: only the four keys above, KEY=value with optional quotes and
+// "export "; no ${VAR} expansion. Upgrade to @next/env's parser if a deploy
+// ever needs expansion in these keys.
+function parseEnvKeys(text: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const raw of text.split(/\r?\n/)) {
+    const m = raw.match(/^\s*(?:export\s+)?([A-Z_][A-Z0-9_]*)\s*=\s*(.*)$/);
+    if (!m || !(CLI_WEB_ENV_KEYS as readonly string[]).includes(m[1])) continue;
+    let value = m[2].trim();
+    const q = value[0];
+    if ((q === '"' || q === "'") && value.lastIndexOf(q) > 0) value = value.slice(1, value.lastIndexOf(q));
+    else value = value.replace(/\s+#.*$/, "");
+    out[m[1]] = value;
   }
-  try {
-    return await fn();
-  } finally {
-    for (const key of added) delete process.env[key];
-  }
+  return out;
+}
+
+/** Root signing secret for the CLI: caller env first, then the web env files. */
+export function cliSigningSecret(env: NodeJS.ProcessEnv, webEnv: CliWebEnv): string | undefined {
+  return env.BETTER_AUTH_SECRET?.trim() || env.SECRET_KEY?.trim() || webEnv.BETTER_AUTH_SECRET || webEnv.SECRET_KEY || undefined;
 }
 
 /**

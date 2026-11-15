@@ -6,8 +6,8 @@ const ISSUER  = "mentiko-web";
 const AUDIENCE = "mentiko-mcp-ops";
 const TTL_SECONDS = 86400; // 24h — matches practical engine session lifetime; revocation via token blocklist is follow-up work
 
-function getSecret(): Uint8Array {
-  return new TextEncoder().encode(resolveAppSecret("session-token"));
+function getSecret(rootSecret?: string): Uint8Array {
+  return new TextEncoder().encode(rootSecret ?? resolveAppSecret("session-token"));
 }
 
 export interface SessionTokenClaims {
@@ -19,7 +19,13 @@ export interface SessionTokenClaims {
   scopes?: string[];
 }
 
-export async function mintSessionToken(claims: SessionTokenClaims): Promise<string> {
+/**
+ * `rootSecret` lets a caller sign with an explicit root secret (the same
+ * value resolveAppSecret("session-token") returns server-side) instead of
+ * reading process.env, e.g. the CLI signing with the web app's env-file
+ * secret.
+ */
+export async function mintSessionToken(claims: SessionTokenClaims, options: { rootSecret?: string } = {}): Promise<string> {
   const payload: Record<string, unknown> = { ns: claims.ns, org: claims.org };
   if (claims.role) payload.role = claims.role;
   if (claims.scopes?.length) payload.scopes = claims.scopes;
@@ -32,7 +38,7 @@ export async function mintSessionToken(claims: SessionTokenClaims): Promise<stri
     .setJti(claims.jti)
     .setIssuedAt()
     .setExpirationTime(`${TTL_SECONDS}s`)
-    .sign(getSecret());
+    .sign(getSecret(options.rootSecret));
 }
 
 export async function verifySessionToken(token: string): Promise<SessionTokenClaims> {

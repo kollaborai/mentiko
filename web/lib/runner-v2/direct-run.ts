@@ -2,7 +2,7 @@ import { mkdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import config from "@/lib/config";
 import { mintSessionToken } from "@/lib/auth/session-token";
-import { WebAppUnreachableError, assertWebAcceptsToken, loadWebEnvForCliSigning, resolveWebOrigin, withWebSigningSecret } from "@/lib/runner-v2/cli-web-env";
+import { WebAppUnreachableError, assertWebAcceptsToken, cliSigningSecret, loadWebEnvForCliSigning, resolveWebOrigin } from "@/lib/runner-v2/cli-web-env";
 import { startRunnerV2Bootstrap } from "@/lib/runner-v2/bootstrap-executor";
 import { loadNormalizedChainDefinition, type ChainRecord } from "@/lib/runner-v2/chain-contract";
 import { validateChainFile } from "@/lib/runner-v2/chain-validation-cli";
@@ -164,15 +164,15 @@ export async function runTypedDirect(options: DirectRunOptions): Promise<DirectR
  */
 async function withCliSessionContext(env: NodeJS.ProcessEnv, runId: string): Promise<NodeJS.ProcessEnv> {
   if (env.MENTIKO_SESSION_TOKEN?.trim()) return env;
-  const webEnv = await loadWebEnvForCliSigning();
+  const webEnv = loadWebEnvForCliSigning();
   const sessionId = `chain-${runId}`;
-  const sessionToken = await withWebSigningSecret(webEnv, () => mintSessionToken({
+  const sessionToken = await mintSessionToken({
     sub: "cli",
     jti: sessionId,
     ns: env.NAMESPACE_ID || "default",
     org: env.ORG_ID || "default",
     scopes: ["ops:*"],
-  }));
+  }, { rootSecret: cliSigningSecret(env, webEnv) });
   const webUrl = resolveWebOrigin(env, webEnv);
   try {
     await assertWebAcceptsToken(webUrl, sessionToken);

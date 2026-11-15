@@ -138,6 +138,42 @@ describe("CLI session token signing across the CLI/web boundary", () => {
     });
   });
 
+  it("signs parallel first-use launches (batch) with the web secret and never puts it in process.env", async () => {
+    const { runTypedDirect } = await import("@/lib/runner-v2/direct-run");
+    const { startRunnerV2Bootstrap } = await import("@/lib/runner-v2/bootstrap-executor");
+    const seen: Array<string | undefined> = [];
+    (startRunnerV2Bootstrap as jest.Mock).mockImplementation(async () => {
+      seen.push(process.env.BETTER_AUTH_SECRET);
+      return { support: "supported" };
+    });
+    const runsDir = join(fakeCodeRoot, "runs");
+    await Promise.all(["run-batch-a", "run-batch-b"].map((runId) => runTypedDirect({
+      chainPath: join(fakeCodeRoot, "chain.json"), runsDir, runId, debug: false,
+      env: { NODE_ENV: "test", NAMESPACE_ID: "ns-a", ORG_ID: "org-a" },
+    })));
+    expect(seen).toEqual([undefined, undefined]);
+    expect(process.env.BETTER_AUTH_SECRET).toBeUndefined();
+    const tokens = (startRunnerV2Bootstrap as jest.Mock).mock.calls.slice(-2).map((call) => call[0].env.MENTIKO_SESSION_TOKEN as string);
+    process.env.BETTER_AUTH_SECRET = WEB_ENV_SECRET;
+    jest.resetModules();
+    const { verifySessionToken: serverVerify } = await import("@/lib/auth/session-token");
+    for (const token of tokens) await expect(serverVerify(token)).resolves.toMatchObject({ sub: "cli" });
+  });
+
+  it("reads quoted, exported and commented values for only the signing keys", async () => {
+    writeFileSync(join(fakeCodeRoot, "web", ".env"), [
+      'export BETTER_AUTH_SECRET="quoted secret # not a comment"',
+      "MENTIKO_WEB_URL=http://from-file:4100 # trailing comment",
+      "GITHUB_TOKEN=must-not-be-read",
+    ].join("\n"));
+    const { loadWebEnvForCliSigning } = await import("@/lib/runner-v2/cli-web-env");
+    expect(loadWebEnvForCliSigning()).toEqual({
+      BETTER_AUTH_SECRET: "quoted secret # not a comment",
+      MENTIKO_WEB_URL: "http://from-file:4100",
+    });
+    expect(process.env.GITHUB_TOKEN).toBeUndefined();
+  });
+
   it("fails server-side verification when the signing secrets differ", async () => {
     const { mintSessionToken } = await import("@/lib/auth/session-token");
     process.env.BETTER_AUTH_SECRET = "signing-shell-secret";
