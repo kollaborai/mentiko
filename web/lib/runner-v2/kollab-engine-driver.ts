@@ -6,7 +6,9 @@ import type { MonitorObservation } from "@/lib/runner-v2/monitor-types";
 import {
   captureAssertsAgentComplete,
   captureHash,
+  computeLatch,
   findCompletionEventFile,
+  latchExists,
   readDeclaredEmits,
   writeLatch,
 } from "@/lib/runner-v2/monitor-io";
@@ -22,12 +24,14 @@ import {
 //   GET  /sessions/{id}          -> 200 vs 404 liveness
 //   DELETE /sessions/{id}        -> hard stop (POST /cancel is a NO-OP for ACP turns)
 //
-// Completion keeps the monitor's exact rule: AGENT_COMPLETE in the stream AND
-// the declared event file on disk (monitor-io helpers reused, never duplicated).
-// The shared monitor's own latch and death/stall recovery are OR-shaped, so this
-// adapter re-asserts the AND invariant on every terminal path it composes. A
-// session whose turn ends with a stop_reason other than end_turn surfaces as a
-// stall reason instead of success.
+// Completion keeps the monitor's exact PTY rule: the sticky OR latch
+// (computeLatch) fires on the durable marker OR the declared event file, and
+// the live terminal handlers own event-first recovery exactly as they do for
+// PTY sessions (monitor-live-io.ts). This adapter never re-decides completion;
+// it feeds the engine's analog of the PTY signals (capture text, processGone,
+// completion-event presence, durable marker) and passes the live terminal
+// handlers through untouched. A session whose turn ends with a stop_reason
+// other than end_turn surfaces as a stall reason instead of success.
 
 export class EngineUnavailableError extends Error {
   constructor(message: string) {
@@ -78,6 +82,13 @@ export interface CreateSessionInput {
 }
 
 export type EngineSseEvent = Record<string, unknown> & { type?: string };
+
+/**
+ * Why a message stream ended, as the generator's return value. Only "clean"
+ * (the server closed the body) proves end-of-turn; an idle timeout or caller
+ * abort ended the read, not the turn. "error" never gets here — it throws.
+ */
+export type StreamEndReason = "clean" | "idle-timeout" | "caller-abort";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 const DEFAULT_IDLE_TIMEOUT_MS = 300_000;
@@ -190,7 +201,7 @@ export class KollabEngineClient {
     sessionId: string,
     content: string,
     signal?: AbortSignal,
-  ): AsyncGenerator<EngineSseEvent> {
+  ): AsyncGenerator<EngineSseEvent, StreamEndReason, unknown> {
     const controller = new AbortController();
     const relayCallerAbort = () => controller.abort();
     if (signal) {
@@ -223,9 +234,13 @@ export class KollabEngineClient {
     const decoder = new TextDecoder();
     let buffer = "";
     let idle: ReturnType<typeof setTimeout> | undefined;
+    let idleTimedOut = false;
     const armIdle = () => {
       if (idle) clearTimeout(idle);
-      idle = setTimeout(() => controller.abort(), this.idleTimeoutMs);
+      idle = setTimeout(() => {
+        idleTimedOut = true;
+        controller.abort();
+      }, this.idleTimeoutMs);
     };
     try {
       armIdle();
@@ -244,13 +259,16 @@ export class KollabEngineClient {
       }
       const tail = parseSseLine(buffer);
       if (tail) yield tail;
+      return "clean";
     } catch (error) {
-      // An idle-abort or caller abort ends iteration quietly: stalled output is
-      // the monitor's signal (frozen captureHash -> stale cycles), not a
-      // transport crash.
-      if (!controller.signal.aborted) {
-        throw toEngineError(error, "message stream");
+      // An idle-abort or caller abort ends iteration quietly, but WITH its
+      // reason as the return value: stalled output is the monitor's signal
+      // (frozen captureHash -> stale cycles), not a transport crash — yet the
+      // drain must know the turn was NOT proven over.
+      if (controller.signal.aborted) {
+        return idleTimedOut ? "idle-timeout" : "caller-abort";
       }
+      throw toEngineError(error, "message stream");
     } finally {
       if (idle) clearTimeout(idle);
       if (signal) signal.removeEventListener("abort", relayCallerAbort);
@@ -434,9 +452,8 @@ interface EngineSessionState {
   text: string;
   /** Partial line carried across token fragments — marker detection needs real line boundaries. */
   lineBuffer: string;
+  /** The engine path's durable marker: a standalone AGENT_COMPLETE line proven in the stream. */
   agentCompleteSeen: boolean;
-  /** Sticky: the marker AND the event file were both observed at least once. */
-  bothSeen: boolean;
   lastStopReason: string | null;
   /** Message send hit a session-level failure (e.g. 409 daemon not running) or an engine stream error. */
   dead: boolean;
@@ -463,8 +480,7 @@ interface TrackedDrain {
  * plus stop() (hard teardown) and completion/stall probes. The terminal-side
  * handlers (onComplete/onDied/onStalled/... state files) are unchanged live
  * monitor behavior and are composed in by createKollabEngineMonitorIO — this
- * module never duplicates the completion rule, but it DOES re-assert its AND
- * shape on every terminal path (see createKollabEngineMonitorIO).
+ * module never duplicates or re-decides the completion rule.
  */
 export class KollabEngineDriver {
   readonly client: KollabEngineClient;
@@ -492,7 +508,6 @@ export class KollabEngineDriver {
       text: "",
       lineBuffer: "",
       agentCompleteSeen: false,
-      bothSeen: false,
       lastStopReason: null,
       dead: false,
       stallReason: null,
@@ -546,21 +561,18 @@ export class KollabEngineDriver {
     }
   }
 
-  /** MonitorDriverIO.observe: output hash + AND-shaped completion latch from engine state. */
+  /** MonitorDriverIO.observe: PTY-shaped signals + the shared OR latch, unchanged. */
   async observe(sessionId: string): Promise<Omit<MonitorObservation, "sessionAlive">> {
     const state = this.requireState(sessionId);
-    const eventPresent = this.refreshBothSeen(state);
     return {
       // No local child process to watch; a dead engine session surfaces here.
       processGone: state.dead,
       captureHash: captureHash(state.text, 20),
-      completionEventPresent: eventPresent,
-      // The AND invariant, enforced here because the shared monitor's own latch
-      // is OR-shaped (marker OR event). Only a session that produced BOTH its
-      // AGENT_COMPLETE line and this run's declared event may report latched;
-      // once both held, the latch is sticky (marker/event may scroll or be
-      // consumed afterward).
-      latched: state.bothSeen,
+      completionEventPresent: Boolean(this.findEventFile()),
+      // The PTY rule, verbatim: the shared sticky OR latch over the durable
+      // marker (here: the stream's own proven AGENT_COMPLETE line, not the
+      // possibly-glued accumulated capture) and the declared completion event.
+      latched: this.latch(state),
       // Context exhaustion on the engine path is a turn-level failure surfaced
       // via stallReason (turn_complete stop_reason), not a repeated CLI error
       // tail; the reducer's debounce has no equivalent signal to count here.
@@ -604,13 +616,11 @@ export class KollabEngineDriver {
   }
 
   /**
-   * The completion rule, unchanged: AGENT_COMPLETE asserted in the agent's own
-   * output AND this run's declared completion event on disk. Either alone is
-   * not success. Sticky once both have held.
+   * MonitorDriverIO.recheckCompletion: the PTY probe, verbatim — the shared OR
+   * latch over fresh signals, persisted so a later poll still counts it.
    */
-  async completionSatisfied(sessionId: string): Promise<boolean> {
-    const state = this.requireState(sessionId);
-    return this.refreshBothSeen(state);
+  async recheckCompletion(sessionId: string): Promise<boolean> {
+    return this.latch(this.requireState(sessionId));
   }
 
   /**
@@ -620,11 +630,6 @@ export class KollabEngineDriver {
    */
   stallReason(sessionId: string): string | null {
     return this.sessions.get(sessionId)?.stallReason ?? null;
-  }
-
-  /** Whether this run's declared completion event is on disk (single-signal probe). */
-  completionEventPresent(): boolean {
-    return Boolean(this.findEventFile());
   }
 
   private findEventFile(): string {
@@ -637,15 +642,15 @@ export class KollabEngineDriver {
     });
   }
 
-  /** Compute the AND latch; sticky in state once both signals have held. */
-  private refreshBothSeen(state: EngineSessionState): boolean {
-    if (state.bothSeen) return true;
-    if (state.agentCompleteSeen && Boolean(this.findEventFile())) {
-      state.bothSeen = true;
-      writeLatch(this.context.sessionName, this.context.monitorStateDir);
-      return true;
-    }
-    return false;
+  /** The PTY latch decision, unchanged: sticky, durable marker OR event file. */
+  private latch(state: EngineSessionState): boolean {
+    const latched = computeLatch({
+      alreadyLatched: latchExists(this.context.sessionName, this.context.monitorStateDir),
+      markerDurable: state.agentCompleteSeen,
+      completionEventPresent: Boolean(this.findEventFile()),
+    });
+    if (latched) writeLatch(this.context.sessionName, this.context.monitorStateDir);
+    return latched;
   }
 
   private requireState(sessionId: string): EngineSessionState {
@@ -657,18 +662,25 @@ export class KollabEngineDriver {
   }
 
   private async drain(
-    stream: AsyncGenerator<EngineSseEvent>,
+    stream: AsyncGenerator<EngineSseEvent, StreamEndReason, unknown>,
     state: EngineSessionState,
     controller: AbortController,
   ): Promise<void> {
+    const iterator = stream[Symbol.asyncIterator]();
     try {
-      for await (const event of stream) {
-        this.applyEvent(state, event);
+      while (true) {
+        const next = await iterator.next();
+        if (next.done) {
+          // Only a proven clean stream end proves end-of-turn (a trailing
+          // marker line without a final newline is then the agent's real last
+          // line). An idle timeout or abort ended the READ, not the turn: the
+          // partial line stays buffered so later text can complete or refute
+          // it (turn_complete already flushed in applyEvent).
+          if (next.value === "clean" && !controller.signal.aborted) this.endOfTurn(state);
+          return;
+        }
+        this.applyEvent(state, next.value);
       }
-      // Clean stream end proves end-of-turn: a trailing marker line without a
-      // final newline is the agent's real last line. An aborted stream does
-      // NOT prove that (the turn may still be in flight), so no flush there.
-      if (!controller.signal.aborted) this.endOfTurn(state);
     } catch (error) {
       // Session-level failure (409 daemon not running, non-200, transport):
       // mark dead so the next observe() reports processGone and the monitor's
@@ -765,14 +777,9 @@ export type MonitorTerminalIO = Omit<
  * Compose the engine driver with the existing terminal-side monitor handlers
  * (state files, completion bridge, death/stall classification) into a full
  * MonitorDriverIO. The wiring lane (L2c) builds the terminal handlers the same
- * way the PTY monitor does today; nothing here reimplements them.
- *
- * The shared monitor's own completion surfaces are OR-shaped (its latch fires
- * on marker OR event; its live onDied/onStalled recover from the event file
- * alone). While the engine driver owns the session, that must not stand: every
- * terminal path below re-asserts the AND invariant — completion is only ever
- * reported (and the completion handler only ever launched) when the agent's
- * AGENT_COMPLETE line AND this run's completion event were both seen.
+ * way the PTY monitor does today; nothing here reimplements them. Every
+ * terminal handler is passed through untouched: the live handlers' event-first
+ * recovery is exactly the PTY behavior this driver must match.
  */
 export function createKollabEngineMonitorIO(
   driver: KollabEngineDriver,
@@ -782,28 +789,6 @@ export function createKollabEngineMonitorIO(
   const sessionName = driver.sessionName;
   const log = (message: string) => {
     if (terminal.log) terminal.log(message);
-  };
-
-  // Terminal mutation guard for the death/stall/context paths: complete only
-  // when BOTH signals hold; when the event file exists without the agent's
-  // marker, the terminal handler's own event-first recovery would launch the
-  // completion bridge on the event alone, so it is not invoked at all — the
-  // run stays terminal and reconcile late-event recovery owns the orphan.
-  const guarded = async (
-    session: string,
-    action: () => Promise<"complete" | "terminal">,
-  ): Promise<"complete" | "terminal"> => {
-    if (await driver.completionSatisfied(sessionId)) {
-      await terminal.onComplete(session);
-      return "complete";
-    }
-    if (driver.completionEventPresent()) {
-      log(
-        `kollab-engine-driver: ${session} ended with a completion event but no AGENT_COMPLETE in the agent stream; refusing single-signal completion`,
-      );
-      return "terminal";
-    }
-    return action();
   };
 
   return {
@@ -821,26 +806,17 @@ export function createKollabEngineMonitorIO(
       assertSession(session, sessionName);
       return driver.sendNudge(sessionId, message);
     },
-    // One authoritative probe right before any terminal mutation: both halves
-    // of the completion rule, freshly read.
     recheckCompletion: async (session) => {
       assertSession(session, sessionName);
-      return driver.completionSatisfied(sessionId);
+      return driver.recheckCompletion(sessionId);
     },
     onComplete: async (session) => {
       assertSession(session, sessionName);
-      // The reducer only reaches the complete action through the AND-shaped
-      // latch above, but the success action itself still re-asserts both
-      // signals before launching the completion bridge (race guard).
-      if (await driver.completionSatisfied(sessionId)) {
-        await terminal.onComplete(session);
-        return;
-      }
-      log(`kollab-engine-driver: ${session} complete action without both signals; skipping completion handler`);
+      await terminal.onComplete(session);
     },
     onDied: async (session) => {
       assertSession(session, sessionName);
-      return guarded(session, () => terminal.onDied(session));
+      return terminal.onDied(session);
     },
     onStalled: async (session, kind, count) => {
       assertSession(session, sessionName);
@@ -848,11 +824,11 @@ export function createKollabEngineMonitorIO(
       // error) instead of a generic quiescence label.
       const reason = driver.stallReason(sessionId);
       if (reason) log(`kollab-engine-driver: ${session} stalled: ${reason}`);
-      return guarded(session, () => terminal.onStalled(session, kind, count));
+      return terminal.onStalled(session, kind, count);
     },
     onContextExhausted: async (session) => {
       assertSession(session, sessionName);
-      return guarded(session, () => terminal.onContextExhausted(session));
+      return terminal.onContextExhausted(session);
     },
     sleep: terminal.sleep,
     loadState: terminal.loadState,

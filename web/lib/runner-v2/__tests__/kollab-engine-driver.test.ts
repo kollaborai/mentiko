@@ -19,8 +19,17 @@ import {
   type EngineSseEvent,
 } from "@/lib/runner-v2/kollab-engine-driver";
 import { serializeRunnerEvent } from "@/lib/runner-v2/events";
+import {
+  captureAssertsAgentComplete,
+  captureHash,
+  computeLatch,
+  findCompletionEventFile,
+  latchExists,
+  readDeclaredEmits,
+  writeLatch,
+} from "@/lib/runner-v2/monitor-io";
 import { runChainMonitor, type MonitorDriverIO } from "@/lib/runner-v2/monitor";
-import type { MonitorState } from "@/lib/runner-v2/monitor-types";
+import type { MonitorObservation, MonitorState } from "@/lib/runner-v2/monitor-types";
 
 // Fake kollabor_engine: enough of the spike-verified HTTP contract
 // (POST /sessions, POST /sessions/:id/message SSE, GET/DELETE /sessions/:id)
@@ -394,7 +403,23 @@ describe("driver adapter", () => {
     expect(driver["sessions"].get(sessionId)!.text).toBe("line one\nline two\n");
   });
 
-  it("completion needs BOTH AGENT_COMPLETE in the stream and the event file", async () => {
+  it("event-only completion latches exactly like the PTY observer", async () => {
+    // PTY rule (monitor-live-io/computeLatch): the declared event file alone
+    // latches — event-first recovery. The engine driver must not be stricter.
+    engine.messageScript = sse([{ type: "token", text: "still working\n" }]);
+    const driver = makeDriver(fixture, engine);
+    const sessionId = await startTurn(driver);
+    await waitFor(() => driver["sessions"].get(sessionId)!.text.includes("working"));
+    writeCompletionEvent(fixture);
+    const observation = await driver.observe(sessionId);
+    expect(observation.completionEventPresent).toBe(true);
+    expect(observation.latched).toBe(true); // the event alone latches, as in PTY
+    await expect(driver.recheckCompletion(sessionId)).resolves.toBe(true);
+  });
+
+  it("marker-only completion latches exactly like the PTY observer", async () => {
+    // PTY rule: the durable marker alone latches (durable-transcript marker on
+    // PTY; the stream's own proven AGENT_COMPLETE line here). No event file.
     engine.messageScript = sse([
       { type: "token", text: "working...\n" },
       { type: "token", text: "AGENT_COMPLETE\n" },
@@ -403,19 +428,9 @@ describe("driver adapter", () => {
     const driver = makeDriver(fixture, engine);
     const sessionId = await startTurn(driver);
     await waitFor(() => driver["sessions"].get(sessionId)!.agentCompleteSeen);
-
-    // Marker seen, no event file: not complete, and the AND rule means the
-    // marker alone must not latch the monitor either.
-    await expect(driver.completionSatisfied(sessionId)).resolves.toBe(false);
-    let observation = await driver.observe(sessionId);
+    const observation = await driver.observe(sessionId);
     expect(observation.completionEventPresent).toBe(false);
-    expect(observation.latched).toBe(false); // single signal never latches
-
-    // Event file alone (no marker) is still not complete.
-    writeCompletionEvent(fixture);
-    await expect(driver.completionSatisfied(sessionId)).resolves.toBe(true);
-    observation = await driver.observe(sessionId);
-    expect(observation.completionEventPresent).toBe(true);
+    expect(observation.latched).toBe(true); // the marker alone latches, as in PTY
   });
 
   it("a token event that is exactly AGENT_COMPLETE latches even when a message event glues text onto it", async () => {
@@ -431,16 +446,7 @@ describe("driver adapter", () => {
     const sessionId = await startTurn(driver);
     await waitFor(() => driver["sessions"].get(sessionId)!.agentCompleteSeen);
     writeCompletionEvent(fixture);
-    await expect(driver.completionSatisfied(sessionId)).resolves.toBe(true);
-  });
-
-  it("event file without the AGENT_COMPLETE marker never satisfies completion", async () => {
-    engine.messageScript = sse([{ type: "token", text: "still working\n" }]);
-    const driver = makeDriver(fixture, engine);
-    const sessionId = await startTurn(driver);
-    await waitFor(() => driver["sessions"].get(sessionId)!.text.includes("working"));
-    writeCompletionEvent(fixture);
-    await expect(driver.completionSatisfied(sessionId)).resolves.toBe(false);
+    await expect(driver.recheckCompletion(sessionId)).resolves.toBe(true);
   });
 
   it("a non-end_turn stop reason surfaces as the stall reason", async () => {
@@ -535,8 +541,9 @@ describe("marker line boundaries (P1: tokens are fragments)", () => {
     }
     // settle: let the stream end flush any trailing partial line
     await new Promise((resolve) => setTimeout(resolve, 100));
-    writeCompletionEvent(fixture);
-    await expect(driver.completionSatisfied(sessionId)).resolves.toBe(expected);
+    // Assert the durable marker signal itself (the event file is irrelevant
+    // to line-boundary semantics under the PTY OR latch).
+    expect(driver["sessions"].get(sessionId)!.agentCompleteSeen).toBe(expected);
     return driver;
   };
 
@@ -642,6 +649,77 @@ describe("stream abort and drain tracking (P1: idle timeout must cancel the stre
     await new Promise<void>((resolve) => server.close(() => resolve()));
     for (const socket of sockets) socket.destroy();
   });
+
+  it("idle abort does NOT flush a trailing partial AGENT_COMPLETE token (P1: idle != end of turn)", async () => {
+    // The server sends the marker token WITHOUT a trailing newline, then
+    // stalls until the idle timeout, with the event file present. The token
+    // must never latch the marker: an aborted read proves nothing about the
+    // turn, and later text could still supply a suffix. (The event file may
+    // still complete the run per PTY event-first semantics — assert the
+    // marker state specifically.)
+    const sockets = new Set<Socket>();
+    const server = createServer((req, res) => {
+      if (req.url === "/sessions" && req.method === "POST") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ session_id: "sess-1" }));
+        return;
+      }
+      if (req.url === "/sessions/sess-1/message") {
+        res.writeHead(200, { "Content-Type": "text/event-stream" });
+        // partial marker line: no trailing newline, then stall forever
+        res.write('data: {"type":"token","text":"AGENT_COMPLETE"}\n\n');
+        return; // never ends
+      }
+      if (req.url === "/sessions/sess-1" && req.method === "DELETE") {
+        res.writeHead(200);
+        res.end("{}");
+        return;
+      }
+      if (req.url === "/sessions/sess-1" && req.method === "GET") {
+        res.writeHead(200);
+        res.end("{}");
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    server.keepAliveTimeout = 300;
+    server.on("connection", (socket) => {
+      sockets.add(socket);
+      socket.on("close", () => sockets.delete(socket));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const localFixture = { ...fixture, env: { KOLLABOR_ENGINE_URL: baseUrl, KOLLAB_CONFIG_DIR: fixture.configDir } };
+    const client = new KollabEngineClient({ env: localFixture.env, requestTimeoutMs: 1_000, idleTimeoutMs: 200 });
+    const driver = new KollabEngineDriver(client, {
+      sessionName: SESSION_NAME,
+      chainPath: fixture.chainPath,
+      runId: RUN_ID,
+      agentId: AGENT_ID,
+      eventsDir: fixture.eventsDir,
+      workspace: join(fixture.root, "ws"),
+      cli: "claude",
+      monitorStateDir: join(fixture.root, "monitor-state"),
+    });
+    writeCompletionEvent(fixture);
+    const sessionId = await driver.start();
+    driver.send(sessionId, "do the thing");
+    // the drain must end via the idle timeout (not a clean end, not stop())
+    await waitFor(() => (driver["drains"].get(sessionId) ?? []).length === 0, 3_000);
+    const state = driver["sessions"].get(sessionId)!;
+    expect(state.agentCompleteSeen).toBe(false); // the token never completed a line
+    expect(state.lineBuffer).toBe("AGENT_COMPLETE"); // still buffered: undecided
+    // PTY semantics per item 1: the event file may still complete the run —
+    // via the event, never via the aborted partial marker.
+    const observation = await driver.observe(sessionId);
+    expect(observation.latched).toBe(true);
+    await driver.stop(sessionId);
+    await waitFor(() => sockets.size === 0, 3_000);
+    expect(sockets.size).toBe(0);
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    for (const socket of sockets) socket.destroy();
+  });
 });
 
 describe("bounded control bodies (P2: body reads need a deadline)", () => {
@@ -736,7 +814,7 @@ describe("probe debounce and teardown retry (P2)", () => {
   });
 });
 
-describe("runChainMonitor integration (P1: AND completion on every terminal path)", () => {
+describe("runChainMonitor integration (PTY completion semantics)", () => {
   function makeTerminal() {
     const calls: string[] = [];
     const state: MonitorState = { prevHash: "", staleCount: 0, nudgeCount: 0, nudgeEchoGrace: 0, contextExhaustedStreak: 0 };
@@ -766,23 +844,21 @@ describe("runChainMonitor integration (P1: AND completion on every terminal path
     );
   }
 
-  it("marker only (no event file) never completes; the terminal stall handler records it", async () => {
+  it("marker only (no event file) completes, exactly as PTY latches on its durable marker", async () => {
     engine.messageScript = sse([
       { type: "token", text: "working\nAGENT_COMPLETE\n" },
     ]);
     const driver = makeDriver(fixture, engine);
     const sessionId = await startTurn(driver);
     await waitFor(() => driver["sessions"].get(sessionId)!.agentCompleteSeen);
-    engine.messageScript = []; // nudges add no output
     const { calls, terminal } = makeTerminal();
     const io = createKollabEngineMonitorIO(driver, sessionId, terminal);
     const result = await runMonitor(io);
-    expect(result.reason).toBe("stalled-blocked");
-    expect(calls).not.toContain("onComplete");
-    expect(calls).toContain("onStalled:blocked:2");
+    expect(result.reason).toBe("complete");
+    expect(calls).toContain("onComplete");
   });
 
-  it("event file only (no marker) never completes and the terminal stall handler is suppressed", async () => {
+  it("event file only (no marker) completes through event-first recovery, exactly as PTY", async () => {
     engine.messageScript = sse([{ type: "token", text: "working\n" }]);
     const driver = makeDriver(fixture, engine);
     const sessionId = await startTurn(driver);
@@ -792,10 +868,8 @@ describe("runChainMonitor integration (P1: AND completion on every terminal path
     const { calls, terminal } = makeTerminal();
     const io = createKollabEngineMonitorIO(driver, sessionId, terminal);
     const result = await runMonitor(io);
-    expect(result.reason).not.toBe("complete");
-    expect(calls).not.toContain("onComplete");
-    expect(calls.filter((c) => c.startsWith("onStalled"))).toEqual([]);
-    expect(calls.some((c) => c.includes("refusing single-signal completion"))).toBe(true);
+    expect(result.reason).toBe("complete");
+    expect(calls).toContain("onComplete");
   });
 
   it("marker AND event complete through the real monitor", async () => {
@@ -815,7 +889,7 @@ describe("runChainMonitor integration (P1: AND completion on every terminal path
     expect(calls).not.toContain("onDied");
   });
 
-  it("death race with event-only evidence does not complete and does not run the death handler", async () => {
+  it("death race with event-only evidence completes via recheckCompletion, exactly as PTY", async () => {
     engine.messageStatus = 409; // message send fails -> session dead
     const driver = makeDriver(fixture, engine);
     const sessionId = await startTurn(driver);
@@ -824,10 +898,9 @@ describe("runChainMonitor integration (P1: AND completion on every terminal path
     const { calls, terminal } = makeTerminal();
     const io = createKollabEngineMonitorIO(driver, sessionId, terminal);
     const result = await runMonitor(io);
-    expect(result.reason).toBe("died");
-    expect(calls).not.toContain("onComplete");
-    expect(calls).not.toContain("onDied"); // suppressed: its event-first recovery would complete
-    expect(calls.some((c) => c.includes("refusing single-signal completion"))).toBe(true);
+    expect(result.reason).toBe("complete");
+    expect(calls).toContain("onComplete");
+    expect(calls).not.toContain("onDied"); // the pre-mutation recheckCompletion closed the race
   });
 
   it("death race with both signals completes via the completion handler", async () => {
@@ -843,6 +916,73 @@ describe("runChainMonitor integration (P1: AND completion on every terminal path
     const io = createKollabEngineMonitorIO(driver, sessionId, terminal);
     const result = await runMonitor(io);
     expect(result.reason).toBe("complete");
+    expect(calls).toContain("onComplete");
+    expect(calls).not.toContain("onDied");
+  });
+
+  it("the same scenario yields the same monitor outcome through the PTY observer and the engine observer", async () => {
+    // Scenario: agent output ends with a standalone AGENT_COMPLETE line and
+    // the declared event file is on disk. Run it once through a PTY observer
+    // composed exactly like monitor-live-io.ts observe() (capture text ->
+    // captureHash, durable-marker gate, event file, computeLatch, sticky latch
+    // file) and once through the engine driver's observe(); the real monitor
+    // must land on the same outcome for both.
+    engine.messageScript = sse([
+      { type: "token", text: "done\nAGENT_COMPLETE\n" },
+      { type: "turn_complete", stop_reason: "end_turn" },
+    ]);
+    const driver = makeDriver(fixture, engine);
+    const sessionId = await startTurn(driver);
+    writeCompletionEvent(fixture);
+    await waitFor(() => driver["sessions"].get(sessionId)!.agentCompleteSeen);
+
+    const ptyStateDir = join(fixture.root, "pty-monitor-state");
+    const ptyCapture = "done\nAGENT_COMPLETE\n";
+    const ptyObserve = async (): Promise<Omit<MonitorObservation, "sessionAlive">> => {
+      const completionEventPresent = Boolean(findCompletionEventFile({
+        eventsDir: fixture.eventsDir,
+        runId: RUN_ID,
+        agentId: AGENT_ID,
+        expectedEvent: readDeclaredEmits(fixture.chainPath, AGENT_ID),
+        sessionName: SESSION_NAME,
+      }));
+      const latched = computeLatch({
+        alreadyLatched: latchExists(SESSION_NAME, ptyStateDir),
+        markerDurable: captureAssertsAgentComplete(ptyCapture),
+        completionEventPresent,
+      });
+      if (latched) writeLatch(SESSION_NAME, ptyStateDir);
+      return {
+        processGone: false,
+        captureHash: captureHash(ptyCapture, 20),
+        completionEventPresent,
+        latched,
+        contextExhausted: false,
+      };
+    };
+    const ptyCalls: string[] = [];
+    const ptyIo: MonitorDriverIO = {
+      hasSession: async () => true,
+      observe: ptyObserve,
+      sendNudge: async () => {},
+      onComplete: async () => { ptyCalls.push("onComplete"); },
+      recheckCompletion: async () => (await ptyObserve()).latched,
+      onDied: async () => { ptyCalls.push("onDied"); return "terminal" as const; },
+      onStalled: async () => { ptyCalls.push("onStalled"); return "terminal" as const; },
+      onContextExhausted: async () => { ptyCalls.push("onContextExhausted"); return "terminal" as const; },
+      sleep: async () => {},
+      loadState: () => ({ prevHash: "", staleCount: 0, nudgeCount: 0, nudgeEchoGrace: 0, contextExhaustedStreak: 0 }),
+      saveState: () => {},
+      clearState: () => {},
+    };
+
+    const ptyResult = await runMonitor(ptyIo);
+    const { calls, terminal } = makeTerminal();
+    const engineResult = await runMonitor(createKollabEngineMonitorIO(driver, sessionId, terminal));
+
+    expect(ptyResult.reason).toBe("complete");
+    expect(ptyCalls).toEqual(["onComplete"]);
+    expect(engineResult.reason).toBe(ptyResult.reason);
     expect(calls).toContain("onComplete");
     expect(calls).not.toContain("onDied");
   });
