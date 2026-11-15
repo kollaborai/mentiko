@@ -27,7 +27,7 @@ import {
   getDecision,
   withDecisionResolutionLock,
 } from "@/lib/decisions/decision-storage";
-import { taskAddDep, taskGet, taskUpdate } from "@/lib/tasks/task-store";
+import { TaskDependencyCycleError, selectFollowUpTaskIds, taskAddDep, taskGet, taskUpdate } from "@/lib/tasks/task-store";
 import {
   applyLifecycleEvent,
   type LifecycleEffectDeps,
@@ -99,6 +99,8 @@ function stringOrUndefined(value: unknown): string | undefined {
 export function readLinkedDecisionSignal(input: {
   namespaceId: string;
   orgId: string;
+  /** The decision-blocked task being unblocked — never a valid follow-up of itself. */
+  parentTaskId: string;
   workspacePath?: string;
   metadata: Record<string, unknown>;
 }): LinkedDecisionSignal | undefined {
@@ -128,13 +130,25 @@ export function readLinkedDecisionSignal(input: {
   // minus the decision subtask itself and the epic/parent container that
   // received them. Mirrors the live resolution flow's followUpTaskIds so the
   // reducer parks the task behind exactly the tasks that must complete.
+  // Issue #113: selectFollowUpTaskIds additionally drops the blocked parent
+  // itself and any candidate that already (transitively) depends on it —
+  // historical resolution lists can contain both, and waiting on either
+  // deadlocks the lifecycle (shared policy with decision-resolution.ts).
+
   const resolution = decision?.resolution;
   const resolutionTaskIds = Array.isArray(resolution?.taskIds) ? resolution.taskIds : [];
   const epicId = resolution?.taskId;
-  const followUpTaskIds = Array.from(new Set(
-    resolutionTaskIds.filter((id): id is string =>
-      typeof id === "string" && id.length > 0 && id !== decisionTaskId && id !== epicId),
-  ));
+  // Candidates always come from the CURRENT decision's resolution. Persisted
+  // followup_task_ids can belong to an earlier decision, so they are not
+  // authoritative here (independent review of #116).
+  const candidates = resolutionTaskIds.filter((id): id is string =>
+    typeof id === "string" && id.length > 0 && id !== decisionTaskId && id !== epicId);
+  const followUpTaskIds = selectFollowUpTaskIds({
+    orgId: input.orgId,
+    parentTaskId: input.parentTaskId,
+    candidates,
+    namespaceId: input.namespaceId,
+  });
 
   // The run whose decision gate is spent: the anchored execution run, else
   // the audited run. Same preference order as the live approval path.
@@ -171,9 +185,9 @@ function makeUnblockDeps(input: UnblockTaskInput): LifecycleEffectDeps {
     startOutcomeSummary: async () => undefined,
     createDecisionGate: async () => undefined,
     blockOnDecision: () => undefined,
-    createFollowupDependencies: (depOrgId, taskId, followUpTaskId, depNamespaceId, depWorkspaceId) => {
-      taskAddDep(depOrgId, taskId, followUpTaskId, depNamespaceId, depWorkspaceId);
-    },
+    // Edges are inserted before the reducer runs (see apply); the effect is
+    // informational here and must not insert (and fail) a second time.
+    createFollowupDependencies: () => undefined,
     resumeOriginalTask: () => undefined,
     closeTask: () => undefined,
     clearDecisionGate: () => undefined,
@@ -201,6 +215,7 @@ export async function unblockTaskViaResolvedDecision(
     readLinkedDecisionSignal({
       namespaceId: input.namespaceId,
       orgId: input.orgId,
+      parentTaskId: input.taskId,
       workspacePath: input.workspacePath,
       metadata: meta,
     });
@@ -228,13 +243,34 @@ export async function unblockTaskViaResolvedDecision(
     }
 
     const state = hydrateLifecycleState(input.taskId, meta);
+    // Issue #113 P1: insert each follow-up edge FIRST and keep only the ids
+    // whose edge was actually accepted. Another writer can land the reverse
+    // edge after selection and before the insert; taskAddDep then rejects
+    // ours, and persisting that id would park the parent behind a follow-up
+    // that can never complete. The lifecycle state below is computed from the
+    // ACCEPTED edges only.
+    const acceptedFollowUpTaskIds: string[] = [];
+    for (const followUpTaskId of signal.followUpTaskIds) {
+      try {
+        taskAddDep(input.orgId, input.taskId, followUpTaskId, input.namespaceId, input.workspaceId);
+        acceptedFollowUpTaskIds.push(followUpTaskId);
+      } catch (error) {
+        if (error instanceof TaskDependencyCycleError) {
+          console.warn(
+            `[decision-unblock] dropped follow-up ${followUpTaskId}: edge ${input.taskId} -> ${followUpTaskId} was rejected (${error.message})`,
+          );
+          continue;
+        }
+        throw error;
+      }
+    }
     const transition = await applyLifecycleEvent({
       state,
       event: {
         type: "decision.resolved",
         taskId: input.taskId,
         decisionTaskId: signal.decisionTaskId ?? state.decisionTaskId ?? input.taskId,
-        followUpTaskIds: signal.followUpTaskIds,
+        followUpTaskIds: acceptedFollowUpTaskIds,
       },
       context: {
         request: input.request,
@@ -259,7 +295,7 @@ export async function unblockTaskViaResolvedDecision(
       outcome: "released",
       phase: transition.state.phase,
       ...(signal.decisionId ? { decisionId: signal.decisionId } : {}),
-      followUpTaskIds: signal.followUpTaskIds,
+      followUpTaskIds: acceptedFollowUpTaskIds,
     };
   };
 
