@@ -63,8 +63,11 @@ jobs:
       #   them deterministic (they drive a real HTTP server and real
       #   sockets). Excluded by name below until they are restructured;
       #   every other test in the suite still runs.
+      # NOTE: a negated positional pattern, not --testPathIgnorePatterns —
+      # the CLI flag replaces jest.config's testPathIgnorePatterns wholesale,
+      # which drags the e2e/ playwright specs and test helpers into the run.
       - name: Run jest suite
-        run: npm test -- --ci --testPathIgnorePatterns kollab-engine-driver.test.ts
+        run: npm test -- --ci "^(?!.*kollab-engine-driver)"
       - name: Run jest suite (kollab-engine-driver without the two timing-sensitive idle tests)
         run: npm test -- --ci lib/runner-v2/__tests__/kollab-engine-driver.test.ts --testNamePattern "^(?!.*idle)"
 
