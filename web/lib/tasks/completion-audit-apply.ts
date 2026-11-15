@@ -4,11 +4,12 @@
 // retry. All actions are idempotent on the audited run id and bounded by a
 // retry cap so audit-driven retries can't loop forever.
 
+import { createHash } from "node:crypto";
 import { taskAddDep, taskClose, taskGet, taskUpdate, taskMergeMeta, taskAddComment, taskList, taskRemoveDep } from "@/lib/tasks/task-store";
 import { releaseTaskRunScopeForRetry } from "@/lib/tasks/task-run-locator";
 import { createTaskDecision } from "@/lib/tasks/task-decision-link";
 import { createNotification } from "@/lib/notifications/notification-server";
-import { updateDecision } from "@/lib/decisions/decision-storage";
+import { updateDecision, withDecisionCreationClaim } from "@/lib/decisions/decision-storage";
 import { applyLifecycleEvent, type LifecycleEffectDeps } from "@/lib/orchestration/task-lifecycle-service";
 import { triggerAutoRunScan } from "@/lib/runs/auto-run-service";
 import { hydrateLifecycleState } from "@/lib/orchestration/task-lifecycle-hydrate";
@@ -239,48 +240,60 @@ async function createDecisionSubtask(
 ): Promise<DecisionGateResult> {
   const { namespaceId, orgId, task, audit, runId, runFingerprint, workspacePath } = input;
 
-  const existingDecisionTask = findExistingCompletionAuditDecisionSubtask(
-    namespaceId,
-    orgId,
-    task.id,
-    runId,
-    runFingerprint,
-  );
-  if (existingDecisionTask) {
+  // Issue #120 bug E: the dedup read below and createTaskDecision are not
+  // atomic together, so two overlapping sweeps (or workers) could both pass
+  // "no existing decision" and both create one. Serialize the check + create
+  // under the same mkdir-backed claim protocol the decision resolution lock
+  // uses, keyed on task + source run + fingerprint.
+  const claimKey = createHash("sha256")
+    .update([task.id, runId, runFingerprint ?? ""].join("\u0000"))
+    .digest("hex")
+    .slice(0, 32);
+
+  return withDecisionCreationClaim(namespaceId, orgId, claimKey, workspacePath, async () => {
+    const existingDecisionTask = findExistingCompletionAuditDecisionSubtask(
+      namespaceId,
+      orgId,
+      task.id,
+      runId,
+      runFingerprint,
+    );
+    if (existingDecisionTask) {
+      return {
+        action: "skipped" as const,
+        detail: "completion-audit decision already exists for this run",
+        decisionTaskId: existingDecisionTask.id,
+      };
+    }
+
+    // Claim the attempt before creating the decision, but do not set the durable
+    // completion_audit_run_id until side effects exist. Otherwise a thrown
+    // createTaskDecision permanently suppresses the human gate on the next sweep.
+    taskMergeMeta(orgId, task.id, {
+      completion_audit_claimed_run_id: runId,
+      ...(runFingerprint ? { completion_audit_claimed_run_fingerprint: runFingerprint } : {}),
+    }, namespaceId);
+
+    const prompt = buildDecisionPrompt(task, audit);
+    const { decision, task: decisionTask } = await createTaskDecision({
+      namespaceId,
+      orgId,
+      prompt,
+      source: "completion-audit",
+      workspacePath,
+      parentTaskId: task.id,
+      sourceRunId: runId,
+      runFingerprint,
+    });
+
     return {
-      action: "skipped",
-      detail: "completion-audit decision already exists for this run",
-      decisionTaskId: existingDecisionTask.id,
+      action: escalated ? "escalated_decision" : "decision_created",
+      detail: audit.reason,
+      decisionTaskId: decisionTask.id,
+      decision,
+      prompt,
     };
-  }
-
-  // Claim the attempt before creating the decision, but do not set the durable
-  // completion_audit_run_id until side effects exist. Otherwise a thrown
-  // createTaskDecision permanently suppresses the human gate on the next sweep.
-  taskMergeMeta(orgId, task.id, {
-    completion_audit_claimed_run_id: runId,
-    ...(runFingerprint ? { completion_audit_claimed_run_fingerprint: runFingerprint } : {}),
-  }, namespaceId);
-
-  const prompt = buildDecisionPrompt(task, audit);
-  const { decision, task: decisionTask } = await createTaskDecision({
-    namespaceId,
-    orgId,
-    prompt,
-    source: "completion-audit",
-    workspacePath,
-    parentTaskId: task.id,
-    sourceRunId: runId,
-    runFingerprint,
   });
-
-  return {
-    action: escalated ? "escalated_decision" : "decision_created",
-    detail: audit.reason,
-    decisionTaskId: decisionTask.id,
-    decision,
-    prompt,
-  };
 }
 
 function applyDecisionBlockSideEffects(
@@ -589,6 +602,11 @@ export async function applyCompletionAudit(
 
   if (audit.verdict === "retry") {
     if (decisionResult) {
+      // Issue #120 bug E: land the dependency and blocked status BEFORE the
+      // applied marker. If taskAddDep throws here, no marker is persisted, so
+      // a later pass re-enters, finds the existing decision subtask, and
+      // repairs the missing dependency instead of skipping forever.
+      applyDecisionBlockSideEffects(input, decisionResult);
       taskMergeMeta(orgId, task.id, {
         ...lifecycleMetadata(state),
         last_audit_verdict: "retry_escalated",
@@ -598,7 +616,6 @@ export async function applyCompletionAudit(
         completion_audit_apply_status: "applied",
         ...(runFingerprint ? { completion_audit_run_fingerprint: runFingerprint } : {}),
       }, namespaceId);
-      applyDecisionBlockSideEffects(input, decisionResult);
       await runDecisionPostPersistSideEffects(input, decisionResult);
       return publicDecisionResult(decisionResult);
     }
@@ -623,6 +640,10 @@ export async function applyCompletionAudit(
 
   // verdict === "decision" (or any escalation coerced upstream)
   if (decisionResult) {
+    // Issue #120 bug E: dependency + blocked status first, applied marker only
+    // once they exist — a failure in between is repaired by a later pass that
+    // finds the existing decision subtask and reapplies the side effects.
+    applyDecisionBlockSideEffects(input, decisionResult);
     taskMergeMeta(orgId, task.id, {
       ...lifecycleMetadata(state),
       last_audit_verdict: "decision",
@@ -636,7 +657,6 @@ export async function applyCompletionAudit(
       completion_audit_apply_status: "applied",
       ...(runFingerprint ? { completion_audit_run_fingerprint: runFingerprint } : {}),
     }, namespaceId);
-    applyDecisionBlockSideEffects(input, decisionResult);
     await runDecisionPostPersistSideEffects(input, decisionResult);
     return publicDecisionResult(decisionResult);
   }
