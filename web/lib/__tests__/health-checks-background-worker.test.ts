@@ -22,8 +22,12 @@ function writeOwner(paths: BackgroundWorkerStatePaths, pid: number, processIdent
   fs.writeFileSync(paths.ownerFile, JSON.stringify({ pid, ...(processIdentity ? { processIdentity } : {}) }));
 }
 
-function writeStatus(paths: BackgroundWorkerStatePaths, status: "running" | "stopped") {
-  fs.writeFileSync(paths.statusFile, JSON.stringify({ status, pid: process.pid }));
+function writeStatus(
+  paths: BackgroundWorkerStatePaths,
+  status: "running" | "stopped",
+  extra?: Partial<{ overrunningJobs: string[] }>,
+) {
+  fs.writeFileSync(paths.statusFile, JSON.stringify({ status, pid: process.pid, ...extra }));
 }
 
 describe("checkBackgroundWorker (issue #136)", () => {
@@ -111,6 +115,22 @@ describe("checkBackgroundWorker (issue #136)", () => {
     const result = await checkBackgroundWorker(paths);
     expect(result.status).toBe("warn");
     expect(result.message).toContain("stale");
+  });
+
+  it("reports warn (degraded) while a job is overrunning, then passes once it clears", async () => {
+    const paths = freshPaths();
+    writeOwner(paths, process.pid);
+    writeStatus(paths, "running", { overrunningJobs: ["watchdog", "reconciler"] });
+
+    const degraded = await checkBackgroundWorker(paths);
+    expect(degraded.status).toBe("warn");
+    expect(degraded.message).toContain("degraded");
+    expect(degraded.message).toContain("watchdog");
+    expect(degraded.message).toContain("reconciler");
+
+    writeStatus(paths, "running", { overrunningJobs: [] });
+    const recovered = await checkBackgroundWorker(paths);
+    expect(recovered.status).toBe("pass");
   });
 
   it("reports warn, not silence, when no worker is registered", async () => {

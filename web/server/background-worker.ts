@@ -28,7 +28,7 @@ import { runTypedWatchdogScan } from "../lib/runner-v2/watchdog";
 import { reconcileRoutedLaunchJobs } from "../lib/runner-v2/launch-job-runner";
 import { reconcileGitNodeWorkspaceCleanups } from "../lib/runner-v2/workspace-cleanup";
 import { createBackgroundWorkerShutdown } from "./background-worker-shutdown";
-import { createBoundedJob, describeJobError, runGuardedJob } from "./guarded-job";
+import { createBoundedJob, describeJobError, getOverrunningJobs, runGuardedJob } from "./guarded-job";
 import config from "../lib/config";
 import { writeLog } from "../lib/system/system-logger";
 
@@ -106,6 +106,9 @@ function currentStatus(note?: string) {
     pid: process.pid,
     startedAt,
     uptime,
+    // issue #136: the heartbeat refreshes this every 5s so /api/health sees a
+    // hung job as a degraded worker within one heartbeat interval
+    overrunningJobs: getOverrunningJobs(),
     lastCheck: scheduler.lastCheck ?? undefined,
     checkCount: scheduler.checkCount,
     lastReconcile: reconcilerState.lastRun,
@@ -382,8 +385,9 @@ async function start() {
   // installed BEFORE any startup work is awaited. One startup job that never
   // settles must not block every later tick, and the heartbeat keeps the
   // status file fresh even while startup work hangs. Every tick below is a
-  // bounded job (createBoundedJob): a throw is isolated, and a hang is
-  // abandoned after its bound with the overrun logged.
+  // guarded job (createBoundedJob): a throw is isolated, a job that never
+  // settles stops only that job, and the overrun is logged and surfaced in
+  // the status file so /api/health reports the worker degraded.
   reconcileInterval = setInterval(() => {
     void runReconciler("periodic");
   }, CHECK_INTERVAL_MS);

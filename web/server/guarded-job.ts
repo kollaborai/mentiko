@@ -30,33 +30,52 @@ export async function runGuardedJob(
   }
 }
 
-export const DEFAULT_JOB_TIMEOUT_MS = 120_000;
+export const DEFAULT_JOB_OVERRUN_MS = 120_000;
+
+// jobs currently past their overrun threshold and still in flight. The worker
+// persists this set in its status file and /api/health reports the worker
+// degraded while it is non-empty (issue #136).
+const overrunningJobs = new Set<string>();
+
+export function getOverrunningJobs(): string[] {
+  return [...overrunningJobs];
+}
 
 /**
- * A guarded job tick that is also bounded in time (codex rev2 P1, issue #136).
- * If the body never settles, the timeout releases the in-flight flag so the
- * next tick still runs, and the overrun is logged with the job name. The
- * body's promise is NOT cancelled — it may keep running in the background;
- * the run is abandoned, not stopped.
+ * A guarded job tick with no-overlap scheduling (issue #136).
+ *
+ * The in-flight flag is held until the body settles: a job that is still
+ * running is never re-entered — no overlapping executions, ever. A body that
+ * never settles therefore stops only that job (its flag stays set and its
+ * ticks stop); it is not silent: the overrun is logged once with the job name
+ * and elapsed time, the job stays in getOverrunningJobs() while in flight,
+ * and the health check reports the worker degraded. Cancelling or otherwise
+ * bounding a hung body is deliberately out of scope (see the follow-up issue
+ * referenced in #136): an event-loop timer cannot stop synchronous code, and
+ * releasing the flag while the old body still runs would let a zombie tick
+ * overlap a newer one.
  */
 export function createBoundedJob(
   jobName: string,
   body: (label: string) => unknown | Promise<unknown>,
   deps: GuardedJobDeps = { nsId: config.namespaceId, orgId: config.orgId, writeLog },
-  timeoutMs: number = DEFAULT_JOB_TIMEOUT_MS,
+  overrunMs: number = DEFAULT_JOB_OVERRUN_MS,
 ): (label: string) => Promise<void> {
   let inFlight = false;
   return async (label: string): Promise<void> => {
     if (inFlight) return;
     inFlight = true;
+    const startedAt = Date.now();
     let overran = false;
     const overrunTimer = setTimeout(() => {
+      // warning only: no release, no cancel — the flag stays held (issue #136)
       overran = true;
-      inFlight = false;
-      const message = `job ${jobName} overran ${timeoutMs}ms, abandoning it (it may still be running)`;
+      overrunningJobs.add(jobName);
+      const elapsed = Date.now() - startedAt;
+      const message = `job ${jobName} still in flight after ${elapsed}ms (overrun threshold ${overrunMs}ms); holding it out of scheduling until it settles`;
       console.error(`[worker] ${message}`);
-      deps.writeLog(deps.nsId, deps.orgId, "error", "worker", message, `job: ${jobName}`);
-    }, timeoutMs);
+      deps.writeLog(deps.nsId, deps.orgId, "warn", "worker", message, `job: ${jobName}`);
+    }, overrunMs);
     try {
       await body(label);
     } catch (error) {
@@ -65,8 +84,8 @@ export function createBoundedJob(
       deps.writeLog(deps.nsId, deps.orgId, "error", "worker", `job ${jobName} failed: ${message}`, detail);
     } finally {
       clearTimeout(overrunTimer);
-      // after an overrun a newer tick may already own the flag — never clear it
-      if (!overran) inFlight = false;
+      if (overran) overrunningJobs.delete(jobName);
+      inFlight = false;
     }
   };
 }

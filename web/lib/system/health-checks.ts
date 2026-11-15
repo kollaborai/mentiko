@@ -324,6 +324,15 @@ export async function checkBackgroundWorker(
         message: `background worker heartbeat stale (${Math.round(heartbeatAge / 1000)}s old, pid ${owner.pid} alive)`,
       };
     }
+    // issue #136: a job held past its overrun threshold stops only that job;
+    // while any is overrunning, the worker is degraded, not healthy.
+    const overrunning = status?.overrunningJobs ?? [];
+    if (overrunning.length > 0) {
+      return {
+        status: "warn",
+        message: `background worker degraded: job${overrunning.length > 1 ? "s" : ""} overrunning: ${overrunning.join(", ")} (pid ${owner.pid})`,
+      };
+    }
     return { status: "pass", message: `background worker running (pid ${owner.pid})` };
   } catch (err) {
     return {
