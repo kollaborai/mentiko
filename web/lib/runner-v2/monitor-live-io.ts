@@ -220,13 +220,7 @@ export function createLiveMonitorIO(context: LiveMonitorContext): MonitorDriverI
         // monitor can keep evaluating its durable nudge budget.
         pollMs: positiveInt(context.env.MENTIKO_MONITOR_NUDGE_SUBMIT_POLL_MS, 1_500),
         deadlineMs: positiveInt(context.env.MENTIKO_MONITOR_NUDGE_SUBMIT_DEADLINE_MS, 12_000),
-        // A Codex composer holding text reads as "absent" (its glyph is the
-        // same in transcript and composer). Stopping on that with no
-        // transcript meant ZERO Enter retries, so every nudge piled up
-        // unsent (issue #123). Without a transcript there is no stopping
-        // evidence, so allow a small fixed number of bare Enters instead of
-        // none or unbounded.
-        maxEnterRetries: transcriptPath ? Number.POSITIVE_INFINITY : 2,
+        maxEnterRetries: Number.POSITIVE_INFINITY,
         stopOnAbsentComposer: !transcriptPath,
       });
       if (!submitted) {

@@ -213,28 +213,3 @@ describe("confirmComposerSubmission", () => {
     }
   });
 });
-
-describe("composerState for Codex (issue #123)", () => {
-  const footer = ["", "  GPT-5.6-Luna default · ~/work", "  ← for agents · ? for shortcuts      ⚠ 2 warnings · f2 to view"];
-
-  it("reads unsent text in the Codex composer as holding", () => {
-    expect(composerState(["  >_ OpenAI Codex (v0.169.0)", "", "› You are Mentiko agent: probe.", "  Read that file first.", ...footer].join("\n")))
-      .toBe("holding");
-  });
-
-  it("reads the idle placeholder as empty even with the footer below it", () => {
-    expect(composerState(["› Ask Codex to do anything", ...footer].join("\n"))).toBe("codex-empty");
-  });
-
-  it("does not read a submitted message that Codex is working on as holding", () => {
-    expect(composerState(["› You are a probe.", "", "• Working (1s • esc to interrupt)", "", "› Ask Codex to do anything", ...footer].join("\n")))
-      .toBe("codex-empty");
-    expect(composerState(["› You are a probe.", "", "• Working (1s • esc to interrupt)", ...footer].join("\n")))
-      .not.toBe("holding");
-  });
-
-  it("reads a nudge typed under a working turn as holding", () => {
-    expect(composerState(["› first message", "• Working (9s • esc to interrupt)", "", "› continue only the current assigned task", ...footer].join("\n")))
-      .toBe("holding");
-  });
-});

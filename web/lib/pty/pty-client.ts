@@ -28,6 +28,9 @@ interface ResolvePtyMgrPathOptions {
   exists?: (path: string) => boolean;
 }
 
+// Tail of the in-flight sendKeys chain per session name.
+const sendQueues = new Map<string, Promise<void>>();
+
 // Gap between pasted text and its Enter. Env-tunable so tests need not wait.
 function submitGapMs(): number {
   const configured = Number(process.env.MENTIKO_PTY_SUBMIT_GAP_MS);
@@ -234,14 +237,28 @@ class PtyClient {
   // return still travels as explicit raw bytes, not the daemon's `enter`
   // flag, so an older local daemon cannot silently drop it.
   async sendKeys(name: string, text: string): Promise<void> {
-    const body = text.replace(/[\r\n]+$/, "");
-    if (body.length > 0) {
-      const res = await sendCommand({ cmd: "send", name, args: { text: body, raw: true } });
-      if (!res.ok) throw new Error(res.error || "send failed");
-      await new Promise((resolve) => setTimeout(resolve, submitGapMs()));
+    // One text-plus-Enter at a time per session: with the gap, two callers in
+    // this process could otherwise interleave as text A, text B, Enter, Enter.
+    // ponytail: in-process only. Two PROCESSES sending to one session (web
+    // server and a monitor CLI) can still interleave; a daemon-side atomic
+    // "text, settle, enter" command is the upgrade path.
+    const previous = sendQueues.get(name) ?? Promise.resolve();
+    const run = previous.catch(() => undefined).then(async () => {
+      const body = text.replace(/[\r\n]+$/, "");
+      if (body.length > 0) {
+        const res = await sendCommand({ cmd: "send", name, args: { text: body, raw: true } });
+        if (!res.ok) throw new Error(res.error || "send failed");
+        await new Promise((resolve) => setTimeout(resolve, submitGapMs()));
+      }
+      const enter = await sendCommand({ cmd: "send", name, args: { text: "\r", raw: true } });
+      if (!enter.ok) throw new Error(enter.error || "send failed");
+    });
+    sendQueues.set(name, run);
+    try {
+      await run;
+    } finally {
+      if (sendQueues.get(name) === run) sendQueues.delete(name);
     }
-    const enter = await sendCommand({ cmd: "send", name, args: { text: "\r", raw: true } });
-    if (!enter.ok) throw new Error(enter.error || "send failed");
   }
 
   // send raw text (no enter)
