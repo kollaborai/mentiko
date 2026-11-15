@@ -16,6 +16,7 @@ checks = [
   "docs_paths",
   "threads_resolved",
   "base_current",
+  "draft_state",
   "conventional_title",
   "linked_issue",
 ]

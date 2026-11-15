@@ -6,6 +6,18 @@ name: PR Gates DoD
 # run (pr_gates.dod.check_name, default dod/ready-for-review) whose summary
 # names every failed item. It never posts comments.
 
+# Recompute triggers (a check that goes stale after a review action is
+# decorative):
+# - pull_request_target types below cover open/push/reopen/ready/edit.
+# - pull_request_review (submitted, dismissed): a new review can add an
+#   unresolved thread or dismiss an approval, so the verdict must refresh.
+# - push to main: the base branch advanced, so every open PR's base_current
+#   verdict is recomputed.
+# - LIMITATION (no GitHub Actions event exists for it): resolving or
+#   reopening an individual review THREAD has no workflow trigger, so a
+#   threads_resolved verdict can stay red until the next review, synchronize
+#   or base event. Documented in the PR body; not silently ignored.
+
 # pull_request_target runs the base branch's copy of this workflow and script,
 # so a PR cannot change its own grade or reach the token. The script reads the
 # PR only through the API. This workflow never checks out or runs PR code.
@@ -13,12 +25,23 @@ on:
   pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review, edited]
     branches: [main]
+  pull_request_review:
+    types: [submitted, dismissed]
+    branches: [main]
+  push:
+    branches: [main]
 
 permissions:
   contents: read
   issues: read
   pull-requests: read
   checks: write
+
+# One run per PR (or per base push): a newer event cancels the stale run so an
+# older verdict cannot land after a newer one.
+concurrency:
+  group: pr-gates-dod-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   dod:
@@ -34,6 +57,7 @@ jobs:
           python-version: "3.14"
 
       - name: Run pr-gates definition-of-done check
+        if: github.event_name != 'push'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -43,3 +67,24 @@ jobs:
             --pr "${{ github.event.pull_request.number }}" \
             --head-sha "${{ github.event.pull_request.head.sha }}" \
             --post
+
+      # Base branch advanced: recompute the verdict for every open PR against
+      # the new main head (base_current would otherwise be stale until the
+      # next push to each PR).
+      - name: Refresh DoD for open PRs after base advance
+        if: github.event_name == 'push'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          for pr in $(gh pr list --base "${{ github.ref_name }}" --state open \
+                      --json number --jq '.[].number'); do
+            head_sha="$(gh pr view "$pr" --json headRefOid --jq .headRefOid)"
+            python scripts/pr_gates_dod.py \
+              --config .github/pr-gates.toml \
+              --repo "${{ github.repository }}" \
+              --pr "$pr" \
+              --head-sha "$head_sha" \
+              --post
+          done

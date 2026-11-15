@@ -73,6 +73,7 @@ ALL_CHECKS: tuple[str, ...] = (
     "docs_paths",
     "threads_resolved",
     "base_current",
+    "draft_state",
     "conventional_title",
     "linked_issue",
     "regression_test",
@@ -260,6 +261,7 @@ class PRData:
     default_branch_head: str
     merge_base_sha: str
     commits_behind_base: int
+    is_draft: bool = False
     changed_file_contents: dict[str, str] = field(default_factory=dict)
     comments: tuple["PRComment", ...] = ()
     reviews: tuple["PRReview", ...] = ()
@@ -385,6 +387,15 @@ def _check_base_current(data: PRData) -> str:
             f"{data.default_branch} head {data.default_branch_head[:10]} "
             f"(merge-base {data.merge_base_sha[:10]}); update the branch from main"
         )
+    return ""
+
+
+def _check_draft_state(data: PRData) -> str:
+    # "ready for review" cannot be true while the PR is still a draft; the
+    # check goes green the moment the PR is marked ready (that event
+    # re-triggers the workflow).
+    if data.is_draft:
+        return "PR is still a draft; mark it ready for review"
     return ""
 
 
@@ -688,6 +699,8 @@ def evaluate(cfg: DodConfig, data: PRData) -> DoDReport:
             detail = _check_threads_resolved(data)
         elif name == "base_current":
             detail = _check_base_current(data)
+        elif name == "draft_state":
+            detail = _check_draft_state(data)
         elif name == "conventional_title":
             detail = _check_conventional_title(data)
         elif name == "linked_issue":
@@ -1090,6 +1103,7 @@ def collect_pr_data(
         default_branch_head=branch_info["commit"]["sha"],
         merge_base_sha=compare["merge_base_commit"]["sha"],
         commits_behind_base=compare["behind_by"],
+        is_draft=bool(pull.get("draft")),
         changed_file_contents=contents,
         comments=comment_records,
         reviews=reviews,
