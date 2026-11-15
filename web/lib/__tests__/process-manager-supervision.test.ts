@@ -79,10 +79,12 @@ function writeConfig(fp: string) {
         order: 2,
       },
       {
-        // codex rev2 P1: a daemonizing parent that exits 0 while the readiness
-        // probe is still waiting, then the daemon's socket comes up. The
-        // manager must discover the daemon and report ready — not treat the
-        // parent exit as a crash and relaunch.
+        // daemonize path keeps EXACTLY origin/main behavior (issue #136 round
+        // 3): a parent that exits 0 while the readiness probe is still
+        // waiting, then the daemon's socket answers. The manager declares the
+        // service ready and discovers the daemon pid — it does not treat the
+        // parent exit as a crash and does not relaunch. Daemon liveness after
+        // this point is deliberately unsupervised here (follow-up issue).
         name: "daemonfork",
         cmd: process.execPath,
         args: [path.join(tmpHome, "fork-script.js"), "fork", daemonForkSock, daemonForkPidFile],
@@ -300,10 +302,10 @@ describe("process manager supervision (issue #136)", () => {
     expect(violation).toBeNull();
   });
 
-  it("discovers a daemonized fork whose parent exits during readiness (codex rev2 P1)", async () => {
+  it("daemonize path behaves as on main: parent exits 0 during readiness, probe succeeds, ready, no restart (issue #136 round 3)", async () => {
     // parent exits 0 while the socket probe is still waiting; the daemon then
     // answers. The manager must report ready with the daemon's pid and must
-    // not schedule a restart (the pre-fix code treated this as a crash).
+    // not schedule a restart — the exact origin/main daemonize semantics.
     const procs = await pmStatusUntil((list) => {
       const svc = list.find((p) => p.name === "daemonfork");
       return !!svc && svc.status === "ready" && (svc.pid ?? 0) > 0;

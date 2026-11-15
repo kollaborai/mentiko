@@ -287,13 +287,15 @@ function scheduleRestart(m: ManagedProcess) {
   const nextRestart = resolveRestartDelay(restart, m.restarts);
   if (!nextRestart) { m.status = 'stopped'; return; }
   const max = nextRestart.maxRestarts;
-  if (nextRestart.exhausted && m.config.critical) {
+  if (nextRestart.exhausted && (m.config.critical || m.config.daemonize)) {
     // issue #136: critical services still give up (a stack/container restart is
-    // their recovery path); everything else keeps retrying below, so no
-    // restart-enabled service ever has a permanent off state.
+    // their recovery path), and daemonized services keep exactly origin/main
+    // semantics (give up on an exhausted budget; daemon liveness supervision is
+    // a follow-up). Only non-daemonized, non-critical services keep retrying
+    // below, so they never reach a permanent off state.
     m.status = 'failed';
-    logErr(`${m.config.name} exceeded max restarts (${max}/${max}), critical, giving up`);
-    exitCode = 1; shutdown();
+    logErr(`${m.config.name} exceeded max restarts (${max}/${max}), giving up`);
+    if (m.config.critical) { logErr(`critical process ${m.config.name} failed, shutting down`); exitCode = 1; shutdown(); }
     return;
   }
   const delay = nextRestart.delayMs;
@@ -317,7 +319,10 @@ async function startOne(config: ProcessConfig, options: StartOptions = {}): Prom
     clearTimeout(prev.restartTimer);
     prev.restartTimer = null;
   }
-  if (prev?.status === 'ready' && hasLiveProcess(prev)) {
+  // daemonized services keep exactly origin/main semantics here (issue #136:
+  // daemon liveness supervision is a follow-up); the verified-liveness check
+  // applies only to non-daemonized services.
+  if (prev?.status === 'ready' && (prev.config.daemonize ? (prev.child || prev.pid) : hasLiveProcess(prev))) {
     log(`${config.name} already ready, skipping duplicate start`);
     return prev;
   }
@@ -364,7 +369,10 @@ async function startOne(config: ProcessConfig, options: StartOptions = {}): Prom
     log(`${config.name} readiness wait finished on an obsolete generation, ignoring`);
     return m;
   }
-  if (ready && (m.child || m.pid || config.daemonize)) {
+  // daemonized services keep exactly origin/main readiness semantics (the
+  // successful probe declares them ready; daemon liveness is a follow-up);
+  // the live-process requirement applies only to non-daemonized services.
+  if (ready && (config.daemonize || m.child || m.pid)) {
     m.status = 'ready';
     const r = config.readiness;
     const detail = !r ? '' : r.type === 'socket' && r.path ? ` (socket at ${expandEnv(r.path)})`
@@ -372,10 +380,7 @@ async function startOne(config: ProcessConfig, options: StartOptions = {}): Prom
       : r.type === 'http' && r.url ? ` (${r.url})` : '';
     log(`${config.name} ready${detail}`);
     // if parent process exited (daemon fork), find the real daemon PID.
-    // gated on config.daemonize — see handleExit for why. For daemonized
-    // services the successful probe is itself the liveness signal: the
-    // daemon answered even though the parent already exited and there is no
-    // child handle (codex rev2 P1 — this branch must stay reachable).
+    // gated on config.daemonize — see handleExit for why.
     if (config.daemonize && !m.child && !m.pid) {
       const daemonPid = findDaemonPid(config);
       if (daemonPid) {
@@ -661,8 +666,12 @@ async function handleIpc(raw: string, conn: net.Socket) {
     switch (req.cmd) {
       case 'status': {
         const procs = Array.from(managed.values()).map(m => {
-          // issue #136: never report "ready" for a service with no live process
-          const status = reportedProcessStatus(m.status as ProcessStatus, hasLiveProcess(m));
+          // issue #136: never report "ready" for a non-daemonized service with
+          // no live process. Daemonized services report exactly what main
+          // reports (their liveness supervision is a follow-up).
+          const status = m.config.daemonize
+            ? (m.status as ProcessStatus)
+            : reportedProcessStatus(m.status as ProcessStatus, hasLiveProcess(m));
           return {
             name: m.config.name, pid: m.pid, status, restarts: m.restarts,
             uptime: status === 'ready' ? Date.now() - m.startedAt : 0,
@@ -674,7 +683,9 @@ async function handleIpc(raw: string, conn: net.Socket) {
       }
       case 'list': {
         ok({ processes: Array.from(managed.values()).map(m => {
-          const status = reportedProcessStatus(m.status as ProcessStatus, hasLiveProcess(m));
+          const status = m.config.daemonize
+            ? (m.status as ProcessStatus)
+            : reportedProcessStatus(m.status as ProcessStatus, hasLiveProcess(m));
           return {
             name: m.config.name, status, pid: m.pid,
             uptime: status === 'ready' ? Date.now() - m.startedAt : 0, restarts: m.restarts,
