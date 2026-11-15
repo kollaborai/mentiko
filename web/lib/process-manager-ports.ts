@@ -32,10 +32,14 @@ export function pidFilePath(stateDir: string, name: string): string {
 export function portHolderPids(port: number): number[] {
   try {
     // lsof first: macOS fuser has no `-n tcp` (Linux-only syntax), so a
-    // fuser-first chain silently returns nothing on darwin.
+    // fuser-first chain silently returns nothing on darwin. Only LISTEN
+    // sockets count: a program merely connected to the port (e.g. a web UI
+    // talking to an engine) is not its holder.
+    // ponytail: the fuser fallback cannot filter to listeners; use ss -ltnp
+    // if an image ever ships without lsof.
     const cmd =
       `if command -v lsof >/dev/null 2>&1; then ` +
-      `lsof -ti :${port} 2>/dev/null; ` +
+      `lsof -nP -iTCP:${port} -sTCP:LISTEN -t 2>/dev/null; ` +
       `elif command -v fuser >/dev/null 2>&1; then ` +
       `fuser -n tcp ${port} 2>/dev/null; fi`;
     const out = execSync(cmd, { encoding: 'utf-8' }).trim();

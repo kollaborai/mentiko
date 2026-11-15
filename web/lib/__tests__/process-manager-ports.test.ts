@@ -48,6 +48,16 @@ afterEach(() => {
   helpers = [];
 });
 
+// First stdout chunk of a helper; rejects if it exits or stays silent, so the
+// caller's finally always runs and kills its helpers.
+function firstLine(child: ChildProcess, timeoutMs = 10_000): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('helper produced no output')), timeoutMs);
+    child.stdout!.once('data', (d) => { clearTimeout(timer); resolve(String(d)); });
+    child.once('exit', (code) => { clearTimeout(timer); reject(new Error(`helper exited (${code})`)); });
+  });
+}
+
 describe('process-manager-ports', () => {
   it('describes a foreign port holder and never lists it as ours', () => {
     const port = nextPort();
@@ -64,6 +74,23 @@ describe('process-manager-ports', () => {
     // with no owned pids, the holder is reported
     const foreign = portHeldByOthers(port, new Set([process.pid]));
     expect(foreign.map(h => h.pid)).toContain(holder.pid);
+  });
+
+  it('reports only the listener as the port holder, never a connected client', async () => {
+    const children: ChildProcess[] = [];
+    try {
+      const listener = spawn(process.execPath, ['-e', "const s=require('net').createServer(c=>{}).listen(0,'127.0.0.1',()=>console.log(s.address().port))"]);
+      children.push(listener);
+      const port = Number(String(await firstLine(listener)).trim());
+      const client = spawn(process.execPath, ['-e', `const c=require('net').connect(${port},'127.0.0.1',()=>console.log('up'));setInterval(()=>{},1000)`]);
+      children.push(client);
+      await firstLine(client);
+      const holders = portHolderPids(port);
+      expect(holders).toContain(listener.pid);
+      expect(holders).not.toContain(client.pid);
+    } finally {
+      for (const child of children) child.kill('SIGKILL');
+    }
   });
 
   it('pid files round-trip and only recorded pids we can verify are "ours"', () => {
