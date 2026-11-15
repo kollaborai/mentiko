@@ -54,22 +54,25 @@ jobs:
       - name: Install web dependencies
         run: npm ci --no-audit --no-fund
 
-      # Test-level exclusions, named:
+      # Test-level exclusions, named by full test name (a broad keyword
+      # pattern would silently exclude future tests that merely contain it):
       # - kollab-engine-driver.test.ts "idle timeout aborts a stalled SSE
       #   stream, stop() leaves no open sockets" and "idle abort does NOT
-      #   flush a trailing partial AGENT_COMPLETE token" — real-socket SSE
-      #   tests with 200ms idle timeouts; their waitFor deadlines are not
-      #   met reliably on a loaded 2-core runner. Fake timers cannot make
-      #   them deterministic (they drive a real HTTP server and real
-      #   sockets). Excluded by name below until they are restructured;
-      #   every other test in the suite still runs.
+      #   flush a trailing partial AGENT_COMPLETE token (P1: idle != end of
+      #   turn)" — real-socket SSE tests with 200ms idle timeouts; their
+      #   waitFor deadlines are not met reliably on a loaded 2-core runner.
+      #   Fake timers cannot make them deterministic (they drive a real HTTP
+      #   server and real sockets). Excluded by exact name below until they
+      #   are restructured; every other test in the suite still runs.
       # NOTE: a negated positional pattern, not --testPathIgnorePatterns —
       # the CLI flag replaces jest.config's testPathIgnorePatterns wholesale,
       # which drags the e2e/ playwright specs and test helpers into the run.
       - name: Run jest suite
         run: npm test -- --ci "^(?!.*kollab-engine-driver)"
       - name: Run jest suite (kollab-engine-driver without the two timing-sensitive idle tests)
-        run: npm test -- --ci lib/runner-v2/__tests__/kollab-engine-driver.test.ts --testNamePattern "^(?!.*idle)"
+        run: |
+          npm test -- --ci lib/runner-v2/__tests__/kollab-engine-driver.test.ts \
+            --testNamePattern '^(?!.*idle timeout aborts a stalled SSE stream, stop\(\) leaves no open sockets$|.*idle abort does NOT flush a trailing partial AGENT_COMPLETE token \(P1: idle != end of turn\)$)'
 
   root-tests:
     name: ci/tests (root)
@@ -107,20 +110,19 @@ jobs:
       #
       # Excluded by name:
       # - tests/session-transport.test.mjs — needs a live pty-manager daemon,
-      #   which only exists inside the mentiko-base image; the engine-tests
-      #   workflow covers that environment.
+      #   which only exists inside the mentiko-base image; no workflow in
+      #   this repo runs this exact suite elsewhere (known coverage gap,
+      #   tracked under #121).
       # - tests/chain-runner-activity-start.test.mjs — asserts activity
       #   delegation markers inside lib/chain-runner.sh that no longer exist;
       #   the delegation now lives in lib/agent-activity-capture.sh and is
       #   covered by tests/agent-activity-capture-shell-boundary.test.mjs.
-      # - tests/job-runner.test.mjs — real producer bug, not a test bug: the
-      #   job worker writes to an agent CLI's stdin after the CLI exits and
-      #   crashes on EPIPE (Linux timing; macOS pipe buffering hides it).
-      #   Tracked in #138; excluded until that fix lands.
+      # tests/job-runner.test.mjs ran excluded while #138 (job worker EPIPE
+      # on a closed stdin) was open; the fix landed, so the full suite runs.
       - name: Run root .mjs contract tests
         run: |
           set -euo pipefail
-          exclude="tests/session-transport.test.mjs tests/chain-runner-activity-start.test.mjs tests/job-runner.test.mjs"
+          exclude="tests/session-transport.test.mjs tests/chain-runner-activity-start.test.mjs"
           status=0
           for f in tests/*.test.mjs; do
             skip=0
@@ -143,8 +145,9 @@ jobs:
       # Excluded by name — pre-typed-era source contracts that drifted when
       # chain-runner.sh moved to the typed runtime; the functions they grep
       # for (substitute_placeholders, _monitor_v2_script) no longer exist in
-      # lib/. Current engine behavior is covered by the engine-tests
-      # workflow's web/e2e/engine suites in the mentiko-base image:
+      # lib/. These exact suites are NOT run by the engine-tests workflow
+      # (it runs its own engine harnesses, not these files) — the coverage
+      # gap is known and tracked under #121:
       # - tests/bash/test-bug022-durable-completion.sh
       # - tests/bash/test-monitor-completion.sh
       # - tests/bash/test-chain-runner-placeholders.sh
@@ -243,31 +246,55 @@ jobs:
           tar -xzf "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" -C "$RUNNER_TEMP/gitleaks-bin" gitleaks
           echo "$RUNNER_TEMP/gitleaks-bin" >> "$GITHUB_PATH"
 
-      # base.sha is the base tip at event time; it can lag the fetched
-      # branch tips, so make sure the object itself is local.
-      - name: Fetch PR base commit
-        if: github.event_name == 'pull_request'
-        run: git fetch --no-tags origin "${{ github.event.pull_request.base.sha }}"
-
-      # The scan gates what a PR ADDS, not history: main already carries
+      # The scan gates what a change ADDS, not history: main already carries
       # pre-existing generic-api-key findings (triage list kept out of band;
       # they live in the secrets/crypto subsystem and its test fixtures).
-      # --log-opts restricts the scan to the commits this change introduces.
-      # gitleaks exits 1 when leaks are found — that still fails the check.
-      - name: Run Gitleaks (PR commit range)
-        if: github.event_name == 'pull_request'
-        run: gitleaks git . --redact --verbose --log-opts="${{ github.event.pull_request.base.sha }}..HEAD"
-
-      - name: Run Gitleaks (pushed commits)
-        if: github.event_name == 'push'
+      #
+      # It scans the TREE DIFF against the merge base, not per-commit
+      # patches: `git log -p` omits merge-commit diffs, so a secret
+      # introduced only during conflict resolution could escape a commit
+      # range scan. The tree diff contains every added line, merge or not.
+      # Only '+' lines are scanned, so pre-existing content on the base side
+      # (context lines, deletions) cannot produce findings the PR did not
+      # add. An unresolvable or empty range FAILS the job — a gate that
+      # silently passes on a range it could not inspect is decorative.
+      - name: Run Gitleaks (added lines vs merge base)
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PUSH_BEFORE: ${{ github.event.before }}
         run: |
-          before="${{ github.event.before }}"
-          if [[ "$before" =~ ^0+$ ]]; then
-            # first commit on a new default branch: scan the root commit only
-            before="$(git rev-list --max-parents=0 HEAD)"
+          set -euo pipefail
+          empty_tree="4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+          base=""
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            # base tip at event time can lag; fetch the branch tip and diff
+            # against the true merge base with HEAD.
+            git fetch --no-tags origin "$PR_BASE_REF"
+            base="$(git merge-base FETCH_HEAD HEAD || true)"
+          elif [ "$EVENT_NAME" = "push" ]; then
+            if [[ "$PUSH_BEFORE" =~ ^0+$ ]]; then
+              # first push on a new branch: the empty tree covers the root
+              # commit too (a root-only commit range would scan nothing).
+              base="$empty_tree"
+            else
+              git cat-file -e "$PUSH_BEFORE" 2>/dev/null \
+                || git fetch --no-tags origin "$PUSH_BEFORE" || true
+              base="$(git merge-base "$PUSH_BEFORE" HEAD || true)"
+            fi
+          else
+            # manual dispatch: scan the last commit's changes
+            base="$(git rev-parse --verify -q HEAD^ || echo "$empty_tree")"
           fi
-          gitleaks git . --redact --verbose --log-opts="${before}..HEAD"
-
-      - name: Run Gitleaks (manual dispatch, last commit)
-        if: github.event_name == 'workflow_dispatch'
-        run: gitleaks git . --redact --verbose --log-opts="-1"
+          if [ -z "$base" ] || ! git cat-file -e "$base" 2>/dev/null; then
+            echo "::error::secret scan range unresolvable; failing closed"
+            exit 1
+          fi
+          diff_file="$RUNNER_TEMP/added-lines.diff"
+          git diff "$base" HEAD --unified=0 \
+            | /usr/bin/grep -E '^\+' | /usr/bin/grep -vE '^\+\+\+' > "$diff_file" || true
+          if [ ! -s "$diff_file" ]; then
+            echo "::error::secret scan range $base..HEAD adds no lines; failing closed"
+            exit 1
+          fi
+          gitleaks stdin --redact --verbose < "$diff_file"
