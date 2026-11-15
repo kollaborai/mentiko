@@ -281,6 +281,9 @@ function scheduleRestart(m: ManagedProcess) {
   if (shuttingDown) return;
   const restart = m.config.restart;
   if (restart && !restart.enabled) { m.status = 'stopped'; return; }
+  // one restart timer per managed object: a crash while an earlier timer is
+  // still pending must replace it, never stack a second one (codex rev2 P1).
+  if (m.restartTimer) { clearTimeout(m.restartTimer); m.restartTimer = null; }
   const nextRestart = resolveRestartDelay(restart, m.restarts);
   if (!nextRestart) { m.status = 'stopped'; return; }
   const max = nextRestart.maxRestarts;
@@ -314,12 +317,15 @@ async function startOne(config: ProcessConfig, options: StartOptions = {}): Prom
     clearTimeout(prev.restartTimer);
     prev.restartTimer = null;
   }
-  if (prev?.status === 'ready' && (prev.child || prev.pid)) {
+  if (prev?.status === 'ready' && hasLiveProcess(prev)) {
     log(`${config.name} already ready, skipping duplicate start`);
     return prev;
   }
   // issue #105: never kill a foreign port holder. If the readiness port is
   // held by anything this manager did not record, refuse to start and say why.
+  // This failure is intentionally terminal (no retry): retrying cannot make a
+  // foreign process go away, and critical services stop the manager so the
+  // container/stack restart is the recovery path (codex rev2 P2).
   const heldPort = readinessPort(config.readiness);
   if (heldPort !== null) {
     const ownPids = new Set<number>([process.pid]);
@@ -349,7 +355,16 @@ async function startOne(config: ProcessConfig, options: StartOptions = {}): Prom
   m.stoppedByUser = prev?.stoppedByUser ?? false;
   managed.set(config.name, m);
   const ready = await waitReady(config.name, config.readiness);
-  if (ready && (m.child || m.pid)) {
+  // codex rev2 P1: a fast-exiting process can restart (replacing this
+  // ManagedProcess with a newer generation) while this readiness wait is
+  // still pending. The stale wait must not touch state or schedule timers on
+  // the obsolete generation — that would let two generations both spawn
+  // children. Abandon it entirely.
+  if (managed.get(config.name) !== m) {
+    log(`${config.name} readiness wait finished on an obsolete generation, ignoring`);
+    return m;
+  }
+  if (ready && (m.child || m.pid || config.daemonize)) {
     m.status = 'ready';
     const r = config.readiness;
     const detail = !r ? '' : r.type === 'socket' && r.path ? ` (socket at ${expandEnv(r.path)})`
@@ -357,7 +372,10 @@ async function startOne(config: ProcessConfig, options: StartOptions = {}): Prom
       : r.type === 'http' && r.url ? ` (${r.url})` : '';
     log(`${config.name} ready${detail}`);
     // if parent process exited (daemon fork), find the real daemon PID.
-    // gated on config.daemonize — see handleExit for why.
+    // gated on config.daemonize — see handleExit for why. For daemonized
+    // services the successful probe is itself the liveness signal: the
+    // daemon answered even though the parent already exited and there is no
+    // child handle (codex rev2 P1 — this branch must stay reachable).
     if (config.daemonize && !m.child && !m.pid) {
       const daemonPid = findDaemonPid(config);
       if (daemonPid) {
@@ -462,6 +480,15 @@ async function killProc(m: ManagedProcess) {
 
 function stateDir(): string {
   return pmStateDir(os.homedir());
+}
+
+// codex rev2 P2: liveness for status/list must be verified, not inferred from
+// references. A daemonized child handle is null by design; a discovered daemon
+// pid can die with no exit event ever reaching us. Only a live pid (or a live
+// child handle, which carries its own exit event) counts.
+function hasLiveProcess(m: ManagedProcess): boolean {
+  if (m.child) return true;
+  return m.pid > 0 && pidAlive(m.pid);
 }
 
 function waitExit(m: ManagedProcess, timeout: number): Promise<boolean> {
@@ -635,7 +662,7 @@ async function handleIpc(raw: string, conn: net.Socket) {
       case 'status': {
         const procs = Array.from(managed.values()).map(m => {
           // issue #136: never report "ready" for a service with no live process
-          const status = reportedProcessStatus(m.status as ProcessStatus, !!(m.child || m.pid));
+          const status = reportedProcessStatus(m.status as ProcessStatus, hasLiveProcess(m));
           return {
             name: m.config.name, pid: m.pid, status, restarts: m.restarts,
             uptime: status === 'ready' ? Date.now() - m.startedAt : 0,
@@ -647,7 +674,7 @@ async function handleIpc(raw: string, conn: net.Socket) {
       }
       case 'list': {
         ok({ processes: Array.from(managed.values()).map(m => {
-          const status = reportedProcessStatus(m.status as ProcessStatus, !!(m.child || m.pid));
+          const status = reportedProcessStatus(m.status as ProcessStatus, hasLiveProcess(m));
           return {
             name: m.config.name, status, pid: m.pid,
             uptime: status === 'ready' ? Date.now() - m.startedAt : 0, restarts: m.restarts,

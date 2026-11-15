@@ -29,6 +29,26 @@ interface ProcStatus {
 let tmpHome: string;
 let pm: ChildProcess | null = null;
 let sockPath: string;
+let daemonForkSock: string;
+let daemonForkPidFile: string;
+let raceCounterFile: string;
+
+// one script, two modes, so the forked daemon keeps the same command line the
+// discovery pgrep pattern is built from (cmd + args[0]) — exactly how the real
+// pty-mgr daemonizes. "fork" mode spawns the detached "run" mode daemon and
+// exits 0 during readiness; "run" mode owns the socket and outlives us.
+const FORK_SCRIPT = `
+const { spawn } = require("child_process");
+const [mode, sock, pidFile] = process.argv.slice(2);
+if (mode === "fork") {
+  const child = spawn(process.execPath, [__filename, "run", sock, pidFile], { detached: true, stdio: "ignore" });
+  child.unref();
+  process.exit(0);
+}
+require("fs").writeFileSync(pidFile, String(process.pid));
+try { require("fs").unlinkSync(sock); } catch {}
+require("net").createServer(() => {}).listen(sock);
+`;
 
 function writeConfig(fp: string) {
   const config = {
@@ -57,6 +77,37 @@ function writeConfig(fp: string) {
         restart: { enabled: true, maxRestarts: 50, baseDelay: 30, maxDelay: 120, resetAfter: 600_000 },
         critical: false,
         order: 2,
+      },
+      {
+        // codex rev2 P1: a daemonizing parent that exits 0 while the readiness
+        // probe is still waiting, then the daemon's socket comes up. The
+        // manager must discover the daemon and report ready — not treat the
+        // parent exit as a crash and relaunch.
+        name: "daemonfork",
+        cmd: process.execPath,
+        args: [path.join(tmpHome, "fork-script.js"), "fork", daemonForkSock, daemonForkPidFile],
+        env: {},
+        cwd: tmpHome,
+        daemonize: true,
+        readiness: { type: "socket", path: daemonForkSock, timeout: 8000, interval: 100 },
+        restart: { enabled: true, maxRestarts: 3, baseDelay: 100, maxDelay: 200, resetAfter: 600_000 },
+        critical: false,
+        order: 3,
+      },
+      {
+        // codex rev2 P1: crash interval (50ms + 40ms backoff) far shorter than
+        // its 800ms timer readiness. Each generation's stale readiness wait
+        // resolves true long after a newer generation replaced it — the stale
+        // wait must be fenced off or two generations both spawn children.
+        name: "raceloop",
+        cmd: process.execPath,
+        args: [path.join(tmpHome, "racer.js"), raceCounterFile],
+        env: {},
+        cwd: tmpHome,
+        readiness: { type: "timer", timeout: 800 },
+        restart: { enabled: true, maxRestarts: 500, baseDelay: 40, maxDelay: 80, resetAfter: 600_000, jitter: false },
+        critical: false,
+        order: 4,
       },
     ],
   };
@@ -148,6 +199,15 @@ async function shutdownPm(): Promise<void> {
 beforeAll(async () => {
   tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "pm-supervision-"));
   sockPath = path.join(tmpHome, ".mentiko-pm", "pm.sock");
+  daemonForkSock = path.join(tmpHome, "daemonfork.sock");
+  daemonForkPidFile = path.join(tmpHome, "daemonfork-daemon.pid");
+  raceCounterFile = path.join(tmpHome, "race-counter.txt");
+  fs.writeFileSync(path.join(tmpHome, "fork-script.js"), FORK_SCRIPT);
+  fs.writeFileSync(
+    path.join(tmpHome, "racer.js"),
+    'require("fs").appendFileSync(process.argv[2], "x");\n' +
+    'setTimeout(() => process.exit(1), 50);\n',
+  );
   const configPath = path.join(tmpHome, "processes.test.json");
   writeConfig(configPath);
 
@@ -190,6 +250,12 @@ afterAll(async () => {
       await new Promise((r) => setTimeout(r, 300));
     }
     pm = null;
+    // belt and braces: if pm's cleanup somehow missed the forked daemon, kill
+    // it by the pid it wrote so the test never leaks a listener
+    try {
+      const daemonPid = Number(fs.readFileSync(daemonForkPidFile, "utf8").trim());
+      if (daemonPid > 0) { try { process.kill(daemonPid, "SIGKILL"); } catch {} }
+    } catch {}
     try { fs.rmSync(tmpHome, { recursive: true, force: true }); } catch {}
   }
 });
@@ -232,5 +298,52 @@ describe("process manager supervision (issue #136)", () => {
     expect(sawDeadService).toBe(true);
     expect(sawQuickdieDead).toBe(true);
     expect(violation).toBeNull();
+  });
+
+  it("discovers a daemonized fork whose parent exits during readiness (codex rev2 P1)", async () => {
+    // parent exits 0 while the socket probe is still waiting; the daemon then
+    // answers. The manager must report ready with the daemon's pid and must
+    // not schedule a restart (the pre-fix code treated this as a crash).
+    const procs = await pmStatusUntil((list) => {
+      const svc = list.find((p) => p.name === "daemonfork");
+      return !!svc && svc.status === "ready" && (svc.pid ?? 0) > 0;
+    }, 15_000);
+    const svc = procs.find((p) => p.name === "daemonfork")!;
+    expect(svc.restarts).toBe(0);
+    expect(svc.pid).toBeGreaterThan(0);
+
+    // stays ready, no relaunch, and the reported pid is the daemon's own
+    await new Promise((r) => setTimeout(r, 1200));
+    const after = await pmStatusOnce();
+    const svc2 = after.find((p) => p.name === "daemonfork")!;
+    expect(svc2.status).toBe("ready");
+    expect(svc2.restarts).toBe(0);
+    const daemonPid = Number(fs.readFileSync(daemonForkPidFile, "utf8").trim());
+    expect(svc2.pid).toBe(daemonPid);
+  });
+
+  it("fences stale readiness waits when a fast crasher restarts before readiness times out (codex rev2 P1)", async () => {
+    // raceloop crashes every ~50ms with 40ms backoff while its readiness
+    // timer runs 800ms. Without the generation fence, each stale wait that
+    // resolves true schedules an extra restart on its obsolete generation and
+    // a second spawn chain starts — spawns then outrun the restart counter.
+    await new Promise((r) => setTimeout(r, 2500));
+    let spawnCount = 0;
+    let restarts = 0;
+    for (let i = 0; i < 10; i++) {
+      // counter first: a spawn landing between the two reads then shows up in
+      // neither or only favors the invariant, never falsifies it
+      try { spawnCount = fs.readFileSync(raceCounterFile, "utf8").length; } catch { spawnCount = 0; }
+      const list = await pmStatusOnce();
+      const svc = list.find((p) => p.name === "raceloop");
+      expect(svc).toBeDefined();
+      restarts = svc!.restarts;
+      // one chain: every spawn is accounted for by exactly one scheduled restart
+      expect(spawnCount).toBeLessThanOrEqual(restarts + 1);
+      await new Promise((r) => setTimeout(r, 150));
+    }
+    // sanity: the loop actually ran while we watched
+    expect(restarts).toBeGreaterThan(3);
+    expect(spawnCount).toBeGreaterThan(3);
   });
 });
