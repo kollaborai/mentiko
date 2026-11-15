@@ -164,7 +164,7 @@ export async function runTypedDirect(options: DirectRunOptions): Promise<DirectR
  */
 async function withCliSessionContext(env: NodeJS.ProcessEnv, runId: string): Promise<NodeJS.ProcessEnv> {
   if (env.MENTIKO_SESSION_TOKEN?.trim()) return env;
-  const webEnv = loadWebEnvForCliSigning();
+  const webEnv = loadWebEnvForCliSigning(env);
   const sessionId = `chain-${runId}`;
   const sessionToken = await mintSessionToken({
     sub: "cli",
@@ -172,7 +172,7 @@ async function withCliSessionContext(env: NodeJS.ProcessEnv, runId: string): Pro
     ns: env.NAMESPACE_ID || "default",
     org: env.ORG_ID || "default",
     scopes: ["ops:*"],
-  }, { rootSecret: cliSigningSecret(env, webEnv) });
+  }, { rootSecret: cliSigningSecret(webEnv) });
   const webUrl = resolveWebOrigin(env, webEnv);
   try {
     await assertWebAcceptsToken(webUrl, sessionToken);

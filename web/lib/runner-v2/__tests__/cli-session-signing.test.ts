@@ -1,6 +1,6 @@
 /** @jest-environment node */
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TextEncoder } from "node:util";
@@ -66,7 +66,9 @@ function restoreEnv(): void {
 function makeFakeCodeRoot(): string {
   const root = mkdtempSync(join(tmpdir(), "mentiko-cli-signing-"));
   const webDir = join(root, "web");
-  mkdirSync(webDir, { recursive: true });
+  mkdirSync(join(webDir, "node_modules", "@next"), { recursive: true });
+  // the CLI runs Next's real env loader from the code root's web/node_modules
+  symlinkSync(join(process.cwd(), "node_modules", "@next", "env"), join(webDir, "node_modules", "@next", "env"));
   // NODE_ENV=test makes @next/env skip .env.local, so the documented
   // web/.env.local secret is represented here by web/.env, which always loads.
   writeFileSync(join(webDir, ".env"), `BETTER_AUTH_SECRET=${WEB_ENV_SECRET}\nMENTIKO_PTY_MGR_BIN=/web-only/pty-mgr\nGITHUB_TOKEN=web-only-token\n`);
@@ -160,6 +162,20 @@ describe("CLI session token signing across the CLI/web boundary", () => {
     for (const token of tokens) await expect(serverVerify(token)).resolves.toMatchObject({ sub: "cli" });
   });
 
+  it("matches Next on inline #, empty overrides and ${VAR} expansion", async () => {
+    const webDir = join(fakeCodeRoot, "web");
+    writeFileSync(join(webDir, ".env"), "BETTER_AUTH_SECRET=lower\nBASE=http://from-base:4200\nMENTIKO_WEB_URL=${BASE}\nSECRET_KEY=abc#def\n");
+    writeFileSync(join(webDir, ".env.test.local"), "BETTER_AUTH_SECRET=\n");
+    const { loadWebEnvForCliSigning, cliSigningSecret } = await import("@/lib/runner-v2/cli-web-env");
+    const webEnv = loadWebEnvForCliSigning({ NODE_ENV: "test" });
+    // .env.test.local defines it empty, and the first file wins, as in Next
+    expect(webEnv.BETTER_AUTH_SECRET).toBe("");
+    expect(webEnv.MENTIKO_WEB_URL).toBe("http://from-base:4200");
+    // so the server falls through to SECRET_KEY, and the CLI must too
+    expect(cliSigningSecret(webEnv)).toBe(webEnv.SECRET_KEY);
+    expect(process.env.BASE).toBeUndefined();
+  });
+
   it("reads quoted, exported and commented values for only the signing keys", async () => {
     writeFileSync(join(fakeCodeRoot, "web", ".env"), [
       'export BETTER_AUTH_SECRET="quoted secret # not a comment"',
@@ -167,7 +183,7 @@ describe("CLI session token signing across the CLI/web boundary", () => {
       "GITHUB_TOKEN=must-not-be-read",
     ].join("\n"));
     const { loadWebEnvForCliSigning } = await import("@/lib/runner-v2/cli-web-env");
-    expect(loadWebEnvForCliSigning()).toEqual({
+    expect(loadWebEnvForCliSigning({ NODE_ENV: "test" })).toEqual({
       BETTER_AUTH_SECRET: "quoted secret # not a comment",
       MENTIKO_WEB_URL: "http://from-file:4100",
     });

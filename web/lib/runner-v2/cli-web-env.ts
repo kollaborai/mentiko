@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import config from "@/lib/config";
@@ -15,58 +16,50 @@ let cachedWebEnv: CliWebEnv | null = null;
  * not; without it, a CLI-minted token is signed with the separate local
  * development secret and every ops call returns 401.
  *
- * Reads ONLY the signing secret and web origin from the web app's env files,
- * in Next's file order, without touching process.env: those files also hold
- * OAuth secrets, tokens and runtime switches (e.g. MENTIKO_PTY_MGR_BIN) that
- * must not reach the CLI process or the agents it launches. Synchronous, so
- * parallel batch launches cannot observe a half-loaded result.
+ * Runs Next's own loader (@next/env loadEnvConfig) in a short-lived child
+ * process, so parsing, ${VAR} expansion and file precedence match the server
+ * exactly, and only the four signing/origin keys come back. The CLI's own
+ * process.env is never modified: the web env files also hold OAuth secrets,
+ * tokens and runtime switches (e.g. MENTIKO_PTY_MGR_BIN) that must not reach
+ * the CLI or the agents it launches. Synchronous, so parallel batch launches
+ * cannot observe a half-loaded result. A failed load is not cached.
  */
-export function loadWebEnvForCliSigning(): CliWebEnv {
+export function loadWebEnvForCliSigning(env: NodeJS.ProcessEnv = process.env): CliWebEnv {
   if (cachedWebEnv) return cachedWebEnv;
-  const found: CliWebEnv = {};
   try {
     const webDir = join(config.codeRoot, "web");
-    for (const file of webEnvFiles()) {
-      const path = join(webDir, file);
-      if (!existsSync(path)) continue;
-      const parsed = parseEnvKeys(readFileSync(path, "utf8"));
-      // the first file that defines a key wins, like Next
-      for (const key of CLI_WEB_ENV_KEYS) if (found[key] === undefined && parsed[key]) found[key] = parsed[key];
-    }
+    const nextEnv = join(webDir, "node_modules", "@next", "env");
+    if (!existsSync(nextEnv)) return {};
+    const dev = (env.NODE_ENV ?? process.env.NODE_ENV) !== "production";
+    const script = [
+      `const { loadEnvConfig } = require(${JSON.stringify(nextEnv)});`,
+      `loadEnvConfig(${JSON.stringify(webDir)}, ${dev}, { info() {}, warn() {}, error() {} });`,
+      `const out = {};`,
+      `for (const k of ${JSON.stringify(CLI_WEB_ENV_KEYS)}) if (process.env[k] !== undefined) out[k] = process.env[k];`,
+      `process.stdout.write(JSON.stringify(out));`,
+    ].join("\n");
+    const out = execFileSync(process.execPath, ["-e", script], {
+      env: { ...process.env, ...env },
+      encoding: "utf8",
+      timeout: 10_000,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    cachedWebEnv = JSON.parse(out) as CliWebEnv;
+    return cachedWebEnv;
   } catch {
-    // Env files are best effort; a missing root secret fails at mint time
-    // with a clear error instead of launching an agent without ops access.
+    // Best effort: without file values a missing root secret fails at mint
+    // time with a clear error instead of launching an agent without ops access.
+    return {};
   }
-  cachedWebEnv = found;
-  return found;
 }
 
-// Next's precedence: .env.$mode.local, .env.local (skipped in test), .env.$mode, .env
-function webEnvFiles(): string[] {
-  const mode = process.env.NODE_ENV === "production" ? "production" : process.env.NODE_ENV === "test" ? "test" : "development";
-  return [`.env.${mode}.local`, ...(mode === "test" ? [] : [".env.local"]), `.env.${mode}`, ".env"];
-}
-
-// ponytail: only the four keys above, KEY=value with optional quotes and
-// "export "; no ${VAR} expansion. Upgrade to @next/env's parser if a deploy
-// ever needs expansion in these keys.
-function parseEnvKeys(text: string): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const raw of text.split(/\r?\n/)) {
-    const m = raw.match(/^\s*(?:export\s+)?([A-Z_][A-Z0-9_]*)\s*=\s*(.*)$/);
-    if (!m || !(CLI_WEB_ENV_KEYS as readonly string[]).includes(m[1])) continue;
-    let value = m[2].trim();
-    const q = value[0];
-    if ((q === '"' || q === "'") && value.lastIndexOf(q) > 0) value = value.slice(1, value.lastIndexOf(q));
-    else value = value.replace(/\s+#.*$/, "");
-    out[m[1]] = value;
-  }
-  return out;
-}
-
-/** Root signing secret for the CLI: caller env first, then the web env files. */
-export function cliSigningSecret(env: NodeJS.ProcessEnv, webEnv: CliWebEnv): string | undefined {
-  return env.BETTER_AUTH_SECRET?.trim() || env.SECRET_KEY?.trim() || webEnv.BETTER_AUTH_SECRET || webEnv.SECRET_KEY || undefined;
+/**
+ * Root signing secret, resolved like the server's getRootSecret
+ * (BETTER_AUTH_SECRET || SECRET_KEY) over the effective values: caller env
+ * overlaid with the web env files, bytes preserved.
+ */
+export function cliSigningSecret(webEnv: CliWebEnv): string | undefined {
+  return webEnv.BETTER_AUTH_SECRET || webEnv.SECRET_KEY || undefined;
 }
 
 /**
