@@ -617,17 +617,30 @@ child.stdout.on("data", (data) => {
 child.stderr.on("data", (data) => { stderr += data.toString(); });
 
 // write prompt to stdin (no shell interpolation = no escaping bugs)
-// EPIPE here is expected when the CLI exits before reading the whole prompt
-// (#138): log it and let the child's exit code decide the job result. Any
-// other stdin error still fails the worker through uncaughtException.
+// A failed write (EPIPE / ERR_STREAM_DESTROYED) means the CLI never received
+// its prompt (#138): the job must end failed even if the CLI exits 0 with
+// parseable output — output without the delivered prompt is a false success.
+// The failure is recorded here and acted on in the close handler, so the
+// worker never crashes on it. Any other stdin error still fails the worker
+// through uncaughtException.
+let promptDeliveryFailure: string | null = null;
 child.stdin.on("error", (err) => {
   if (err && (err.code === "EPIPE" || err.code === "ERR_STREAM_DESTROYED")) {
+    promptDeliveryFailure = err.code ?? "EPIPE";
     sysLog("warn", `job stdin closed early: ${jobId}`, `${err.code}: CLI exited before reading the full prompt`);
     return;
   }
   throw err;
 });
-child.stdin.write(prompt);
+try {
+  child.stdin.write(prompt);
+} catch (err: any) {
+  if (err && (err.code === "EPIPE" || err.code === "ERR_STREAM_DESTROYED")) {
+    promptDeliveryFailure = err.code ?? "EPIPE";
+  } else {
+    throw err;
+  }
+}
 child.stdin.end();
 
 child.on("error", async (err) => {
@@ -636,6 +649,10 @@ child.on("error", async (err) => {
 });
 
 child.on("close", async (code) => {
+  if (promptDeliveryFailure) {
+    await failJob(job, `prompt delivery failed: ${promptDeliveryFailure}`);
+    process.exit(1);
+  }
   if (code !== 0) {
     // claude -p sends errors (e.g. "Credit balance is too low") to stdout, not stderr
     const errDetail = stderr.slice(0, 500) || stdout.slice(0, 500) || `${resolvedCli} exited with code ${code}`;

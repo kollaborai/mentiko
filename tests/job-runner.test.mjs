@@ -920,7 +920,7 @@ test("marks job failed when mocked CLI exits non-zero", () => {
 
 // ── EPIPE regression (#138) ───────────────────────────────────────────
 
-test("completes job despite EPIPE when CLI exits before reading a large prompt (#138)", () => {
+test("fails job with delivery reason when CLI exits 0 without reading the prompt (#138)", () => {
   makeDefaultProfile({
     cli: MOCK_CLI_PATH,
     pipe_flag: "",
@@ -930,16 +930,30 @@ test("completes job despite EPIPE when CLI exits before reading a large prompt (
   // macOS), so the write cannot silently fit once the CLI has exited.
   makeJobFile("epipe-large-prompt", { prompt: "x".repeat(256 * 1024) }, "generate");
 
-  runJobWithMock("epipe-large-prompt", {
+  // The CLI exits 0 with parseable output, but it never read the prompt:
+  // the job must still fail with the delivery reason — a result generated
+  // without the requested prompt is a false success.
+  const result = runJobWithMockFail("epipe-large-prompt", {
     exitImmediately: true,
-    output: { name: "epipe-survivor" },
+    exitCode: 0,
+    output: { name: "epipe-false-success" },
   });
   const job = readJob("epipe-large-prompt");
-  assert(job.status === "complete", `expected complete, got ${job.status}: ${job.error || ""}`);
-  assert(job.result.name === "epipe-survivor", `unexpected result: ${JSON.stringify(job.result)}`);
+  assert(result !== null, "should fail");
+  assert(result.status === 1, `expected worker process exit 1, got ${result.status}`);
+  assert(job.status === "failed", `expected failed, got ${job.status}`);
+  assert(
+    /prompt delivery failed: (EPIPE|ERR_STREAM_DESTROYED)/.test(job.error || ""),
+    `unexpected error: ${job.error}`
+  );
+  // orderly failure, not a crash: the worker records the failed job itself.
+  assert(
+    !result.stderr.includes("uncaughtException") && !/ERR_STREAM_DESTROYED\s+at /.test(result.stderr),
+    `worker crashed on stdin error instead of failing the job: ${result.stderr.slice(0, 300)}`
+  );
 });
 
-test("EPIPE on stdin still fails the job when the CLI exits non-zero (#138)", () => {
+test("fails job with delivery reason when CLI exits non-zero without reading the prompt (#138)", () => {
   makeDefaultProfile({
     cli: MOCK_CLI_PATH,
     pipe_flag: "",
@@ -956,6 +970,10 @@ test("EPIPE on stdin still fails the job when the CLI exits non-zero (#138)", ()
   assert(result !== null, "should fail");
   assert(result.status === 1, `expected process exit 1, got ${result.status}`);
   assert(job.status === "failed", `expected failed, got ${job.status}`);
+  assert(
+    /prompt delivery failed: (EPIPE|ERR_STREAM_DESTROYED)/.test(job.error || ""),
+    `unexpected error: ${job.error}`
+  );
 });
 
 // ── secret decryption in job context ───────────────────────────────────
