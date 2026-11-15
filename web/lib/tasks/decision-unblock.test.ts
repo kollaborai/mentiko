@@ -212,41 +212,4 @@ describe("unblockTaskViaResolvedDecision follow-up validity (issue #113)", () =>
     expect(taskGet(ORG, parent.id, NS)!.dependencies!.map((d) => d.depends_on_id)).toEqual([valid.id]);
   });
 
-  it("prefers persisted explicit follow-up ids over the broad resolution list (issue #113)", async () => {
-    const subtask = makeDecisionSubtask();
-    const valid = taskCreate(ORG, { title: "Explicitly persisted follow-up" }, NS);
-    const unrelated = taskCreate(ORG, { title: "In the resolution list but never a blocker" }, NS);
-    const parent = taskCreate(ORG, {
-      title: "Blocked parent with persisted follow-ups",
-      metadata: {
-        lifecycle_phase: "decision_blocked",
-        decision_id: "DEC-1",
-        decision_subtask_id: subtask.id,
-        last_run_id: "run-1",
-        followup_task_ids: [valid.id],
-      },
-    }, NS);
-
-    mockGetDecision.mockReturnValue({
-      id: "DEC-1",
-      status: "approved",
-      resolution: { taskId: "EPIC-X", taskIds: [subtask.id, unrelated.id, valid.id] },
-    });
-
-    const outcome = await unblockTaskViaResolvedDecision({
-      request: {} as Request,
-      namespaceId: NS,
-      orgId: ORG,
-      taskId: parent.id,
-      metadata: taskGet(ORG, parent.id, NS)!.metadata as Record<string, unknown>,
-    });
-
-    expect(outcome.outcome).toBe("released");
-    if (outcome.outcome !== "released") return;
-    // the unrelated resolution-list task is never wired or waited on
-    expect(outcome.followUpTaskIds).toEqual([valid.id]);
-    const wired = taskGet(ORG, parent.id, NS)!.dependencies!.map((d) => d.depends_on_id);
-    expect(wired).toEqual([valid.id]);
-    expect(wired).not.toContain(unrelated.id);
-  });
 });

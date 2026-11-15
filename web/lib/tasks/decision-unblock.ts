@@ -134,22 +134,15 @@ export function readLinkedDecisionSignal(input: {
   // itself and any candidate that already (transitively) depends on it —
   // historical resolution lists can contain both, and waiting on either
   // deadlocks the lifecycle (shared policy with decision-resolution.ts).
-  //
-  // Issue #113 PARTIAL #3: when an earlier (failed) resolution pass already
-  // persisted explicit follow-up ids, those identities are authoritative —
-  // the broad resolution.taskIds list can contain unrelated tasks that were
-  // never meant as blockers. Fall back to the resolution list only when
-  // nothing explicit is persisted.
-  const persistedFollowUpIds = Array.isArray(meta.followup_task_ids)
-    ? meta.followup_task_ids.filter((id): id is string => typeof id === "string" && id.length > 0)
-    : [];
+
   const resolution = decision?.resolution;
   const resolutionTaskIds = Array.isArray(resolution?.taskIds) ? resolution.taskIds : [];
   const epicId = resolution?.taskId;
-  const candidates = persistedFollowUpIds.length > 0
-    ? persistedFollowUpIds
-    : resolutionTaskIds.filter((id): id is string =>
-        typeof id === "string" && id.length > 0 && id !== decisionTaskId && id !== epicId);
+  // Candidates always come from the CURRENT decision's resolution. Persisted
+  // followup_task_ids can belong to an earlier decision, so they are not
+  // authoritative here (independent review of #116).
+  const candidates = resolutionTaskIds.filter((id): id is string =>
+    typeof id === "string" && id.length > 0 && id !== decisionTaskId && id !== epicId);
   const followUpTaskIds = selectFollowUpTaskIds({
     orgId: input.orgId,
     parentTaskId: input.parentTaskId,
