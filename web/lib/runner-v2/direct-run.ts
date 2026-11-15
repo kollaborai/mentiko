@@ -2,7 +2,7 @@ import { mkdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import config from "@/lib/config";
 import { mintSessionToken } from "@/lib/auth/session-token";
-import { assertWebAcceptsToken, loadWebEnvForCliSigning, resolveWebOrigin } from "@/lib/runner-v2/cli-web-env";
+import { WebAppUnreachableError, assertWebAcceptsToken, loadWebEnvForCliSigning, resolveWebOrigin } from "@/lib/runner-v2/cli-web-env";
 import { startRunnerV2Bootstrap } from "@/lib/runner-v2/bootstrap-executor";
 import { loadNormalizedChainDefinition, type ChainRecord } from "@/lib/runner-v2/chain-contract";
 import { validateChainFile } from "@/lib/runner-v2/chain-validation-cli";
@@ -174,7 +174,17 @@ async function withCliSessionContext(env: NodeJS.ProcessEnv, runId: string): Pro
     scopes: ["ops:*"],
   });
   const webUrl = resolveWebOrigin(env);
-  await assertWebAcceptsToken(webUrl, sessionToken);
+  try {
+    await assertWebAcceptsToken(webUrl, sessionToken);
+  } catch (error) {
+    // Headless use (no web app running, e.g. the engine e2e suite) keeps the
+    // pre-#95 behavior: agents launch without ops access. A web app that
+    // answers but refuses or cannot confirm the token is a misconfiguration
+    // and stays fatal.
+    if (!(error instanceof WebAppUnreachableError)) throw error;
+    console.warn(`mentiko run: ${error.message}; launching agents without ops access`);
+    return env;
+  }
   return {
     ...env,
     MENTIKO_SESSION_ID: sessionId,

@@ -249,6 +249,26 @@ describe("typed direct run arguments", () => {
     }
   });
 
+  it("launches without ops access when no web app answers (headless use)", async () => {
+    const bootstrapCalls = (startRunnerV2Bootstrap as jest.Mock).mock.calls.length;
+    webTokenCheck.mockRejectedValue(new TypeError("fetch failed"));
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    const root = mkdtempSync(join(tmpdir(), "mentiko-direct-headless-"));
+    try {
+      await runTypedDirect({
+        chainPath: join(root, "chain.json"), runsDir: join(root, "runs"), runId: "run-headless", debug: false,
+        env: { NODE_ENV: "test", MENTIKO_WEB_URL: "http://127.0.0.1:3100" },
+      });
+      const calls = (startRunnerV2Bootstrap as jest.Mock).mock.calls;
+      expect(calls.length).toBe(bootstrapCalls + 1);
+      expect(calls[calls.length - 1][0].env.MENTIKO_SESSION_TOKEN).toBeUndefined();
+      expect(warn.mock.calls.flat().join(" ")).toContain("launching agents without ops access");
+    } finally {
+      warn.mockRestore();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("never overrides a caller-provided session token context", async () => {
     const root = mkdtempSync(join(tmpdir(), "mentiko-direct-token-kept-"));
     const runsDir = join(root, "runs");

@@ -78,6 +78,9 @@ function devWebPort(): string | null {
  * CLI and server that disagree for any reason fail here with a clear message
  * instead of an agent hitting 401 on its first ops call.
  */
+/** No web app answered at the origin (refused, DNS, timeout). */
+export class WebAppUnreachableError extends Error {}
+
 export async function assertWebAcceptsToken(origin: string, token: string, timeoutMs = 5000): Promise<void> {
   const url = `${origin.replace(/\/+$/, "")}/api/mentiko-mcp/ops/monitor/status`;
   let res: Response;
@@ -89,7 +92,7 @@ export async function assertWebAcceptsToken(origin: string, token: string, timeo
       signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (error) {
-    throw new Error(
+    throw new WebAppUnreachableError(
       `mentiko web app at ${origin} is unreachable (${error instanceof Error ? error.message : String(error)}); start it or set MENTIKO_WEB_URL`,
     );
   }
