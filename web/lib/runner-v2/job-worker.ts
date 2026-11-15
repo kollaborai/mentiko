@@ -421,6 +421,9 @@ const jobPath = jobPaths.jobPath;
 
 // read job input
 let job;
+// Task jobs deliberately persist status "running" for the server-side import
+// (/api/jobs/[id]/complete). The exit handler must not clobber that handoff.
+let persistedForServerImport = false;
 try {
   const content = readFileSync(jobPath, "utf-8");
   job = parseJobRecord(content);
@@ -719,8 +722,11 @@ child.on("close", async (code) => {
   // materializes the task tree. The callback still receives an explicit
   // terminal status; that route publishes `complete` only after import and
   // optional auto-run handoff finish.
-  const callbackStatus = job.type === "task" ? "complete" : job.status;
+  // The callback announces completion: task jobs stay "running" on disk for
+  // the server-side import, but every successful run reports "complete".
+  const callbackStatus = "complete";
   job.status = job.type === "task" ? "running" : "complete";
+  persistedForServerImport = job.type === "task";
   job.completedAt = job.status === "complete" ? new Date().toISOString() : undefined;
   job.result = result;
 
@@ -765,7 +771,7 @@ process.on("unhandledRejection", async (err) => {
 
 // last-resort: if process exits without completing, mark job failed synchronously
 process.on("exit", (code) => {
-  if (job.status === "running") {
+  if (job.status === "running" && !persistedForServerImport) {
     job.status = "failed";
     job.completedAt = new Date().toISOString();
     job.error = job.error || `process exited unexpectedly (code ${code})`;
