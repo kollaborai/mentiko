@@ -86,6 +86,11 @@ jest.mock("@/lib/runs/auto-run-service", () => ({
 
 import { resolveDecisionToTasks as resolveDecisionToTasksWithActor } from "./decision-resolution";
 
+// The mocked cycle-error class decision-resolution.ts instanceof-checks
+// against; tests throw instances of THIS class to simulate the store rejecting
+// an edge (the selection/insertion race of issue #113).
+const taskStoreMock = jest.requireMock("@/lib/tasks/task-store");
+
 let seq = 0;
 
 function makeDecision(overrides: Record<string, unknown> = {}) {
@@ -142,6 +147,9 @@ beforeEach(() => {
   resolutionLockTail = Promise.resolve();
   // each create returns a unique id in call order: NEW-1, NEW-2, ...
   taskCreate.mockImplementation((_org: unknown, fields: Record<string, unknown>) => ({ id: `NEW-${++seq}`, ...fields }));
+  // clearAllMocks keeps implementations; re-pin the benign default so a test
+  // that makes taskAddDep throw (the race tests) can't poison the next one.
+  taskAddDep.mockImplementation(() => undefined);
   taskGet.mockReturnValue({ id: "FEAT-019", issue_type: "epic", workspace_id: undefined });
   updateDecision.mockImplementation((_ns: unknown, _org: unknown, _id: unknown, patch: Record<string, unknown>) => ({ id: "DEC-1", ...patch }));
   // Mirrors the real filter: dedupe, drop the parent itself, drop pairs the
@@ -507,6 +515,124 @@ describe("resolveDecisionToTasks parenting", () => {
     // no follow-up edge is wired (plan-internal deps between NEW tasks may
     // still exist) and the reducer's empty-list branch resumes
     expect(taskAddDep).not.toHaveBeenCalledWith("default", "FEAT-019", expect.any(String), "default", undefined);
+    expect(taskUpdate).toHaveBeenCalledWith(
+      "default",
+      "FEAT-019",
+      {
+        status: "open",
+        metadata: expect.objectContaining({
+          lifecycle_phase: "resuming",
+          followup_task_ids: [],
+        }),
+      },
+      "default",
+    );
+  });
+
+  it("persists only follow-ups whose edge insert was accepted when selection and insertion race (issue #113)", async () => {
+    // Race shape: selection clears both NEW-1 and NEW-2 (nothing deadlocks at
+    // selection time), but another writer lands the reverse edge for NEW-1
+    // between selection and our insert, so taskAddDep rejects NEW-1 only.
+    // The persisted lifecycle must list ONLY NEW-2; NEW-1 must never be
+    // persisted as a wait.
+    taskGet.mockImplementation((_org: unknown, id: string) => {
+      if (id === "FEAT-019") {
+        return {
+          id: "FEAT-019",
+          issue_type: "feature",
+          parent_id: "EPIC-008",
+          workspace_id: undefined,
+          metadata: {
+            lifecycle_phase: "decision_blocked",
+            decision_subtask_id: "DEC-TASK-1",
+            last_run_decision_required: true,
+          },
+        };
+      }
+      if (id === "EPIC-008") {
+        return { id: "EPIC-008", issue_type: "epic", parent_id: null, workspace_id: undefined, metadata: {} };
+      }
+      return undefined;
+    });
+    getDecision.mockReturnValue(makeDecision({
+      source: "completion-audit",
+      parentTaskId: "FEAT-019",
+      ...planFlow,
+    }));
+    taskAddDep.mockImplementation(
+      (_org: unknown, taskId: string, dependsOnId: string) => {
+        if (dependsOnId === "NEW-1") {
+          throw new taskStoreMock.TaskDependencyCycleError(taskId, dependsOnId, "cycle");
+        }
+      },
+    );
+
+    await expect(resolveDecisionToTasks({
+      namespaceId: "default",
+      orgId: "default",
+      decisionId: "DEC-1",
+      selectedOptionId: "opt-a",
+    })).resolves.toBeTruthy();
+
+    // both edges were attempted (selection passed both) ...
+    expect(taskAddDep).toHaveBeenCalledWith("default", "FEAT-019", "NEW-1", "default", undefined);
+    expect(taskAddDep).toHaveBeenCalledWith("default", "FEAT-019", "NEW-2", "default", undefined);
+    // ... but only the accepted one is persisted and waited on
+    expect(taskUpdate).toHaveBeenCalledWith(
+      "default",
+      "FEAT-019",
+      {
+        status: "blocked",
+        metadata: expect.objectContaining({
+          lifecycle_phase: "followup_blocked",
+          followup_task_ids: ["NEW-2"],
+        }),
+      },
+      "default",
+    );
+  });
+
+  it("resumes the parent when every follow-up edge insert is rejected after selection (issue #113)", async () => {
+    taskGet.mockImplementation((_org: unknown, id: string) => {
+      if (id === "FEAT-019") {
+        return {
+          id: "FEAT-019",
+          issue_type: "feature",
+          parent_id: "EPIC-008",
+          workspace_id: undefined,
+          metadata: {
+            lifecycle_phase: "decision_blocked",
+            decision_subtask_id: "DEC-TASK-1",
+            last_run_decision_required: true,
+          },
+        };
+      }
+      if (id === "EPIC-008") {
+        return { id: "EPIC-008", issue_type: "epic", parent_id: null, workspace_id: undefined, metadata: {} };
+      }
+      return undefined;
+    });
+    getDecision.mockReturnValue(makeDecision({
+      source: "completion-audit",
+      parentTaskId: "FEAT-019",
+      ...planFlow,
+    }));
+    taskAddDep.mockImplementation(
+      (_org: unknown, taskId: string, dependsOnId: string) => {
+        if (dependsOnId === "NEW-1" || dependsOnId === "NEW-2") {
+          throw new taskStoreMock.TaskDependencyCycleError(taskId, dependsOnId, "cycle");
+        }
+      },
+    );
+
+    await resolveDecisionToTasks({
+      namespaceId: "default",
+      orgId: "default",
+      decisionId: "DEC-1",
+      selectedOptionId: "opt-a",
+    });
+
+    // no accepted edge -> the reducer's empty-list branch resumes the parent
     expect(taskUpdate).toHaveBeenCalledWith(
       "default",
       "FEAT-019",

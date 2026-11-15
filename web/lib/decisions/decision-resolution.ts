@@ -184,24 +184,35 @@ async function applyResolutionLifecycle(input: {
     candidates: input.followUpTaskIds,
     namespaceId,
   });
+  // Issue #113 P1: insert each edge FIRST and keep only the ids whose edge
+  // was actually accepted. Another writer can land the reverse edge (follow-up
+  // -> parent) after selection and before this insert; taskAddDep then rejects
+  // ours, and persisting that id would park the parent behind a follow-up that
+  // can never complete. The lifecycle state below is computed from the
+  // ACCEPTED edges only, so followup_task_ids / blocked_by_task_ids always
+  // match the persisted dependency graph.
+  const acceptedFollowUpTaskIds: string[] = [];
+  for (const followUpTaskId of validFollowUpTaskIds) {
+    try {
+      taskAddDep(orgId, parentTask.id, followUpTaskId, namespaceId, workspaceId);
+      acceptedFollowUpTaskIds.push(followUpTaskId);
+    } catch (error) {
+      if (error instanceof TaskDependencyCycleError) {
+        console.warn(
+          `[decision-resolution] dropped follow-up ${followUpTaskId}: edge ${parentTask.id} -> ${followUpTaskId} was rejected (${error.message})`,
+        );
+        continue;
+      }
+      throw error;
+    }
+  }
   const deps: LifecycleEffectDeps = {
     startOutcomeSummary: async () => undefined,
     createDecisionGate: async () => undefined,
     blockOnDecision: () => undefined,
-    createFollowupDependencies: (depOrgId, taskId, followUpTaskId, depNamespaceId, depWorkspaceId) => {
-      try {
-        taskAddDep(depOrgId, taskId, followUpTaskId, depNamespaceId, depWorkspaceId);
-      } catch (error) {
-        if (error instanceof TaskDependencyCycleError) {
-          // A follow-up list can contain the parent itself or one of its
-          // dependents; wiring that edge would deadlock the graph. Skip it
-          // and keep resolving (issue #113).
-          console.warn(`[decision-resolution] skipped follow-up dependency ${taskId} -> ${followUpTaskId}: ${error.message}`);
-          return;
-        }
-        throw error;
-      }
-    },
+    // Edges were already inserted above; the reducer effect is informational
+    // here and must not insert (and fail) a second time.
+    createFollowupDependencies: () => undefined,
     resumeOriginalTask: () => undefined,
     closeTask: () => undefined,
     clearDecisionGate: () => undefined,
@@ -217,7 +228,7 @@ async function applyResolutionLifecycle(input: {
       type: "decision.resolved",
       taskId: parentTask.id,
       decisionTaskId,
-      followUpTaskIds: validFollowUpTaskIds,
+      followUpTaskIds: acceptedFollowUpTaskIds,
     },
     context: {
       request: {} as Request,

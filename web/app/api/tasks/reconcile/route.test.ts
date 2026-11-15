@@ -37,11 +37,15 @@ const mockTaskList = jest.fn();
 const mockTaskGet = jest.fn();
 const mockTaskUpdate = jest.fn();
 const mockTaskClose = jest.fn();
+const mockTaskDepWouldCycle = jest.fn();
 jest.mock("@/lib/tasks/task-store", () => ({
   taskList: (...args: unknown[]) => mockTaskList(...args),
   taskGet: (...args: unknown[]) => mockTaskGet(...args),
   taskUpdate: (...args: unknown[]) => mockTaskUpdate(...args),
   taskClose: (...args: unknown[]) => mockTaskClose(...args),
+  // issue #113 stale-wait repair consults the graph through these; default to
+  // "the persisted edges are healthy" so tests opt into staleness explicitly.
+  taskDepWouldCycle: (...args: unknown[]) => mockTaskDepWouldCycle(...args),
   // decision-unblock's create_followup_dependencies effect uses this when a
   // resolved decision carries follow-up plan tasks.
   taskAddDep: jest.fn(),
@@ -195,6 +199,7 @@ describe("GET /api/tasks/reconcile", () => {
     mockAcknowledgeLateCompletionDelivery.mockReturnValue(true);
     mockReleaseLateCompletionDelivery.mockReturnValue(true);
     mockBuildTypedExecutorPlan.mockReturnValue({ action: "route", effects: [], launches: [] });
+    mockTaskDepWouldCycle.mockReturnValue(false);
     mockApplyTypedExecutorPlan.mockReturnValue({ effectsApplied: [], operations: [], launchesStarted: [] });
     mockTaskGet.mockImplementation((_orgId: string, taskId: string) => (
       (mockTaskList() as Array<{ id: string }>).find((task) => task.id === taskId)
@@ -1542,6 +1547,12 @@ describe("GET /api/tasks/reconcile", () => {
           last_run_decision_required: true,
           followup_task_ids: ["TASK-100", "TASK-101"],
         },
+        // the persisted dependency edges behind the wait (issue #113 repair
+        // only drops ids with no matching edge)
+        dependencies: [
+          { depends_on_id: "TASK-100" },
+          { depends_on_id: "TASK-101" },
+        ],
       },
       { id: "TASK-100", title: "Done follow-up", status: "closed", metadata: {} },
       { id: "TASK-101", title: "Open follow-up", status: "open", metadata: {} },
@@ -1576,6 +1587,10 @@ describe("GET /api/tasks/reconcile", () => {
           decision_subtask_id: "DEC-1",
           followup_task_ids: ["TASK-100", "TASK-101"],
         },
+        dependencies: [
+          { depends_on_id: "TASK-100" },
+          { depends_on_id: "TASK-101" },
+        ],
       },
       { id: "TASK-100", title: "Done follow-up", status: "closed", metadata: {} },
       { id: "TASK-101", title: "Resolved follow-up", status: "resolved", metadata: {} },
@@ -1610,6 +1625,62 @@ describe("GET /api/tasks/reconcile", () => {
       },
       "default",
     );
+  });
+
+  it("drops stale follow-up waits (parent itself and an unwired dependent) and advances the parent (issue #113)", async () => {
+    // Incident shape: persisted followup_task_ids lists the blocked parent
+    // itself and a dependent, with NO matching dependency edges — waiting on
+    // either can never complete. The reconciler must drop them from the
+    // metadata and still advance the parent.
+    mockTaskList.mockReturnValue([
+      {
+        id: "TASK-093",
+        title: "Original task",
+        status: "blocked",
+        metadata: {
+          lifecycle_phase: "followup_blocked",
+          last_run_decision_required: true,
+          followup_task_ids: ["TASK-093", "TASK-102"],
+        },
+        dependencies: [],
+      },
+      { id: "TASK-102", title: "Dependent (already depends on parent)", status: "open", metadata: {} },
+    ]);
+
+    const res = await GET(makeRequest() as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    // the stale waits are dropped from the metadata once, with a log line
+    expect(mockTaskUpdate).toHaveBeenCalledWith(
+      "default",
+      "TASK-093",
+      {
+        metadata: expect.objectContaining({
+          lifecycle_phase: "followup_blocked",
+          followup_task_ids: [],
+        }),
+      },
+      "default",
+    );
+    expect(mockWriteLog).toHaveBeenCalledWith(
+      "default",
+      "default",
+      "warn",
+      "task-reconciler",
+      "task TASK-093: dropped stale follow-up waits",
+      expect.stringContaining("TASK-093"),
+    );
+    // with nothing waitable left, the parent advances instead of stalling
+    expect(body.data).toMatchObject({
+      reconciled: 1,
+      results: [
+        expect.objectContaining({
+          taskId: "TASK-093",
+          newStatus: "followups_completed",
+        }),
+      ],
+    });
   });
 
   it("re-applies an audited close on a reopened task whose run evidence was wiped", async () => {

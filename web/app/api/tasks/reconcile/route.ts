@@ -3,7 +3,7 @@ import { existsSync, readFileSync, readdirSync } from "fs";
 import { randomUUID } from "node:crypto";
 import { join } from "path";
 import { checkAuth } from "@/lib/auth/api-auth";
-import { taskGet, taskList, taskUpdate } from "@/lib/tasks/task-store";
+import { taskDepWouldCycle, taskGet, taskList, taskUpdate } from "@/lib/tasks/task-store";
 import { validateTaskId } from "@/lib/tasks/task-store";
 import { applyCompletionAudit, supersedeStaleCompletionAuditDecision } from "@/lib/tasks/completion-audit-apply";
 import { resolveTaskAutoRunDefault } from "@/lib/tasks/task-auto-run-default";
@@ -677,15 +677,33 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
 
   for (const issue of followupBlockedTasks) {
     const meta = parseMetadata(issue.metadata)!;
-    const followUpTaskIds = stringArray(meta.followup_task_ids);
-    const allFollowUpsComplete = followUpTaskIds.every((id) => {
-      const followUp = issueById.get(id);
-      return !!followUp && DONE_TASK_STATUSES.has(followUp.status);
-    });
-    if (!allFollowUpsComplete) continue;
-
     try {
       const safeId = validateTaskId(issue.id);
+      // Repair stale persisted waits (issue #113): a follow-up id with no
+      // matching task_dependencies edge (parent -> id), or whose edge would
+      // form a cycle, can never complete while the parent is blocked on it.
+      // Log it once and drop it from the metadata; the wait check below then
+      // runs on the ids that are actually wired.
+      const parent = taskGet(orgId, safeId, namespaceId);
+      const wiredDependsOn = new Set((parent?.dependencies ?? []).map((dep) => dep.depends_on_id));
+      let followUpTaskIds = stringArray(meta.followup_task_ids);
+      const staleIds = followUpTaskIds.filter(
+        (id) => !wiredDependsOn.has(id) || taskDepWouldCycle(orgId, safeId, id, namespaceId),
+      );
+      if (staleIds.length > 0) {
+        followUpTaskIds = followUpTaskIds.filter((id) => !staleIds.includes(id));
+        writeLog(namespaceId, orgId, "warn", "task-reconciler",
+          `task ${issue.id}: dropped stale follow-up waits`,
+          `follow-up ids with no accepted dependency edge (issue #113): ${staleIds.join(", ")}`);
+        meta.followup_task_ids = followUpTaskIds;
+        taskUpdate(orgId, safeId, { metadata: { ...meta } }, namespaceId);
+      }
+      const allFollowUpsComplete = followUpTaskIds.every((id) => {
+        const followUp = issueById.get(id);
+        return !!followUp && DONE_TASK_STATUSES.has(followUp.status);
+      });
+      if (!allFollowUpsComplete) continue;
+
       const state = hydrateLifecycleState(safeId, meta);
       await applyLifecycleEvent({
         state,

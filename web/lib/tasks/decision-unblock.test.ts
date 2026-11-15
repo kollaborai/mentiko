@@ -34,6 +34,17 @@ jest.mock("@/lib/runs/auto-run-service", () => ({
   triggerAutoRunScan: jest.fn().mockResolvedValue(undefined),
 }));
 
+const mockSelectFollowUpTaskIds = jest.fn();
+jest.mock("@/lib/tasks/task-store", () => {
+  const actual = jest.requireActual("@/lib/tasks/task-store");
+  return {
+    ...actual,
+    // The ES namespace is sealed, so jest.spyOn cannot intercept this export;
+    // route it through a mockable fn instead (default: the real policy).
+    selectFollowUpTaskIds: (...a: unknown[]) => mockSelectFollowUpTaskIds(...a),
+  };
+});
+
 import {
   taskAddDep,
   taskClose,
@@ -42,6 +53,9 @@ import {
   taskGet,
   closeAll,
 } from "./task-store";
+
+const actualTaskStore = jest.requireActual("@/lib/tasks/task-store") as typeof import("./task-store");
+type SelectFollowUpInput = Parameters<typeof actualTaskStore.selectFollowUpTaskIds>[0];
 import { unblockTaskViaResolvedDecision } from "./decision-unblock";
 
 const NS = "unblock-ns";
@@ -70,6 +84,9 @@ function makeParent(subtaskId: string) {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockSelectFollowUpTaskIds.mockImplementation(
+    (input: SelectFollowUpInput) => actualTaskStore.selectFollowUpTaskIds(input),
+  );
 });
 
 afterAll(() => {
@@ -154,5 +171,82 @@ describe("unblockTaskViaResolvedDecision follow-up validity (issue #113)", () =>
     expect(meta.lifecycle_phase).toBe("resuming");
     expect(meta.followup_task_ids).toEqual([]);
     expect(record.dependencies!.length).toBe(0);
+  });
+
+  it("persists only follow-ups whose edge insert was accepted when selection and insertion race (issue #113)", async () => {
+    const subtask = makeDecisionSubtask();
+    const parent = makeParent(subtask.id);
+    const racy = taskCreate(ORG, { title: "Racy follow-up" }, NS);
+    const valid = taskCreate(ORG, { title: "Valid follow-up" }, NS);
+
+    mockGetDecision.mockReturnValue({
+      id: "DEC-1",
+      status: "approved",
+      resolution: { taskId: "EPIC-X", taskIds: [subtask.id, racy.id, valid.id] },
+    });
+
+    // Simulate the race: selection sees a clean graph (both candidates pass),
+    // then the reverse edge racy -> parent lands BEFORE the parent -> racy
+    // insert runs — taskAddDep rejects only that edge.
+    mockSelectFollowUpTaskIds.mockImplementation((input: SelectFollowUpInput) => {
+      const result = actualTaskStore.selectFollowUpTaskIds(input);
+      taskAddDep(ORG, racy.id, parent.id, NS);
+      return result;
+    });
+
+    const outcome = await unblockTaskViaResolvedDecision({
+      request: {} as Request,
+      namespaceId: NS,
+      orgId: ORG,
+      taskId: parent.id,
+      metadata: taskGet(ORG, parent.id, NS)!.metadata as Record<string, unknown>,
+    });
+
+    expect(outcome.outcome).toBe("released");
+    if (outcome.outcome !== "released") return;
+    // only the accepted edge is stored and waited on; the rejected id is
+    // never persisted as a wait
+    expect(outcome.followUpTaskIds).toEqual([valid.id]);
+    const meta = taskGet(ORG, parent.id, NS)!.metadata as Record<string, unknown>;
+    expect(meta.followup_task_ids).toEqual([valid.id]);
+    expect(taskGet(ORG, parent.id, NS)!.dependencies!.map((d) => d.depends_on_id)).toEqual([valid.id]);
+  });
+
+  it("prefers persisted explicit follow-up ids over the broad resolution list (issue #113)", async () => {
+    const subtask = makeDecisionSubtask();
+    const valid = taskCreate(ORG, { title: "Explicitly persisted follow-up" }, NS);
+    const unrelated = taskCreate(ORG, { title: "In the resolution list but never a blocker" }, NS);
+    const parent = taskCreate(ORG, {
+      title: "Blocked parent with persisted follow-ups",
+      metadata: {
+        lifecycle_phase: "decision_blocked",
+        decision_id: "DEC-1",
+        decision_subtask_id: subtask.id,
+        last_run_id: "run-1",
+        followup_task_ids: [valid.id],
+      },
+    }, NS);
+
+    mockGetDecision.mockReturnValue({
+      id: "DEC-1",
+      status: "approved",
+      resolution: { taskId: "EPIC-X", taskIds: [subtask.id, unrelated.id, valid.id] },
+    });
+
+    const outcome = await unblockTaskViaResolvedDecision({
+      request: {} as Request,
+      namespaceId: NS,
+      orgId: ORG,
+      taskId: parent.id,
+      metadata: taskGet(ORG, parent.id, NS)!.metadata as Record<string, unknown>,
+    });
+
+    expect(outcome.outcome).toBe("released");
+    if (outcome.outcome !== "released") return;
+    // the unrelated resolution-list task is never wired or waited on
+    expect(outcome.followUpTaskIds).toEqual([valid.id]);
+    const wired = taskGet(ORG, parent.id, NS)!.dependencies!.map((d) => d.depends_on_id);
+    expect(wired).toEqual([valid.id]);
+    expect(wired).not.toContain(unrelated.id);
   });
 });

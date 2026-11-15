@@ -134,11 +134,22 @@ export function readLinkedDecisionSignal(input: {
   // itself and any candidate that already (transitively) depends on it —
   // historical resolution lists can contain both, and waiting on either
   // deadlocks the lifecycle (shared policy with decision-resolution.ts).
+  //
+  // Issue #113 PARTIAL #3: when an earlier (failed) resolution pass already
+  // persisted explicit follow-up ids, those identities are authoritative —
+  // the broad resolution.taskIds list can contain unrelated tasks that were
+  // never meant as blockers. Fall back to the resolution list only when
+  // nothing explicit is persisted.
+  const persistedFollowUpIds = Array.isArray(meta.followup_task_ids)
+    ? meta.followup_task_ids.filter((id): id is string => typeof id === "string" && id.length > 0)
+    : [];
   const resolution = decision?.resolution;
   const resolutionTaskIds = Array.isArray(resolution?.taskIds) ? resolution.taskIds : [];
   const epicId = resolution?.taskId;
-  const candidates = resolutionTaskIds.filter((id): id is string =>
-    typeof id === "string" && id.length > 0 && id !== decisionTaskId && id !== epicId);
+  const candidates = persistedFollowUpIds.length > 0
+    ? persistedFollowUpIds
+    : resolutionTaskIds.filter((id): id is string =>
+        typeof id === "string" && id.length > 0 && id !== decisionTaskId && id !== epicId);
   const followUpTaskIds = selectFollowUpTaskIds({
     orgId: input.orgId,
     parentTaskId: input.parentTaskId,
@@ -181,19 +192,9 @@ function makeUnblockDeps(input: UnblockTaskInput): LifecycleEffectDeps {
     startOutcomeSummary: async () => undefined,
     createDecisionGate: async () => undefined,
     blockOnDecision: () => undefined,
-    createFollowupDependencies: (depOrgId, taskId, followUpTaskId, depNamespaceId, depWorkspaceId) => {
-      try {
-        taskAddDep(depOrgId, taskId, followUpTaskId, depNamespaceId, depWorkspaceId);
-      } catch (error) {
-        if (error instanceof TaskDependencyCycleError) {
-          // Follow-up lists can include the parent or its dependents; skip the
-          // deadlocking edge and keep the unblock moving (issue #113).
-          console.warn(`[decision-unblock] skipped follow-up dependency ${taskId} -> ${followUpTaskId}: ${error.message}`);
-          return;
-        }
-        throw error;
-      }
-    },
+    // Edges are inserted before the reducer runs (see apply); the effect is
+    // informational here and must not insert (and fail) a second time.
+    createFollowupDependencies: () => undefined,
     resumeOriginalTask: () => undefined,
     closeTask: () => undefined,
     clearDecisionGate: () => undefined,
@@ -249,13 +250,34 @@ export async function unblockTaskViaResolvedDecision(
     }
 
     const state = hydrateLifecycleState(input.taskId, meta);
+    // Issue #113 P1: insert each follow-up edge FIRST and keep only the ids
+    // whose edge was actually accepted. Another writer can land the reverse
+    // edge after selection and before the insert; taskAddDep then rejects
+    // ours, and persisting that id would park the parent behind a follow-up
+    // that can never complete. The lifecycle state below is computed from the
+    // ACCEPTED edges only.
+    const acceptedFollowUpTaskIds: string[] = [];
+    for (const followUpTaskId of signal.followUpTaskIds) {
+      try {
+        taskAddDep(input.orgId, input.taskId, followUpTaskId, input.namespaceId, input.workspaceId);
+        acceptedFollowUpTaskIds.push(followUpTaskId);
+      } catch (error) {
+        if (error instanceof TaskDependencyCycleError) {
+          console.warn(
+            `[decision-unblock] dropped follow-up ${followUpTaskId}: edge ${input.taskId} -> ${followUpTaskId} was rejected (${error.message})`,
+          );
+          continue;
+        }
+        throw error;
+      }
+    }
     const transition = await applyLifecycleEvent({
       state,
       event: {
         type: "decision.resolved",
         taskId: input.taskId,
         decisionTaskId: signal.decisionTaskId ?? state.decisionTaskId ?? input.taskId,
-        followUpTaskIds: signal.followUpTaskIds,
+        followUpTaskIds: acceptedFollowUpTaskIds,
       },
       context: {
         request: input.request,
@@ -280,7 +302,7 @@ export async function unblockTaskViaResolvedDecision(
       outcome: "released",
       phase: transition.state.phase,
       ...(signal.decisionId ? { decisionId: signal.decisionId } : {}),
-      followUpTaskIds: signal.followUpTaskIds,
+      followUpTaskIds: acceptedFollowUpTaskIds,
     };
   };
 

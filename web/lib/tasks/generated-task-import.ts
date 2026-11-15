@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import config from "@/lib/config";
-import { _getDb, taskAddDep, taskCreate, taskGet } from "@/lib/tasks/task-store";
+import { _getDb, taskAddDep, taskCreate, taskGet, TaskDependencyCycleError } from "@/lib/tasks/task-store";
 import { createTaskDecision } from "@/lib/tasks/task-decision-link";
 import { resolveTaskAutoRunDefault } from "@/lib/tasks/task-auto-run-default";
 import { isTaskWorkMode } from "@/lib/tasks/work-mode";
@@ -291,7 +291,20 @@ export function importGeneratedTaskTree(input: ImportGeneratedTaskTreeInput): Im
         for (const depIdx of deps) {
           const toId = subtaskIds[depIdx];
           if (!toId) continue;
-          taskAddDep(input.orgId, fromId, toId, input.namespaceId, input.workspacePath || undefined);
+          try {
+            taskAddDep(input.orgId, fromId, toId, input.namespaceId, input.workspacePath || undefined);
+          } catch (error) {
+            if (error instanceof TaskDependencyCycleError) {
+              // A generated plan can describe a cyclic depends_on chain; skip
+              // that single edge instead of rolling back the whole generated
+              // tree (issue #113).
+              console.warn(
+                `[generated-task-import] skipped cyclic dependency ${fromId} -> ${toId}: ${error.message}`,
+              );
+              continue;
+            }
+            throw error;
+          }
         }
       }
     }
