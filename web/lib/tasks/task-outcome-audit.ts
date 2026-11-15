@@ -48,7 +48,7 @@ export interface StartTaskOutcomeAuditResult {
 }
 
 export interface RecoverTaskOutcomeAuditResult {
-  status: "not_recoverable" | "recovered" | "superseded";
+  status: "not_recoverable" | "recovered" | "superseded" | "failed";
   jobId?: string;
   sourceRunId?: string;
 }
@@ -60,7 +60,9 @@ export interface RecoverTaskOutcomeAuditResult {
  * to leave its source task in `summarizing` forever. Recovery accepts only the
  * canonical artifact from that job's own generation run, re-validates the
  * source-run fingerprint, and then applies the same summary/audit state that
- * the normal completion endpoint would have applied.
+ * the normal completion endpoint would have applied. A failed job with no
+ * importable artifact (monitor escalation) is propagated to the task as a
+ * failed summary instead, mirroring the completion endpoint's failed path.
  */
 export async function recoverTaskOutcomeAudit(
   input: StartTaskOutcomeAuditInput,
@@ -100,19 +102,54 @@ export async function recoverTaskOutcomeAudit(
   const { resolveLinkRunPaths } = await import("@/lib/links/link-run-runtime");
   const { runDir } = resolveLinkRunPaths(input.namespaceId, input.orgId, job.runId);
   const resultPath = join(runDir, "artifacts", "generation-result.json");
-  if (!existsSync(resultPath)) return { status: "not_recoverable" };
 
-  let payload: Record<string, unknown>;
-  try {
-    const parsed: unknown = JSON.parse(readFileSync(resultPath, "utf8"));
-    if (!isPayloadCompatibleWithKind(parsed, "run_summary")) return { status: "not_recoverable" };
-    payload = parsed as Record<string, unknown>;
-  } catch {
-    return { status: "not_recoverable" };
+  let payload: Record<string, unknown> | undefined;
+  if (existsSync(resultPath)) {
+    try {
+      const parsed: unknown = JSON.parse(readFileSync(resultPath, "utf8"));
+      if (isPayloadCompatibleWithKind(parsed, "run_summary")) payload = parsed as Record<string, unknown>;
+    } catch {
+      payload = undefined;
+    }
   }
+  const rawAudit = payload ? extractCompletionAudit(payload) : undefined;
 
-  const rawAudit = extractCompletionAudit(payload);
-  if (!rawAudit) return { status: "not_recoverable" };
+  // A failed summary job with no importable artifact (for example a monitor
+  // escalation that failed the run before the agent ever wrote its result)
+  // used to fall through as not_recoverable, leaving the task stuck at
+  // lifecycle_phase=summarizing with task_outcome_summary_status=running
+  // forever (issue #114: TASK-008 blocked TASK-009..TASK-011). Apply the same
+  // failed-summary propagation /api/jobs/[id]/complete performs: mark the
+  // summary failed (idempotently per job), release the lifecycle fingerprint
+  // so the terminal sweep can re-admit a retry, and record the job's error.
+  if (!payload || !rawAudit) {
+    const failureAlreadyRecorded =
+      metadata.task_outcome_summary_job_id === job.id
+      && metadata.task_outcome_summary_status === "failed";
+    const previousFailures = typeof metadata.task_outcome_summary_failures === "number"
+      ? metadata.task_outcome_summary_failures
+      : 0;
+    taskUpdate(input.orgId, taskId, {
+      metadata: {
+        ...metadata,
+        task_outcome_summary_status: "failed",
+        task_outcome_summary_job_id: job.id,
+        task_outcome_summary_run_id: job.runId,
+        task_outcome_summary_chain_id: job.chainId,
+        task_outcome_summary_failures: failureAlreadyRecorded ? previousFailures : previousFailures + 1,
+        task_outcome_summary_run_fingerprint: undefined,
+        summarized_run_fingerprints: withoutLifecycleFingerprint(
+          metadata,
+          sourceRunId,
+          eligibility.fingerprint,
+        ),
+        task_outcome_summary: undefined,
+        task_outcome_summary_completed_at: undefined,
+        task_outcome_summary_error: job.error || "Task outcome summary failed",
+      },
+    }, input.namespaceId);
+    return { status: "failed", jobId, sourceRunId };
+  }
 
   const result = { output: JSON.stringify(payload) };
   updateJob(job.id, {

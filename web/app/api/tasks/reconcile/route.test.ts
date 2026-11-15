@@ -281,6 +281,42 @@ describe("GET /api/tasks/reconcile", () => {
     }));
   });
 
+  it("moves a monitor-escalated summary failure off summarizing", async () => {
+    mockTaskList.mockReturnValue([
+      {
+        id: "TASK-008",
+        title: "Stalled behind a failed summary job",
+        status: "open",
+        metadata: {
+          lifecycle_phase: "summarizing",
+          task_outcome_summary_status: "running",
+          task_outcome_summary_job_id: "job-1793323422067-mw0k4ov",
+        },
+      },
+    ]);
+    mockRecoverTaskOutcomeAudit.mockResolvedValueOnce({
+      status: "failed",
+      jobId: "job-1793323422067-mw0k4ov",
+      sourceRunId: "run-1793323422098-42a7d4a9",
+    });
+
+    const res = await GET(makeRequest() as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(mockRecoverTaskOutcomeAudit).toHaveBeenCalledWith(expect.objectContaining({
+      taskId: "TASK-008",
+      namespaceId: "default",
+      orgId: "default",
+    }));
+    expect(body.data.results).toContainEqual(expect.objectContaining({
+      taskId: "TASK-008",
+      runId: "run-1793323422098-42a7d4a9",
+      previousStatus: "summarizing",
+      newStatus: "summary_failed",
+    }));
+  });
+
   it("repairs decision run pollution instead of auto-closing the task", async () => {
     mockReadFileSync.mockReturnValue(JSON.stringify({
       id: "run-decision",
