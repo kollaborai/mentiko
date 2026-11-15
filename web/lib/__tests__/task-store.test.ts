@@ -17,6 +17,7 @@ import {
   isTerminalTaskStatus,
   closeAll,
   _getDb,
+  TaskDependencyCycleError,
 } from "../tasks/task-store";
 
 jest.mock("../config", () => ({
@@ -540,6 +541,85 @@ describe("task-store", () => {
       expect(dep.title).toBe("Expanded");
       expect(dep.issue_type).toBe("bug");
       expect(dep.priority).toBe(0);
+    });
+  });
+
+  // ---- dependency cycle guard (issue #113) ----
+
+  describe("dependency cycle guard", () => {
+    const ORG = "cycle-org";
+
+    it("rejects a self-dependency with TaskDependencyCycleError and writes no edge", () => {
+      const a = taskCreate(ORG, { title: "Self" });
+      let error: unknown;
+      try {
+        taskAddDep(ORG, a.id, a.id);
+      } catch (e) {
+        error = e;
+      }
+      expect(error).toBeInstanceOf(TaskDependencyCycleError);
+      expect((error as TaskDependencyCycleError).reason).toBe("self");
+      expect(taskGet(ORG, a.id)!.dependencies!.length).toBe(0);
+    });
+
+    it("rejects a direct cycle: b depends on a, then a on b", () => {
+      const a = taskCreate(ORG, { title: "A" });
+      const b = taskCreate(ORG, { title: "B" });
+      taskAddDep(ORG, b.id, a.id); // b -> a is fine
+      expect(() => taskAddDep(ORG, a.id, b.id)).toThrow(TaskDependencyCycleError);
+      expect(taskGet(ORG, a.id)!.dependencies!.length).toBe(0);
+      // the original edge is untouched
+      expect(taskGet(ORG, b.id)!.dependencies!.length).toBe(1);
+    });
+
+    it("rejects a transitive cycle: b->a, c->b, then a->c", () => {
+      const a = taskCreate(ORG, { title: "A" });
+      const b = taskCreate(ORG, { title: "B" });
+      const c = taskCreate(ORG, { title: "C" });
+      taskAddDep(ORG, b.id, a.id);
+      taskAddDep(ORG, c.id, b.id);
+      let error: unknown;
+      try {
+        taskAddDep(ORG, a.id, c.id); // c reaches a via b
+      } catch (e) {
+        error = e;
+      }
+      expect(error).toBeInstanceOf(TaskDependencyCycleError);
+      expect((error as TaskDependencyCycleError).reason).toBe("cycle");
+      expect(taskGet(ORG, a.id)!.dependencies!.length).toBe(0);
+    });
+
+    it("allows a diamond (non-cyclic) shape", () => {
+      const a = taskCreate(ORG, { title: "A" });
+      const b = taskCreate(ORG, { title: "B" });
+      const c = taskCreate(ORG, { title: "C" });
+      const d = taskCreate(ORG, { title: "D" });
+      taskAddDep(ORG, b.id, a.id);
+      taskAddDep(ORG, c.id, a.id);
+      taskAddDep(ORG, d.id, b.id);
+      taskAddDep(ORG, d.id, c.id);
+      expect(taskGet(ORG, d.id)!.dependencies!.length).toBe(2);
+    });
+
+    it("skips a cycle-shaped edge without touching existing edges (issue #113 incident shape)", () => {
+      // TASK-005 with dependents TASK-006/TASK-007; a resolution tries to make
+      // TASK-005 depend on TASK-005 (self) and on TASK-006 (already downstream).
+      const parent = taskCreate(ORG, { title: "TASK-005" });
+      const d1 = taskCreate(ORG, { title: "TASK-006" });
+      const d2 = taskCreate(ORG, { title: "TASK-007" });
+      taskAddDep(ORG, d1.id, parent.id);
+      taskAddDep(ORG, d2.id, parent.id);
+      for (const target of [parent.id, d1.id]) {
+        expect(() => taskAddDep(ORG, parent.id, target)).toThrow(TaskDependencyCycleError);
+      }
+      // graph stays a healthy DAG: both dependents still only block on parent
+      expect(taskGet(ORG, parent.id)!.dependencies!.length).toBe(0);
+      expect(taskGet(ORG, d1.id)!.dependencies!.length).toBe(1);
+      expect(taskGet(ORG, d2.id)!.dependencies!.length).toBe(1);
+      // taskDepsAllClosed still resolves: dependents are runnable once parent closes
+      taskClose(ORG, parent.id);
+      expect(taskDepsAllClosed(ORG, d1.id)).toBe(true);
+      expect(taskDepsAllClosed(ORG, d2.id)).toBe(true);
     });
   });
 

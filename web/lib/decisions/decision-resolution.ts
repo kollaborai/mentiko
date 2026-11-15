@@ -3,7 +3,7 @@ import {
   updateDecision,
   withDecisionResolutionLock,
 } from "@/lib/decisions/decision-storage";
-import { taskAddDep, taskCreate, taskGet, taskUpdate } from "@/lib/tasks/task-store";
+import { TaskDependencyCycleError, taskAddDep, taskCreate, taskGet, taskUpdate } from "@/lib/tasks/task-store";
 import { isTaskWorkMode } from "@/lib/tasks/work-mode";
 import { applyLifecycleEvent, type LifecycleEffectDeps } from "@/lib/orchestration/task-lifecycle-service";
 import { hydrateLifecycleState } from "@/lib/orchestration/task-lifecycle-hydrate";
@@ -177,7 +177,18 @@ async function applyResolutionLifecycle(input: {
     createDecisionGate: async () => undefined,
     blockOnDecision: () => undefined,
     createFollowupDependencies: (depOrgId, taskId, followUpTaskId, depNamespaceId, depWorkspaceId) => {
-      taskAddDep(depOrgId, taskId, followUpTaskId, depNamespaceId, depWorkspaceId);
+      try {
+        taskAddDep(depOrgId, taskId, followUpTaskId, depNamespaceId, depWorkspaceId);
+      } catch (error) {
+        if (error instanceof TaskDependencyCycleError) {
+          // A follow-up list can contain the parent itself or one of its
+          // dependents; wiring that edge would deadlock the graph. Skip it
+          // and keep resolving (issue #113).
+          console.warn(`[decision-resolution] skipped follow-up dependency ${taskId} -> ${followUpTaskId}: ${error.message}`);
+          return;
+        }
+        throw error;
+      }
     },
     resumeOriginalTask: () => undefined,
     closeTask: () => undefined,

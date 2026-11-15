@@ -38,12 +38,30 @@ const withDecisionResolutionLock = jest.fn(
   },
 );
 
-jest.mock("@/lib/tasks/task-store", () => ({
-  taskCreate: (...a: unknown[]) => taskCreate(...a),
-  taskGet: (...a: unknown[]) => taskGet(...a),
-  taskUpdate: (...a: unknown[]) => taskUpdate(...a),
-  taskAddDep: (...a: unknown[]) => taskAddDep(...a),
-}));
+// The mock class mirrors the real one from web/lib/tasks/task-store.ts closely
+// enough for instanceof checks inside decision-resolution.ts. It must live
+// inside the factory (jest hoists mock calls above const/class declarations).
+jest.mock("@/lib/tasks/task-store", () => {
+  class TaskDependencyCycleError extends Error {
+    readonly taskId: string;
+    readonly dependsOnId: string;
+    readonly reason: "self" | "cycle";
+    constructor(taskId: string, dependsOnId: string, reason: "self" | "cycle") {
+      super(`dependency ${taskId} -> ${dependsOnId} would deadlock the graph (${reason})`);
+      this.name = "TaskDependencyCycleError";
+      this.taskId = taskId;
+      this.dependsOnId = dependsOnId;
+      this.reason = reason;
+    }
+  }
+  return {
+    taskCreate: (...a: unknown[]) => taskCreate(...a),
+    taskGet: (...a: unknown[]) => taskGet(...a),
+    taskUpdate: (...a: unknown[]) => taskUpdate(...a),
+    taskAddDep: (...a: unknown[]) => taskAddDep(...a),
+    TaskDependencyCycleError,
+  };
+});
 
 jest.mock("@/lib/decisions/decision-storage", () => ({
   getDecision: (...a: unknown[]) => getDecision(...a),
@@ -63,6 +81,7 @@ jest.mock("@/lib/runs/auto-run-service", () => ({
 }));
 
 import { resolveDecisionToTasks as resolveDecisionToTasksWithActor } from "./decision-resolution";
+import { TaskDependencyCycleError } from "@/lib/tasks/task-store";
 
 let seq = 0;
 
@@ -364,6 +383,72 @@ describe("resolveDecisionToTasks parenting", () => {
           lifecycle_phase: "followup_blocked",
           followup_task_ids: ["NEW-1", "NEW-2"],
           last_run_decision_required: true,
+        }),
+      },
+      "default",
+    );
+  });
+
+  it("skips follow-up edges that would self-depend or cycle instead of failing the resolution (issue #113)", async () => {
+    // Incident shape: the parent's follow-up list includes the parent itself
+    // and a task that already depends on the parent. The store rejects both
+    // edges; the resolution must survive, wire the healthy edges, and persist
+    // the followup_blocked lifecycle.
+    taskGet.mockImplementation((_org: unknown, id: string) => {
+      if (id === "FEAT-019") {
+        return {
+          id: "FEAT-019",
+          issue_type: "feature",
+          parent_id: "EPIC-008",
+          workspace_id: undefined,
+          metadata: {
+            lifecycle_phase: "decision_blocked",
+            decision_subtask_id: "DEC-TASK-1",
+            last_run_decision_required: true,
+          },
+        };
+      }
+      if (id === "EPIC-008") {
+        return { id: "EPIC-008", issue_type: "epic", parent_id: null, workspace_id: undefined, metadata: {} };
+      }
+      return undefined;
+    });
+    getDecision.mockReturnValue(makeDecision({
+      source: "completion-audit",
+      parentTaskId: "FEAT-019",
+      ...planFlow,
+    }));
+    taskAddDep.mockImplementation(
+      (_org: unknown, taskId: unknown, dependsOnId: unknown) => {
+        if (taskId === dependsOnId) {
+          throw new TaskDependencyCycleError(taskId as string, dependsOnId as string, "self");
+        }
+        // NEW-1 "already depends on" FEAT-019 in the mocked graph
+        if (taskId === "FEAT-019" && dependsOnId === "NEW-1") {
+          throw new TaskDependencyCycleError(taskId as string, dependsOnId as string, "cycle");
+        }
+        return undefined;
+      },
+    );
+
+    await expect(resolveDecisionToTasks({
+      namespaceId: "default",
+      orgId: "default",
+      decisionId: "DEC-1",
+      selectedOptionId: "opt-a",
+    })).resolves.toBeTruthy();
+
+    // the healthy edge was still written
+    expect(taskAddDep).toHaveBeenCalledWith("default", "FEAT-019", "NEW-2", "default", undefined);
+    // the parent is parked on its follow-ups despite the two skipped edges
+    expect(taskUpdate).toHaveBeenCalledWith(
+      "default",
+      "FEAT-019",
+      {
+        status: "blocked",
+        metadata: expect.objectContaining({
+          lifecycle_phase: "followup_blocked",
+          followup_task_ids: ["NEW-1", "NEW-2"],
         }),
       },
       "default",

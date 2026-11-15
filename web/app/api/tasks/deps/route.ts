@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { requirePermission } from "@/lib/auth/api-auth";
 import { enforceGuestWrites } from "@/lib/middleware";
-import { taskAddDep } from "@/lib/tasks/task-store";
+import { TaskDependencyCycleError, taskAddDep } from "@/lib/tasks/task-store";
 import { validateTaskId } from "@/lib/tasks/task-store";
 import { getWorkspaceId, hasWorkspaceParam } from "@/lib/workspaces/workspace-params";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
@@ -43,7 +43,18 @@ export const POST = requirePermission("manage_tasks")(
     const from = validateTaskId(body.from);
     const to = validateTaskId(body.to);
 
-    taskAddDep(orgId, from, to, namespaceId, workspaceId);
+    try {
+      taskAddDep(orgId, from, to, namespaceId, workspaceId);
+    } catch (error) {
+      if (error instanceof TaskDependencyCycleError) {
+        throw new BadRequest(error.message, {
+          reason: error.reason,
+          from,
+          to,
+        });
+      }
+      throw error;
+    }
 
     return apiSuccess({ ok: true, from, to });
   })

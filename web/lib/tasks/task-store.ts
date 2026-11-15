@@ -711,6 +711,28 @@ export function sweepOrphanAttachmentBlobsOnce(namespaceId = "default"): void {
 
 // ---------- dependencies ----------
 
+/**
+ * Typed error: the requested dependency edge would deadlock the task graph.
+ * `reason: "self"` — a task cannot depend on itself.
+ * `reason: "cycle"` — dependsOnId already (transitively) depends on taskId.
+ */
+export class TaskDependencyCycleError extends Error {
+  readonly taskId: string;
+  readonly dependsOnId: string;
+  readonly reason: "self" | "cycle";
+  constructor(taskId: string, dependsOnId: string, reason: "self" | "cycle") {
+    super(
+      reason === "self"
+        ? `task ${taskId} cannot depend on itself`
+        : `dependency ${taskId} -> ${dependsOnId} would create a cycle (${dependsOnId} already depends on ${taskId})`
+    );
+    this.name = "TaskDependencyCycleError";
+    this.taskId = taskId;
+    this.dependsOnId = dependsOnId;
+    this.reason = reason;
+  }
+}
+
 export function taskAddDep(
   orgId: string,
   taskId: string,
@@ -724,6 +746,33 @@ export function taskAddDep(
   if (!t1 || !t2) throw new Error("Task not found or org mismatch");
   if (workspaceId && (t1.workspace_id !== workspaceId || t2.workspace_id !== workspaceId)) {
     throw new Error("Task not found in workspace");
+  }
+  if (taskId === dependsOnId) {
+    throw new TaskDependencyCycleError(taskId, dependsOnId, "self");
+  }
+  // Adding taskId -> dependsOnId closes a cycle iff taskId is already
+  // reachable from dependsOnId through existing depends-on edges (org-scoped).
+  // ponytail: iterative DFS over the edge list; a recursive CTE if graphs get deep.
+  const dependsOnOf = db.prepare(`
+    SELECT d.depends_on_id
+    FROM task_dependencies d
+    JOIN tasks t ON t.id = d.task_id AND t.org_id = ?
+    WHERE d.task_id = ?
+  `);
+  const visited = new Set<string>([dependsOnId]);
+  const stack = [dependsOnId];
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    if (current === taskId) {
+      throw new TaskDependencyCycleError(taskId, dependsOnId, "cycle");
+    }
+    const rows = dependsOnOf.all(orgId, current) as Array<{ depends_on_id: string }>;
+    for (const row of rows) {
+      if (!visited.has(row.depends_on_id)) {
+        visited.add(row.depends_on_id);
+        stack.push(row.depends_on_id);
+      }
+    }
   }
 
   db.prepare(

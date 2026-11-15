@@ -27,7 +27,7 @@ import {
   getDecision,
   withDecisionResolutionLock,
 } from "@/lib/decisions/decision-storage";
-import { taskAddDep, taskGet, taskUpdate } from "@/lib/tasks/task-store";
+import { TaskDependencyCycleError, taskAddDep, taskGet, taskUpdate } from "@/lib/tasks/task-store";
 import {
   applyLifecycleEvent,
   type LifecycleEffectDeps,
@@ -172,7 +172,17 @@ function makeUnblockDeps(input: UnblockTaskInput): LifecycleEffectDeps {
     createDecisionGate: async () => undefined,
     blockOnDecision: () => undefined,
     createFollowupDependencies: (depOrgId, taskId, followUpTaskId, depNamespaceId, depWorkspaceId) => {
-      taskAddDep(depOrgId, taskId, followUpTaskId, depNamespaceId, depWorkspaceId);
+      try {
+        taskAddDep(depOrgId, taskId, followUpTaskId, depNamespaceId, depWorkspaceId);
+      } catch (error) {
+        if (error instanceof TaskDependencyCycleError) {
+          // Follow-up lists can include the parent or its dependents; skip the
+          // deadlocking edge and keep the unblock moving (issue #113).
+          console.warn(`[decision-unblock] skipped follow-up dependency ${taskId} -> ${followUpTaskId}: ${error.message}`);
+          return;
+        }
+        throw error;
+      }
     },
     resumeOriginalTask: () => undefined,
     closeTask: () => undefined,
