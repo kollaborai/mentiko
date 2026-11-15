@@ -59,7 +59,10 @@ function createMockCli(output, exitCode = 0) {
   mkdirSync(dir, { recursive: true });
   const name = `mock-cli-${Date.now()}-${rb(2).toString("hex")}`;
   const path = join(dir, name);
-  const script = `#!/bin/bash\n${exitCode !== 0 ? `echo "${output}" >&2; exit ${exitCode}` : `echo '${output.replace(/'/g, "'\\''")}'`}\n`;
+  // `cat > /dev/null` consumes the worker's prompt: the job worker now ends
+  // a job failed when the CLI exits before reading stdin (#138), so every
+  // well-behaved mock must drain stdin before producing output.
+  const script = `#!/bin/bash\ncat > /dev/null\n${exitCode !== 0 ? `echo "${output}" >&2; exit ${exitCode}` : `echo '${output.replace(/'/g, "'\\''")}'`}\n`;
   writeFileSync(path, script, { mode: 0o755 });
   return path;
 }
@@ -77,6 +80,12 @@ function mkdirs() {
   mkdirSync(MOCK_CLI_BIN_DIR, { recursive: true });
   mkdirSync(MOCK_CLI_CAPTURE_DIR, { recursive: true });
   mkdirSync(MOCK_FETCH_CALL_DIR, { recursive: true });
+  // Shadow `echo` (mock-bin is first in the worker's PATH) with a
+  // stdin-draining stand-in: /bin/echo never reads the prompt, so on fast
+  // Linux runners the worker's stdin write races the child's exit and
+  // EPIPEs nondeterministically — the job then fails with "prompt delivery
+  // failed" instead of the parse error those tests assert (#138).
+  writeFileSync(join(MOCK_CLI_BIN_DIR, "echo"), "#!/bin/bash\ncat > /dev/null\necho \"$@\"\n", { mode: 0o755 });
 }
 
 function writeMockFetchHook() {
@@ -383,9 +392,10 @@ test("uses default claude when no profile exists", () => {
 test("resolves custom CLI from default profile", () => {
   makeDefaultProfile({ cli: "echo", pipe_flag: "" });
   makeJobFile("echo-profile", { prompt: "test prompt" });
-  // echo is in /bin/echo, should work
+  // resolves the bare name through PATH (mock-bin's stdin-draining echo
+  // shim shadows /bin/echo); its output is not valid JSON
   const result = runJobFail("echo-profile");
-  // echo returns the prompt, but it's not valid JSON so the job should fail parsing
+  // the echo shim returns no JSON, so the job should fail parsing
   const job = readJob("echo-profile");
   assert(job.status === "failed", `expected failed, got ${job.status}`);
   assert(job.error.includes("JSON") || job.error.includes("json"), `unexpected error: ${job.error}`);
@@ -400,7 +410,7 @@ test("resolves {secret:NAME} references in profile env", () => {
   });
   makeJobFile("secret-env", { prompt: "test" });
   const result = runJobFail("secret-env");
-  // echo will output the prompt, job will fail parsing JSON
+  // the echo shim outputs no JSON, job will fail parsing
   // but the important thing is the profile env was resolved without error
   const job = readJob("secret-env");
   assert(job.status === "failed", `expected failed (JSON parse), got ${job.status}`);
@@ -986,7 +996,7 @@ test("decrypts secrets with double HKDF alignment", () => {
     env: { MY_TOKEN: "{secret:job-secret}" },
   });
   makeJobFile("secret-decrypt", { prompt: "test" });
-  // job will fail because echo returns non-JSON, but secret resolution should work
+  // job will fail because the echo shim returns non-JSON, but secret resolution should work
   runJobFail("secret-decrypt");
   const job = readJob("secret-decrypt");
   // job should at least get past profile resolution (activity shows spawn)
