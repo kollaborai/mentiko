@@ -1,4 +1,4 @@
-import { classifyCliReadiness } from "@/lib/runner-v2/readiness-policy";
+import { applyBuiltinCliStartupHold, classifyCliReadiness } from "@/lib/runner-v2/readiness-policy";
 import type { AgentProfileReadinessConfig } from "@/lib/types";
 
 describe("runner-v2 readiness policy", () => {
@@ -74,6 +74,40 @@ describe("runner-v2 readiness policy", () => {
     expect(classifyCliReadiness({ readiness, output: "plain prompt", failClosed: true })).toMatchObject({
       status: "no_ready_signal",
       reason: "readiness enabled but no ready_patterns configured (fail-closed)",
+    });
+  });
+
+  describe("built-in cli startup hold (#123)", () => {
+    const codexReadiness: AgentProfileReadinessConfig = {
+      enabled: true,
+      ready_patterns: [
+        { name: "codex tui banner", type: "text", value: "OpenAI Codex (v", action: "ready", risk: "low", enabled: true },
+      ],
+    };
+    const bannerScreen = "OpenAI Codex (v0.169.0)\nFind and fix a bug";
+    const startupScreen = "OpenAI Codex (v0.169.0)\nWaiting for startup  · esc cancel";
+
+    it("holds a matched codex ready verdict while Waiting for startup is on screen", () => {
+      const ready = classifyCliReadiness({ readiness: codexReadiness, output: startupScreen, failClosed: true });
+      expect(ready.status).toBe("ready");
+      expect(applyBuiltinCliStartupHold("codex", startupScreen, ready)).toMatchObject({
+        status: "unknown",
+        reason: expect.stringContaining("Waiting for startup"),
+      });
+    });
+
+    it("passes the same profile once the startup line is gone", () => {
+      const ready = classifyCliReadiness({ readiness: codexReadiness, output: bannerScreen, failClosed: true });
+      expect(ready.status).toBe("ready");
+      expect(applyBuiltinCliStartupHold("codex", bannerScreen, ready).status).toBe("ready");
+    });
+
+    it("leaves claude profiles and non-ready verdicts untouched", () => {
+      const ready = classifyCliReadiness({ readiness: codexReadiness, output: startupScreen, failClosed: true });
+      expect(applyBuiltinCliStartupHold("claude", startupScreen, ready).status).toBe("ready");
+      expect(applyBuiltinCliStartupHold(undefined, startupScreen, ready).status).toBe("ready");
+      const unknown = classifyCliReadiness({ readiness: codexReadiness, output: "blank", failClosed: true });
+      expect(applyBuiltinCliStartupHold("codex", startupScreen, unknown).status).toBe("unknown");
     });
   });
 });

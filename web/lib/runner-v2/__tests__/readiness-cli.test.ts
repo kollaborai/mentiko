@@ -67,6 +67,29 @@ describe("typed readiness wait", () => {
     const dead = waitForReadiness({ profilePath: profile(), ptyCommand: "p", session: "s", maxWaitSecs: 1, pollSecs: 1, failClosed: true, run: () => ({ status: 1, stdout: "" }) });
     expect(dead.exitCode).toBe(1);
   });
+  it("holds codex banner readiness while Waiting for startup is on screen (#123)", () => {
+    const root = mkdtempSync(join(tmpdir(), "mentiko-readiness-codex-"));
+    const path = join(root, "profile.json");
+    writeFileSync(path, JSON.stringify({
+      id: "profile", name: "P", cli: "codex",
+      readiness: { enabled: true, ready_patterns: [{ name: "codex tui banner", value: "OpenAI Codex (v", type: "text" }] },
+    }));
+    let captures = 0;
+    let clock = 0;
+    const result = waitForReadiness({
+      profilePath: path, ptyCommand: "p", session: "s", maxWaitSecs: 90, pollSecs: 2, failClosed: true,
+      now: () => clock,
+      sleep: (ms) => { clock += ms; },
+      run: (_cmd, args) => args[0] === "alive" ? { status: 0, stdout: "alive" } : args[0] === "pid" ? { status: 0, stdout: "42" } : {
+        status: 0,
+        stdout: ++captures === 1
+          ? "OpenAI Codex (v0.169.0)\nWaiting for startup  · esc cancel"
+          : "OpenAI Codex (v0.169.0)",
+      },
+    });
+    expect(result).toMatchObject({ exitCode: 0, result: { status: "ready" } });
+    expect(captures).toBe(2);
+  });
 
   it("applies only a typed low-risk startup recovery decision within the budget", () => {
     const root = mkdtempSync(join(tmpdir(), "mentiko-readiness-recovery-"));

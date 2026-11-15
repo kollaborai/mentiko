@@ -17,7 +17,11 @@ import {
   bindRoutedLaunchJobAttempt,
   routedLaunchJobLeaseOwned,
 } from "@/lib/runner-v2/launch-job";
-import { classifyCliReadiness, type CliReadinessResult } from "@/lib/runner-v2/readiness-policy";
+import {
+  applyBuiltinCliStartupHold,
+  classifyCliReadiness,
+  type CliReadinessResult,
+} from "@/lib/runner-v2/readiness-policy";
 import { composerState, confirmComposerSubmission } from "@/lib/runner-v2/composer-submit";
 import {
   findTranscriptJsonlByInstructionPath,
@@ -834,12 +838,16 @@ async function waitForBootstrapReadiness(
       });
       throw new Error("runner-v2 bootstrap command echoed without starting agent CLI");
     }
-    const readiness = classifyCliReadiness({
-      readiness: readinessPolicy.readiness,
-      profileMissing: readinessPolicy.profileMissing,
+    const readiness = applyBuiltinCliStartupHold(
+      readinessPolicy.cli,
       output,
-      failClosed,
-    });
+      classifyCliReadiness({
+        readiness: readinessPolicy.readiness,
+        profileMissing: readinessPolicy.profileMissing,
+        output,
+        failClosed,
+      }),
+    );
     if (readiness.status === "ready") return;
     if (
       isRecoverableReadinessStatus(readiness.status)
@@ -953,9 +961,13 @@ class BootstrapReadinessBlockedError extends Error {}
 function resolvePlanReadinessPolicy(plan: AgentBootstrapPlan): {
   readiness?: AgentProfileReadinessConfig | null;
   profileMissing?: boolean;
+  cli?: string;
 } {
   if (plan.profileReadiness) {
-    return { readiness: plan.profileReadiness };
+    // Inline readiness came from the same profile file; read its cli for the
+    // built-in startup holds rather than trusting plan.cli (a chain agent can
+    // leave cli unset while its profile is codex).
+    return { readiness: plan.profileReadiness, cli: readProfileCli(plan.profilePath) ?? plan.cli };
   }
   // No resolvable profile path -> v1 cli_readiness_check treats a missing profile
   // as "unknown" (profileMissing), never a prompt-shape guess.
@@ -965,10 +977,21 @@ function resolvePlanReadinessPolicy(plan: AgentBootstrapPlan): {
   try {
     const profile = JSON.parse(readFileSync(plan.profilePath, "utf8")) as {
       readiness?: AgentProfileReadinessConfig;
+      cli?: string;
     };
-    return { readiness: profile.readiness ?? null };
+    return { readiness: profile.readiness ?? null, cli: profile.cli ?? plan.cli };
   } catch {
     return { profileMissing: true };
+  }
+}
+
+function readProfileCli(profilePath?: string): string | undefined {
+  if (!profilePath || !existsSync(profilePath)) return undefined;
+  try {
+    const profile = JSON.parse(readFileSync(profilePath, "utf8")) as { cli?: string };
+    return typeof profile.cli === "string" && profile.cli.trim() ? profile.cli : undefined;
+  } catch {
+    return undefined;
   }
 }
 

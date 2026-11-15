@@ -44,6 +44,33 @@ export function isReadinessFailClosed(env: Record<string, string | undefined> = 
   return env.MENTIKO_READINESS_FAIL_CLOSED === "1";
 }
 
+/**
+ * Built-in per-CLI startup holds (issue #123). Codex paints its banner and a
+ * `Waiting for startup` footer for ~50s while the CLI is still initializing;
+ * the banner alone must not pass readiness in that window. No pattern group
+ * means "keep polling" — blocked/recover/retry are all terminal in both wait
+ * loops — so the hold demotes a matched ready verdict to unknown, the status
+ * the fail-closed loops keep polling on. Keyed on the profile's own cli so
+ * saved profiles without any new pattern get the rule for free.
+ */
+const CLI_STARTUP_HOLDS: ReadonlyArray<{ cli: string; value: string }> = [
+  { cli: "codex", value: "Waiting for startup" },
+];
+
+export function applyBuiltinCliStartupHold(
+  cli: string | undefined,
+  output: string,
+  result: CliReadinessResult,
+): CliReadinessResult {
+  if (result.status !== "ready" || !cli) return result;
+  for (const hold of CLI_STARTUP_HOLDS) {
+    if (hold.cli === cli && output.includes(hold.value)) {
+      return { status: "unknown", reason: `cli startup hold: ${hold.value} still on screen` };
+    }
+  }
+  return result;
+}
+
 function matchesPattern(output: string, pattern: AgentProfileReadinessPattern): boolean {
   if (!pattern.value) return false;
   if (pattern.type === "regex") {

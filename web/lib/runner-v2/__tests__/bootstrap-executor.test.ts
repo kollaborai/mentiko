@@ -1819,6 +1819,107 @@ describe("runner-v2 bootstrap executor", () => {
     ]));
   });
 
+  describe("codex startup hold (#123): banner must not pass readiness while Waiting for startup is on screen", () => {
+    const startupScreen = "OpenAI Codex (v0.169.0)\nWaiting for startup  · esc cancel";
+    const bannerScreen = "OpenAI Codex (v0.169.0)";
+
+    function writeCodexProfile(root: string) {
+      mkdirSync(join(root, "profiles"), { recursive: true });
+      // Saved on-disk codex profile: banner ready pattern only, no startup
+      // pattern — the hold must come from the built-in cli rule, not the file.
+      writeFileSync(join(root, "profiles", "default.json"), JSON.stringify({
+        id: "default",
+        name: "Default",
+        cli: "codex",
+        readiness: { enabled: true, ready_patterns: [{ name: "codex tui banner", type: "text", value: "OpenAI Codex (v", action: "ready", risk: "low", enabled: true }] },
+      }));
+    }
+
+    function executorWithStartupCountdown(startupPolls: number) {
+      let remaining = startupPolls;
+      let instructionPointerSent = false;
+      const pointerAtRemaining: number[] = [];
+      return {
+        pointerAtRemaining,
+        remove: jest.fn(async () => {}),
+        list: jest.fn(async () => []),
+        spawn: jest.fn(async (name: string) => ({ name, pid: 123 })),
+        sendKeys: jest.fn(async (_name: string, text: string) => {
+          if (text.includes("-instructions.md")) {
+            instructionPointerSent = true;
+            pointerAtRemaining.push(remaining);
+          }
+        }),
+        sendRaw: jest.fn(async () => {}),
+        capture: jest.fn(async () => {
+          if (remaining > 0) {
+            remaining -= 1;
+            return startupScreen;
+          }
+          return instructionPointerSent ? `${bannerScreen}\n❯ ` : bannerScreen;
+        }),
+      };
+    }
+
+    function codexPlan(root: string, timeoutSecs: string) {
+      const base = plan(root);
+      return {
+        ...base,
+        cli: "codex",
+        runContextExports: {
+          ...base.runContextExports,
+          MENTIKO_READINESS_FAIL_CLOSED: "1",
+          MENTIKO_CLI_READY_POLL: "1",
+          MENTIKO_CLI_READY_TIMEOUT: timeoutSecs,
+        },
+      };
+    }
+
+    it("keeps polling a saved codex profile through the startup wait and injects only once it clears", async () => {
+      const root = tempDir();
+      writeCodexProfile(root);
+      writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
+      seedRunJson(root);
+      const executor = executorWithStartupCountdown(2);
+
+      await executeLocalBootstrap(codexPlan(root, "30"), context(root), executor);
+
+      // The pointer went out only after both startup-line polls were consumed.
+      expect(executor.pointerAtRemaining).toEqual([0]);
+    }, 20_000);
+
+    it("blocks at the readiness deadline when Waiting for startup never clears", async () => {
+      const root = tempDir();
+      writeCodexProfile(root);
+      writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
+      seedRunJson(root);
+      const executor = executorWithStartupCountdown(Number.POSITIVE_INFINITY);
+
+      await executeLocalBootstrap(codexPlan(root, "2"), context(root), executor);
+
+      expect(executor.pointerAtRemaining).toEqual([]);
+      const run = JSON.parse(readFileSync(join(root, "run.json"), "utf8"));
+      expect(run).toMatchObject({ status: "blocked", blockedReason: expect.stringContaining("readiness") });
+      const attempts = (run.runnerV2 || {}).attempts || [];
+      expect(attempts[0]).toMatchObject({ terminalReason: "readiness_deadline_expired" });
+    }, 20_000);
+
+    it("leaves claude profiles ready even when the codex startup text is on screen", async () => {
+      const root = tempDir();
+      writeProfile(root, { enabled: true, ready_patterns: [{ name: "claude hint", value: "claude ready", action: "ready" }] });
+      writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
+      seedRunJson(root);
+      const executor = executorWithCapture("claude ready >\nWaiting for startup  · esc cancel");
+      const base = plan(root);
+      base.runContextExports.MENTIKO_READINESS_FAIL_CLOSED = "1";
+      base.runContextExports.MENTIKO_CLI_READY_TIMEOUT = "5";
+
+      await executeLocalBootstrap(base, context(root), executor);
+
+      expect(executor.sendKeys).toHaveBeenCalled();
+    }, 20_000);
+  });
+
   it("does not inject instructions when fail-closed is on and the selected profile has no ready signal", async () => {
     const previous = process.env.MENTIKO_READINESS_FAIL_CLOSED;
     process.env.MENTIKO_READINESS_FAIL_CLOSED = "1";
