@@ -5,7 +5,7 @@ import { createServer, type Server } from "node:http";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AddressInfo } from "node:net";
+import { AddressInfo, type Socket } from "node:net";
 import {
   EngineUnavailableError,
   KollabEngineClient,
@@ -19,7 +19,8 @@ import {
   type EngineSseEvent,
 } from "@/lib/runner-v2/kollab-engine-driver";
 import { serializeRunnerEvent } from "@/lib/runner-v2/events";
-import type { MonitorDriverIO } from "@/lib/runner-v2/monitor";
+import { runChainMonitor, type MonitorDriverIO } from "@/lib/runner-v2/monitor";
+import type { MonitorState } from "@/lib/runner-v2/monitor-types";
 
 // Fake kollabor_engine: enough of the spike-verified HTTP contract
 // (POST /sessions, POST /sessions/:id/message SSE, GET/DELETE /sessions/:id)
@@ -41,6 +42,8 @@ interface FakeEngine {
   messageScript: string[];
   messageStatus: number;
   createStatus: number;
+  deleteStatus: number;
+  probeStatus: number;
   sessionExists: boolean;
   deleted: string[];
 }
@@ -57,6 +60,8 @@ async function startFakeEngine(): Promise<FakeEngine> {
     messageScript: [],
     messageStatus: 200,
     createStatus: 200,
+    deleteStatus: 200,
+    probeStatus: 200,
     sessionExists: true,
     deleted: [],
   };
@@ -107,11 +112,21 @@ async function startFakeEngine(): Promise<FakeEngine> {
         return;
       }
       if (url === "/sessions/sess-1" && req.method === "GET") {
+        if (engine.probeStatus !== 200) {
+          res.writeHead(engine.probeStatus);
+          res.end("probe unavailable");
+          return;
+        }
         res.writeHead(engine.sessionExists ? 200 : 404);
         res.end("{}");
         return;
       }
       if (url === "/sessions/sess-1" && req.method === "DELETE") {
+        if (engine.deleteStatus !== 200 && engine.deleteStatus !== 404) {
+          res.writeHead(engine.deleteStatus);
+          res.end("delete failed");
+          return;
+        }
         engine.deleted.push(url);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end('{"ok":true}');
@@ -389,11 +404,12 @@ describe("driver adapter", () => {
     const sessionId = await startTurn(driver);
     await waitFor(() => driver["sessions"].get(sessionId)!.agentCompleteSeen);
 
-    // Marker seen, no event file: not complete, not latched as event-complete.
+    // Marker seen, no event file: not complete, and the AND rule means the
+    // marker alone must not latch the monitor either.
     await expect(driver.completionSatisfied(sessionId)).resolves.toBe(false);
     let observation = await driver.observe(sessionId);
     expect(observation.completionEventPresent).toBe(false);
-    expect(observation.latched).toBe(true); // marker durable latches, like the PTY rule
+    expect(observation.latched).toBe(false); // single signal never latches
 
     // Event file alone (no marker) is still not complete.
     writeCompletionEvent(fixture);
@@ -503,5 +519,331 @@ describe("monitor composition", () => {
     expect(calls).toContain("onComplete");
     // wrong monitor session name is rejected, not silently routed
     await expect(io.hasSession("other-session")).rejects.toThrow(SessionFailedError);
+  });
+});
+
+describe("marker line boundaries (P1: tokens are fragments)", () => {
+  const expectMarker = async (script: Array<Record<string, unknown>>, expected: boolean) => {
+    engine.messageScript = sse(script);
+    const driver = makeDriver(fixture, engine);
+    const sessionId = await startTurn(driver);
+    const lastText = script.map((e) => String(e.text ?? e.content ?? "")).join("");
+    if (lastText) {
+      await waitFor(() => driver["sessions"].get(sessionId)!.text.includes(lastText.slice(-20)));
+    } else {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    // settle: let the stream end flush any trailing partial line
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    writeCompletionEvent(fixture);
+    await expect(driver.completionSatisfied(sessionId)).resolves.toBe(expected);
+    return driver;
+  };
+
+  it("accepts a marker split across token fragments", async () => {
+    await expectMarker([
+      { type: "token", text: "working\nAGENT_" },
+      { type: "token", text: "COMPLETE\n" },
+      { type: "token", text: "tail\n" },
+    ], true);
+  });
+
+  it("rejects a token marker followed by a suffix on the same line", async () => {
+    await expectMarker([
+      { type: "token", text: "AGENT_COMPLETE" },
+      { type: "token", text: "_EXAMPLE\n" },
+      { type: "token", text: "tail\n" },
+    ], false);
+  });
+
+  it("rejects a marker glued after a prefix on the same line", async () => {
+    await expectMarker([
+      { type: "token", text: "notice: AGENT_COMPLETE\n" },
+      { type: "token", text: "tail\n" },
+    ], false);
+  });
+
+  it("accepts a trailing marker with no final newline at clean stream end", async () => {
+    await expectMarker([
+      { type: "token", text: "all done\nAGENT_COMPLETE" },
+    ], true);
+  });
+
+  it("rejects a marker glued inside one message event without its own line", async () => {
+    // observed live: harness notice glued onto the agent text inside one
+    // message event; the message alone must never latch
+    await expectMarker([
+      { type: "message", message_type: "assistant", content: "gateway-billing-noticeAGENT_COMPLETE" },
+    ], false);
+  });
+
+  it("accepts a real standalone marker line inside a full message event", async () => {
+    await expectMarker([
+      { type: "message", message_type: "assistant", content: "done\nAGENT_COMPLETE\n" },
+    ], true);
+  });
+});
+
+describe("stream abort and drain tracking (P1: idle timeout must cancel the stream)", () => {
+  it("idle timeout aborts a stalled SSE stream, stop() leaves no open sockets", async () => {
+    const sockets = new Set<Socket>();
+    const server = createServer((req, res) => {
+      if (req.url === "/sessions" && req.method === "POST") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ session_id: "sess-1" }));
+        return;
+      }
+      if (req.url === "/sessions/sess-1/message") {
+        // headers + one event, then stall forever
+        res.writeHead(200, { "Content-Type": "text/event-stream" });
+        res.write('data: {"type":"token","text":"started\\n"}\n\n');
+        return; // never ends
+      }
+      if (req.url === "/sessions/sess-1" && req.method === "DELETE") {
+        res.writeHead(200);
+        res.end("{}");
+        return;
+      }
+      if (req.url === "/sessions/sess-1" && req.method === "GET") {
+        res.writeHead(200);
+        res.end("{}");
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    server.keepAliveTimeout = 300;
+    server.on("connection", (socket) => {
+      sockets.add(socket);
+      socket.on("close", () => sockets.delete(socket));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const localFixture = { ...fixture, env: { KOLLABOR_ENGINE_URL: baseUrl, KOLLAB_CONFIG_DIR: fixture.configDir } };
+    const client = new KollabEngineClient({ env: localFixture.env, requestTimeoutMs: 1_000, idleTimeoutMs: 200 });
+    const driver = new KollabEngineDriver(client, {
+      sessionName: SESSION_NAME,
+      chainPath: fixture.chainPath,
+      runId: RUN_ID,
+      agentId: AGENT_ID,
+      eventsDir: fixture.eventsDir,
+      workspace: join(fixture.root, "ws"),
+      cli: "claude",
+      monitorStateDir: join(fixture.root, "monitor-state"),
+    });
+    const sessionId = await driver.start();
+    driver.send(sessionId, "do the thing");
+    await waitFor(() => driver["sessions"].get(sessionId)!.text.includes("started"));
+    // stream stalls: idle timeout (200ms) must abort the read, not hang it
+    await waitFor(() => (driver["drains"].get(sessionId) ?? []).length === 0, 3_000);
+    await driver.stop(sessionId);
+    await waitFor(() => sockets.size === 0, 3_000);
+    expect(sockets.size).toBe(0);
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    for (const socket of sockets) socket.destroy();
+  });
+});
+
+describe("bounded control bodies (P2: body reads need a deadline)", () => {
+  function startStalledBodyServer(status: number): Promise<{ server: Server; baseUrl: string; sockets: Set<Socket> }> {
+    const sockets = new Set<Socket>();
+    const server = createServer((req, res) => {
+      if (req.url === "/sessions" && req.method === "POST") {
+        res.writeHead(status, { "Content-Type": "application/json" });
+        res.write('{"session_id": "sess-1"'); // partial body, then stall
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    server.on("connection", (socket) => {
+      sockets.add(socket);
+      socket.on("close", () => sockets.delete(socket));
+    });
+    return new Promise((resolve) => {
+      server.listen(0, "127.0.0.1", () => {
+        resolve({ server, baseUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, sockets });
+      });
+    });
+  }
+
+  it("a stalled success body fails createSession within the deadline", async () => {
+    const { server, baseUrl, sockets } = await startStalledBodyServer(200);
+    const client = new KollabEngineClient({
+      env: { KOLLABOR_ENGINE_URL: baseUrl, KOLLAB_CONFIG_DIR: fixture.configDir },
+      requestTimeoutMs: 200,
+    });
+    const error = await client.createSession({ workspace: "/ws" }).catch((e: Error) => e);
+    expect(error).toBeInstanceOf(EngineUnavailableError);
+    await waitFor(() => sockets.size === 0, 3_000).catch(() => {});
+    for (const socket of sockets) socket.destroy();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  it("a stalled error body still yields the typed status error", async () => {
+    const { server, baseUrl, sockets } = await startStalledBodyServer(500);
+    const client = new KollabEngineClient({
+      env: { KOLLABOR_ENGINE_URL: baseUrl, KOLLAB_CONFIG_DIR: fixture.configDir },
+      requestTimeoutMs: 200,
+    });
+    const error = await client.createSession({ workspace: "/ws" }).catch((e: Error) => e);
+    expect(error).toBeInstanceOf(SessionFailedError);
+    expect((error as SessionFailedError).status).toBe(500);
+    await waitFor(() => sockets.size === 0, 3_000).catch(() => {});
+    for (const socket of sockets) socket.destroy();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+});
+
+describe("probe debounce and teardown retry (P2)", () => {
+  it("transient probe failures do not report the session gone", async () => {
+    const driver = makeDriver(fixture, engine);
+    const sessionId = await startTurn(driver);
+    await expect(driver.hasSession(sessionId)).resolves.toBe(true);
+    engine.probeStatus = 500; // transport-level probe failure
+    await expect(driver.hasSession(sessionId)).resolves.toBe(true); // failure 1: assume alive
+    await expect(driver.hasSession(sessionId)).resolves.toBe(true); // failure 2: assume alive
+    await expect(driver.hasSession(sessionId)).resolves.toBe(false); // failure 3: believed gone
+    engine.probeStatus = 200;
+    await expect(driver.hasSession(sessionId)).resolves.toBe(true); // counter resets
+  });
+
+  it("a failed DELETE keeps the session for retry instead of discarding it", async () => {
+    engine.deleteStatus = 500;
+    const driver = makeDriver(fixture, engine);
+    const sessionId = await startTurn(driver);
+    await driver.stop(sessionId); // must not throw
+    expect(driver.teardownFailures()).toEqual([sessionId]);
+    // session state is retained, so a retry stop() can run
+    engine.deleteStatus = 200;
+    await driver.stop(sessionId);
+    expect(engine.deleted).toEqual(["/sessions/sess-1"]);
+    expect(driver.teardownFailures()).toEqual([]);
+    await expect(driver.observe(sessionId)).rejects.toThrow(SessionFailedError);
+  });
+
+  it("a stream error event marks the session dead (routed to the death path, not a generic stall)", async () => {
+    engine.messageScript = sse([
+      { type: "token", text: "partial work\n" },
+      { type: "error", message: "gateway exploded" },
+    ]);
+    const driver = makeDriver(fixture, engine);
+    const sessionId = await startTurn(driver);
+    await waitFor(() => driver["sessions"].get(sessionId)!.dead);
+    const observation = await driver.observe(sessionId);
+    expect(observation.processGone).toBe(true);
+    expect(driver.stallReason(sessionId)).toContain("gateway exploded");
+  });
+});
+
+describe("runChainMonitor integration (P1: AND completion on every terminal path)", () => {
+  function makeTerminal() {
+    const calls: string[] = [];
+    const state: MonitorState = { prevHash: "", staleCount: 0, nudgeCount: 0, nudgeEchoGrace: 0, contextExhaustedStreak: 0 };
+    const terminal = {
+      onComplete: async () => { calls.push("onComplete"); },
+      onDied: async () => { calls.push("onDied"); return "terminal" as const; },
+      onStalled: async (_s: string, kind: "blocked" | "escalate", count: number) => {
+        calls.push(`onStalled:${kind}:${count}`);
+        return "terminal" as const;
+      },
+      onContextExhausted: async () => { calls.push("onContextExhausted"); return "terminal" as const; },
+      sleep: async () => {},
+      loadState: () => ({ ...state }),
+      saveState: (_s: string, next: MonitorState) => { Object.assign(state, next); },
+      clearState: () => { calls.push("clearState"); },
+      log: (message: string) => { calls.push(`log:${message}`); },
+    };
+    return { calls, terminal };
+  }
+
+  function runMonitor(io: MonitorDriverIO) {
+    return runChainMonitor(
+      SESSION_NAME,
+      io,
+      { maxStaleCount: 2, advisorStaleThreshold: 1, maxTotalNudges: 2, workspaceType: "local" },
+      0,
+    );
+  }
+
+  it("marker only (no event file) never completes; the terminal stall handler records it", async () => {
+    engine.messageScript = sse([
+      { type: "token", text: "working\nAGENT_COMPLETE\n" },
+    ]);
+    const driver = makeDriver(fixture, engine);
+    const sessionId = await startTurn(driver);
+    await waitFor(() => driver["sessions"].get(sessionId)!.agentCompleteSeen);
+    engine.messageScript = []; // nudges add no output
+    const { calls, terminal } = makeTerminal();
+    const io = createKollabEngineMonitorIO(driver, sessionId, terminal);
+    const result = await runMonitor(io);
+    expect(result.reason).toBe("stalled-blocked");
+    expect(calls).not.toContain("onComplete");
+    expect(calls).toContain("onStalled:blocked:2");
+  });
+
+  it("event file only (no marker) never completes and the terminal stall handler is suppressed", async () => {
+    engine.messageScript = sse([{ type: "token", text: "working\n" }]);
+    const driver = makeDriver(fixture, engine);
+    const sessionId = await startTurn(driver);
+    await waitFor(() => driver["sessions"].get(sessionId)!.text.includes("working"));
+    engine.messageScript = [];
+    writeCompletionEvent(fixture);
+    const { calls, terminal } = makeTerminal();
+    const io = createKollabEngineMonitorIO(driver, sessionId, terminal);
+    const result = await runMonitor(io);
+    expect(result.reason).not.toBe("complete");
+    expect(calls).not.toContain("onComplete");
+    expect(calls.filter((c) => c.startsWith("onStalled"))).toEqual([]);
+    expect(calls.some((c) => c.includes("refusing single-signal completion"))).toBe(true);
+  });
+
+  it("marker AND event complete through the real monitor", async () => {
+    engine.messageScript = sse([
+      { type: "token", text: "done\nAGENT_COMPLETE\n" },
+      { type: "turn_complete", stop_reason: "end_turn" },
+    ]);
+    const driver = makeDriver(fixture, engine);
+    const sessionId = await startTurn(driver);
+    writeCompletionEvent(fixture);
+    await waitFor(() => driver["sessions"].get(sessionId)!.agentCompleteSeen);
+    const { calls, terminal } = makeTerminal();
+    const io = createKollabEngineMonitorIO(driver, sessionId, terminal);
+    const result = await runMonitor(io);
+    expect(result.reason).toBe("complete");
+    expect(calls).toContain("onComplete");
+    expect(calls).not.toContain("onDied");
+  });
+
+  it("death race with event-only evidence does not complete and does not run the death handler", async () => {
+    engine.messageStatus = 409; // message send fails -> session dead
+    const driver = makeDriver(fixture, engine);
+    const sessionId = await startTurn(driver);
+    await waitFor(() => driver["sessions"].get(sessionId)!.dead);
+    writeCompletionEvent(fixture);
+    const { calls, terminal } = makeTerminal();
+    const io = createKollabEngineMonitorIO(driver, sessionId, terminal);
+    const result = await runMonitor(io);
+    expect(result.reason).toBe("died");
+    expect(calls).not.toContain("onComplete");
+    expect(calls).not.toContain("onDied"); // suppressed: its event-first recovery would complete
+    expect(calls.some((c) => c.includes("refusing single-signal completion"))).toBe(true);
+  });
+
+  it("death race with both signals completes via the completion handler", async () => {
+    engine.messageScript = sse([
+      { type: "token", text: "done\nAGENT_COMPLETE\n" },
+    ]);
+    const driver = makeDriver(fixture, engine);
+    const sessionId = await startTurn(driver);
+    writeCompletionEvent(fixture);
+    await waitFor(() => driver["sessions"].get(sessionId)!.agentCompleteSeen);
+    engine.sessionExists = false; // session vanishes after both signals held
+    const { calls, terminal } = makeTerminal();
+    const io = createKollabEngineMonitorIO(driver, sessionId, terminal);
+    const result = await runMonitor(io);
+    expect(result.reason).toBe("complete");
+    expect(calls).toContain("onComplete");
+    expect(calls).not.toContain("onDied");
   });
 });
