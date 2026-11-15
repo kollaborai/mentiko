@@ -563,4 +563,33 @@ describe("run reconciler", () => {
     expect(run.agents[0]).toMatchObject({ status: "stopped", statusReason: { actor: "reaper" } });
     expect(run.agents[1]).toMatchObject({ status: "cancelled", statusReason: { actor: "reaper" } });
   });
+
+  it("keeps a resumed run's recorded failure reason when the reaper stops it after the resume grace", async () => {
+    const runId = `run-${Date.now()}-resume-reason`;
+    const runDir = join(mockRunsDir, runId);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(join(runDir, "chain.json"), JSON.stringify({ agents: [{ id: "planner" }, { id: "reviewer" }] }));
+    const recordedReason = { actor: "quality_gate", reason: "quality gate agent summary status is partial" };
+    writeFileSync(join(runDir, "run.json"), JSON.stringify({
+      id: runId,
+      status: "running",
+      started: new Date(Date.now() - 30 * 60_000).toISOString(),
+      // resumed far enough in the past that the resume grace window is over
+      resumedAt: new Date(Date.now() - 10 * 60_000).toISOString(),
+      statusReason: recordedReason,
+      agents: [
+        { id: "planner", name: "Planner", status: "complete", session: "old-1", completed: new Date(Date.now() - 20 * 60_000).toISOString() },
+        { id: "reviewer", name: "Reviewer", status: "pending", session: "" },
+      ],
+    }));
+
+    const result = await reconcileOrphanedRuns();
+    const run = JSON.parse(readFileSync(join(runDir, "run.json"), "utf8"));
+
+    expect(result.orphaned).toBe(1);
+    expect(run.status).toBe("stopped");
+    // the recorded failure that triggered the resume survives the reaper stop;
+    // the generic no-live-session reason must not overwrite it (#142)
+    expect(run.statusReason).toEqual(recordedReason);
+  });
 });

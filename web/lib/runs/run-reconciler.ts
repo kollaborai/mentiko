@@ -581,7 +581,13 @@ export async function reconcileOrphanedRuns(options: ReconcileOptions = {}): Pro
         orphaned++;
         run.status = "stopped";
         run.completed = run.completed || new Date().toISOString();
-        run.statusReason = { actor: "reaper", reason: "no live agent session found after startup/handoff grace windows" };
+        // Same terminal-cause policy as the task reconciler (#142): a run that
+        // already carries a recorded terminal reason (the failure that led to
+        // the resume, e.g. a quality-gate rejection) keeps it. Overwriting it
+        // with the generic reaper reason is what erased the real cause when
+        // this reconciler raced the task reconciler stopping a resumed run.
+        run.statusReason = run.statusReason
+          ?? { actor: "reaper", reason: "no live agent session found after startup/handoff grace windows" };
         changed = true;
       }
     }
