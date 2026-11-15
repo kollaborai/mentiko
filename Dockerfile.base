@@ -289,7 +289,7 @@ RUN echo "=== Antigravity CLI ===" && \
     || echo "WARNING: Antigravity CLI install failed, skipping"
 
 # ---------------------------------------------------------------------------
-# 9. python tools (uv for kollab, pipx for aider)
+# 9. python tools (uv + pipx venv for kollab)
 # ---------------------------------------------------------------------------
 
 # Keep the engine version in sync with mentiko's dev setup.
@@ -302,10 +302,6 @@ RUN echo "=== uv venv: kollab + kollabor-engine ===" && \
     /opt/pipx/venvs/kollab/bin/python -m pip install --no-cache-dir kollab "kollabor-engine==$(cat /opt/mentiko/kollabor-engine-version)" && \
     ln -sf /opt/pipx/venvs/kollab/bin/kollab /usr/local/bin/kollab \
     || echo "WARNING: kollab install failed, skipping"
-
-RUN echo "=== pipx: aider-chat ===" && \
-    pipx install aider-chat \
-    || echo "WARNING: aider-chat install failed, skipping"
 
 # ---------------------------------------------------------------------------
 # 10. zsh configuration (oh-my-zsh + plugins + starship)

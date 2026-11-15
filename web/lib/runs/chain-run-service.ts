@@ -69,16 +69,23 @@ function mintRunId(): string {
 }
 
 // Executor short names -> MENTIKO_CLI values. Allows specifying which CLI to
-// use (claude, codex, aider, kollab) via UI or API. Maps aliases (cc, kl)
-// to canonical names.
+// use (claude, codex, kollab) via UI or API. Maps aliases (cc, kl) to
+// canonical names.
 const EXECUTOR_MAP: Record<string, string> = {
   claude: "claude",
   codex: "codex",
-  aider: "aider",
-  kollab: "kl",
+  kollab: "kollab",
   cc: "claude",
-  kl: "kl",
+  kl: "kollab",
 };
+
+// Resolve an executor short name to its MENTIKO_CLI value. Unknown or missing
+// executors return undefined (no MENTIKO_CLI override).
+export function resolveExecutorCli(
+  executor: unknown,
+): string | undefined {
+  return typeof executor === "string" ? EXECUTOR_MAP[executor] : undefined;
+}
 
 interface StartChainRunBody {
   chain?: Chain | null;
@@ -619,7 +626,7 @@ export async function startChainRun({
     MENTIKO_RUN_ID: runId,
     MENTIKO_CHAIN_ID: runObject.chainId as string,
     ...(executor && typeof executor === "string" && EXECUTOR_MAP[executor]
-      ? { MENTIKO_CLI: EXECUTOR_MAP[executor] }
+      ? { MENTIKO_CLI: resolveExecutorCli(executor) }
       : {}),
   });
 

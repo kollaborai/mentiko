@@ -235,11 +235,11 @@ test_chain_level_model_profile() {
 
 test_agent_level_profile_override() {
     echo "=== test 3: agent-level profile override ==="
-    create_execution_profile "agent-fast" "aider" '["--model", "gpt4"]' true 3
+    create_execution_profile "agent-fast" "opencode" '["--model", "gpt4"]' true 3
     create_test_chain "chain3" '{}' '{"execution": "agent-fast"}' null
 
     local result=$(resolve_agent_profiles "agent1" "cli" "$TEST_CHAIN_DIR/chain3.json")
-    assert_eq "aider" "$result" "agent cli resolved from agent execution profile"
+    assert_eq "opencode" "$result" "agent cli resolved from agent execution profile"
 }
 
 test_inline_priority_over_profile() {
@@ -307,7 +307,7 @@ EOF
 test_chain_and_agent_profile_priority() {
     echo "=== test 8: chain and agent profiles (agent wins) ==="
     create_execution_profile "chain-profile" "cc" '["--default"]' true 3
-    create_execution_profile "agent-profile" "aider" '["--fast"]' true 3
+    create_execution_profile "agent-profile" "opencode" '["--fast"]' true 3
     create_test_chain "chain8" '{"execution": "chain-profile"}' '{"execution": "agent-profile"}' null
 
     local chain_profiles=$(jq -r '.profiles // {}' "$TEST_CHAIN_DIR/chain8.json")
@@ -315,7 +315,7 @@ test_chain_and_agent_profile_priority() {
     local agent_cli=$(resolve_agent_profiles "agent1" "cli" "$TEST_CHAIN_DIR/chain8.json")
 
     assert_contains "$chain_result" "CLI=cc" "chain-level cli resolved"
-    assert_eq "aider" "$agent_cli" "agent-level cli overrides chain-level"
+    assert_eq "opencode" "$agent_cli" "agent-level cli overrides chain-level"
 }
 
 # -------------------------------------------------------------------

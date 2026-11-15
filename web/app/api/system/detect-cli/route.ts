@@ -147,8 +147,7 @@ export const GET = withErrorHandling(async (request: Request) => {
             // stable file token contract to inspect here.
             break;
           }
-          case "kollab":
-          case "aider": {
+          case "kollab": {
             // auth comes from agent profiles + secrets vault, not env vars
             // leave as undefined (unknown) -- detected by profile config
             break;
