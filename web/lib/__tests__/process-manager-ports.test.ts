@@ -48,6 +48,16 @@ afterEach(() => {
   helpers = [];
 });
 
+// First stdout chunk of a helper; rejects if it exits or stays silent, so the
+// caller's finally always runs and kills its helpers.
+function firstLine(child: ChildProcess, timeoutMs = 10_000): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('helper produced no output')), timeoutMs);
+    child.stdout!.once('data', (d) => { clearTimeout(timer); resolve(String(d)); });
+    child.once('exit', (code) => { clearTimeout(timer); reject(new Error(`helper exited (${code})`)); });
+  });
+}
+
 describe('process-manager-ports', () => {
   it('describes a foreign port holder and never lists it as ours', () => {
     const port = nextPort();
@@ -71,10 +81,10 @@ describe('process-manager-ports', () => {
     try {
       const listener = spawn(process.execPath, ['-e', "const s=require('net').createServer(c=>{}).listen(0,'127.0.0.1',()=>console.log(s.address().port))"]);
       children.push(listener);
-      const port = await new Promise<number>((resolve) => listener.stdout!.once('data', (d) => resolve(Number(String(d).trim()))));
+      const port = Number(String(await firstLine(listener)).trim());
       const client = spawn(process.execPath, ['-e', `const c=require('net').connect(${port},'127.0.0.1',()=>console.log('up'));setInterval(()=>{},1000)`]);
       children.push(client);
-      await new Promise((resolve) => client.stdout!.once('data', resolve));
+      await firstLine(client);
       const holders = portHolderPids(port);
       expect(holders).toContain(listener.pid);
       expect(holders).not.toContain(client.pid);
