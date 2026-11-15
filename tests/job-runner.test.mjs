@@ -523,7 +523,10 @@ test("validates task jobs and normalizes legacy task fields", () => {
 
   runJobFail("task-normalize");
   const job = readJob("task-normalize");
-  assert(job.status === "complete", `expected complete, got ${job.status}: ${job.error}`);
+  // Task completion is a two-phase protocol: the worker persists the
+  // normalized result with status "running" and /api/jobs/[id]/complete
+  // materializes the task tree and publishes the terminal status.
+  assert(job.status === "running", `expected running (server-side import pending), got ${job.status}: ${job.error}`);
   assert(typeof job.result.acceptance_criteria === "string", "acceptance_criteria should normalize to string");
   assert(job.result.acceptance_criteria.includes("stored result uses a string"), "missing normalized criteria text");
   assert(job.result.design === "Normalize before the API creates tasks.", `wrong design: ${job.result.design}`);

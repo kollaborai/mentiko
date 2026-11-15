@@ -20,6 +20,7 @@ const customJestConfig = {
   testPathIgnorePatterns: [
     '<rootDir>/e2e/',
     '__tests__/mocks/',
+    '__tests__/helpers/',
   ],
   modulePathIgnorePatterns: [
     '<rootDir>/.next/',
