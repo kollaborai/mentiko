@@ -62,6 +62,14 @@ jest.mock("@/lib/auth/internal-api-auth", () => ({
   resolveInternalAuthSecret: () => "test-secret",
 }));
 
+jest.mock("@/lib/auth/auth-bridge", () => ({
+  getSessionUser: async () => null,
+}));
+
+jest.mock("@/lib/auth/session-token", () => ({
+  mintSessionToken: async () => "test-session-token",
+}));
+
 jest.mock("@/lib/runner-v2/routing", () => ({
   hasCompletedTrigger: () => true,
   routingContextForEvents: () => ({ completed: new Set() }),
@@ -79,7 +87,7 @@ jest.mock("@/lib/runs/run-process", () => ({
   terminateRunProcess: async () => undefined,
 }));
 
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { POST } from "./route";
 
@@ -132,7 +140,7 @@ afterAll(() => {
 });
 
 describe("POST /api/runs/[id]/resume", () => {
-  it("resumes a run record without chainId through its own chain.json snapshot", async () => {
+  it("resumes under the original run id through the typed launch-agent CLI and creates no new run directory", async () => {
     const runsDir = writeRun(validRun({ chainId: undefined }));
     writeChainSnapshot(runsDir);
 
@@ -140,10 +148,48 @@ describe("POST /api/runs/[id]/resume", () => {
     const body = await res.json();
 
     expect(res.status).toBe(200);
-    expect(body.data).toMatchObject({ success: true, runId: "run-resume-1" });
+    expect(body.data).toMatchObject({ success: true, runId: "run-resume-1", resumeFrom: "reviewer" });
     expect(mockSpawn).toHaveBeenCalledTimes(1);
-    const command = (mockSpawn.mock.calls[0][1] as string[])[1];
-    expect(command).toContain(join(runsDir, "chain.json"));
+    const [executable, args] = mockSpawn.mock.calls[0] as [string, string[]];
+    expect(executable).toBe(process.execPath);
+    expect(args[0]).toMatch(/runner-v2-launch-agent\.(js|cjs)$/);
+    expect(args[1]).toBe(join(runsDir, "chain.json"));
+    expect(args[2]).toBe("reviewer");
+    const env = (mockSpawn.mock.calls[0][2] as { env: Record<string, string> }).env;
+    expect(env.MENTIKO_RUN_ID).toBe("run-resume-1");
+    expect(env.RUN_ID).toBe("run-resume-1");
+    expect(env.MENTIKO_RUN_DIR).toBe(runsDir);
+    expect(env.MENTIKO_COMPLETION_OCCURRENCE_ID).toMatch(/^resume:run-resume-1:\d+$/);
+    expect(env.MENTIKO_SESSION_TOKEN).toBe("test-session-token");
+    // no second run directory: the runs root still holds exactly this run
+    const runDirs = readdirSync(join(TEST_ROOT, "runs"));
+    expect(runDirs).toEqual(["run-resume-1"]);
+  });
+
+  it("keeps chainId, metadata, workspaceId and task scope on the resumed run record", async () => {
+    const runsDir = writeRun(validRun({
+      chainId: "release-review",
+      metadata: { generationJobId: "job-9", task_run_scope: { runId: "run-resume-1", taskId: "TASK-010" } },
+      workspaceId: "ws-1",
+      taskId: "TASK-010",
+      workspacePath: "/tmp/some-workspace",
+    }));
+    writeChainSnapshot(runsDir);
+
+    const res = await POST(makeRequest("run-resume-1") as never, { params: Promise.resolve({ id: "run-resume-1" }) } as never);
+
+    expect(res.status).toBe(200);
+    const env = (mockSpawn.mock.calls[0][2] as { env: Record<string, string> }).env;
+    expect(env.MENTIKO_TASK_ID).toBe("TASK-010");
+    expect(env.MENTIKO_WORKSPACE_PATH).toBe("/tmp/some-workspace");
+    const record = JSON.parse(readFileSync(join(runsDir, "run.json"), "utf8"));
+    expect(record.id).toBe("run-resume-1");
+    expect(record.chainId).toBe("release-review");
+    expect(record.metadata).toEqual({ generationJobId: "job-9", task_run_scope: { runId: "run-resume-1", taskId: "TASK-010" } });
+    expect(record.workspaceId).toBe("ws-1");
+    expect(record.taskId).toBe("TASK-010");
+    expect(record.status).toBe("running");
+    expect(record.resumedAt).toBeTruthy();
   });
 
   it("returns a clean 404, not a TypeError 500, when chainId is missing and no snapshot exists", async () => {
@@ -175,35 +221,7 @@ describe("POST /api/runs/[id]/resume", () => {
     const res = await POST(makeRequest("run-resume-3") as never, { params: Promise.resolve({ id: "run-resume-3" }) } as never);
 
     expect(res.status).toBe(200);
-    const command = (mockSpawn.mock.calls[0][1] as string[])[1];
-    expect(command).toContain(chainsCopy);
-  });
-
-  it("passes the original run's provenance to the child launch env so the child record is complete", async () => {
-    const runsDir = writeRun(validRun({
-      chainId: "release-review",
-      metadata: { generationJobId: "job-9" },
-      workspaceId: "ws-1",
-      agentProfileId: "profile-1",
-      agentProfileSource: "workspace",
-      user_id: "user-1",
-      org_role: "admin",
-    }));
-    writeChainSnapshot(runsDir);
-
-    const res = await POST(makeRequest("run-resume-1") as never, { params: Promise.resolve({ id: "run-resume-1" }) } as never);
-
-    expect(res.status).toBe(200);
-    const env = (mockSpawn.mock.calls[0][2] as { env: Record<string, string> }).env;
-    expect(JSON.parse(env.MENTIKO_RESUME_PROVENANCE)).toEqual({
-      resumedFromRunId: "run-resume-1",
-      chainId: "release-review",
-      metadata: { generationJobId: "job-9" },
-      workspaceId: "ws-1",
-      agentProfileId: "profile-1",
-      agentProfileSource: "workspace",
-      user_id: "user-1",
-      org_role: "admin",
-    });
+    const args = (mockSpawn.mock.calls[0] as unknown[])[1] as string[];
+    expect(args[1]).toBe(chainsCopy);
   });
 });

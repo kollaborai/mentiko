@@ -1,19 +1,19 @@
 /**
  * POST /api/runs/[id]/resume
  *
- * resumes a crashed/stopped run from where it left off.
+ * resumes a crashed/stopped run from where it left off, INSIDE the same run.
  * - skips completed agents
  * - resets running/stopped agents to pending
- * - finds the first incomplete agent and restarts chain-runner from there
+ * - finds the resume frontier (interrupted > trigger-eligible > first pending)
  * - kills any stale PTY sessions before restarting
- * - reuses the same run ID and directory
+ * - relaunches the frontier agent through the typed routed-launch path under
+ *   the original run ID and directory: no child run, no second run directory
  */
 
 import { readFileSync, existsSync, openSync, closeSync, readdirSync } from "fs";
 import { join } from "path";
 import { spawn } from "child_process";
 import config, { nsPath, orgPath } from "@/lib/config";
-import { shellEscape } from "@/lib/api/audit-exec";
 import { requirePermission } from "@/lib/auth/rbac-auth";
 import { pty } from "@/lib/pty/pty-client";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
@@ -24,6 +24,10 @@ import { getProfile } from "@/lib/agents/agent-profile-storage";
 import { checkRunAccess } from "@/lib/auth/run-acl";
 import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
 import { resolveInternalAuthSecret } from "@/lib/auth/internal-api-auth";
+import { getSessionUser } from "@/lib/auth/auth-bridge";
+import { mintSessionToken } from "@/lib/auth/session-token";
+import type { OrgRole } from "@/lib/orgs/org-types";
+import { resolveInternalWebOrigin } from "@/lib/auth/internal-web-origin";
 import { hasCompletedTrigger, routingContextForEvents, type RoutingAgent } from "@/lib/runner-v2/routing";
 import { parseRunnerEvent, type RunnerEventRecord } from "@/lib/runner-v2/events";
 import { NotFound, Conflict, Unauthorized } from "@/lib/api-errors";
@@ -82,6 +86,43 @@ function readRoutingEvents(eventsDir: string, runId: string): RunnerEventRecord[
     }
   }
   return events;
+}
+
+/**
+ * Mint the ops session the resumed agent needs for its first ops call (same
+ * convention the web Run button path uses, chain-run-service
+ * buildChainSessionEnv: jti `chain-<runId>`, ops:* scope). The requesting web
+ * user is the identity when the request carries a session; internal callers
+ * (the auto-run scan) get the headless "cli" identity direct-run uses.
+ */
+async function buildResumeSessionEnv(
+  req: Request,
+  nsId: string,
+  orgId: string,
+  runId: string
+): Promise<Record<string, string>> {
+  let sub = "cli";
+  let role: OrgRole | undefined;
+  try {
+    const user = await getSessionUser(req);
+    if (user?.id && user.namespaceId === nsId && (!user.orgId || user.orgId === orgId)) {
+      sub = user.id;
+      role = user.role;
+    }
+  } catch {
+    // Internal/service-authenticated caller: fall back to the headless identity.
+  }
+  const sessionId = `chain-${runId}`;
+  const sessionToken = await mintSessionToken({
+    sub, jti: sessionId, ns: nsId, org: orgId,
+    ...(role ? { role } : {}),
+    scopes: ["ops:*"],
+  });
+  return {
+    MENTIKO_SESSION_ID: sessionId,
+    MENTIKO_SESSION_TOKEN: sessionToken,
+    MENTIKO_WEB_URL: resolveInternalWebOrigin(new URL(req.url).origin),
+  };
 }
 
 export const POST = withErrorHandling(async (
@@ -221,38 +262,32 @@ export const POST = withErrorHandling(async (
     }
   } catch { /* use empty */ }
 
-  // spawn chain-runner with existing run ID and --start flag
-  const binPath = join(config.codeRoot, "bin", "mentiko");
-  const startFlag = ` --start ${shellEscape(resumeAgentId)}`;
-  const wsFlag = resumedRun.workspacePath ? ` --workspace ${shellEscape(resumedRun.workspacePath)}` : "";
-  const taskFlag = resumedRun.taskId ? ` --task ${shellEscape(resumedRun.taskId)}` : "";
-  const debugFlag = resumedRun.debug ? " --debug" : "";
-
-  // Producer fix (#142): the spawned CLI creates a NEW child run (there is no
-  // same-run mechanism for a run with prior agents), so the child must inherit
-  // the original run's provenance. Without this the child record is thin — no
-  // chainId, metadata, workspaceId, profile fields, user_id, org_role — which
-  // is the record whose own resume then throws on the missing chainId.
-  const resumeProvenanceEnv = JSON.stringify({
-    resumedFromRunId: runId,
-    ...(typeof resumedRun.chainId === "string" && resumedRun.chainId ? { chainId: resumedRun.chainId } : {}),
-    ...(resumedRun.metadata && typeof resumedRun.metadata === "object" && !Array.isArray(resumedRun.metadata)
-      ? { metadata: resumedRun.metadata }
-      : {}),
-    ...(typeof resumedRun.workspaceId === "string" && resumedRun.workspaceId ? { workspaceId: resumedRun.workspaceId } : {}),
-    ...(typeof resumedRun.agentProfileId === "string" && resumedRun.agentProfileId ? { agentProfileId: resumedRun.agentProfileId } : {}),
-    ...(typeof resumedRun.agentProfileSource === "string" && resumedRun.agentProfileSource ? { agentProfileSource: resumedRun.agentProfileSource } : {}),
-    ...(typeof resumedRun.user_id === "string" && resumedRun.user_id ? { user_id: resumedRun.user_id } : {}),
-    ...(typeof resumedRun.session_id === "string" && resumedRun.session_id ? { session_id: resumedRun.session_id } : {}),
-    ...(typeof resumedRun.org_role === "string" && resumedRun.org_role ? { org_role: resumedRun.org_role } : {}),
-  });
+  // Producer fix (#142): resume re-enters the ORIGINAL run through the typed
+  // routed-launch path — the same mechanism the completion handoff and the
+  // error-handling retry dispatch (error-handling.ts dispatchChainRunner) use
+  // to start the next agent of an existing run: runner-v2-launch-agent pins
+  // MENTIKO_RUN_ID/MENTIKO_RUN_DIR, persists a durable launch job in the
+  // original run.json, and bootstraps the agent through startRunnerV2Bootstrap
+  // under the original run id. The resumedAt persisted above is the bootstrap
+  // gate's documented resume admission (bootstrap-executor
+  // assertBootstrapLaunchable), so a resume never reserves a second run
+  // directory or splits run ownership across a child record.
+  const sessionEnv = await buildResumeSessionEnv(req, nsId, orgId, runId);
+  const compiledLauncher = join(config.codeRoot, "lib", "runner-v2-launch-agent.js");
+  const launcherPath = existsSync(compiledLauncher)
+    ? compiledLauncher
+    : join(config.codeRoot, "web", "scripts", "runner-v2-launch-agent.cjs");
+  // A fresh occurrence id per resume attempt gives the durable launch job a
+  // fresh identity (same shape as the fan-group occurrence ids in adapters.ts),
+  // so a retried resume never collides with the previous attempt's job.
+  const occurrenceId = `resume:${runId}:${Date.now()}`;
 
   const logPath = join(runDir, "output.log");
   const logFd = openSync(logPath, "a");
 
   const child = spawn(
-    "/bin/zsh",
-    ["-lc", `${shellEscape(binPath)} run ${shellEscape(chainPath)}${startFlag}${wsFlag}${taskFlag}${debugFlag}`],
+    process.execPath,
+    [launcherPath, chainPath, resumeAgentId],
     {
       cwd: config.codeRoot,
       detached: true,
@@ -270,8 +305,16 @@ export const POST = withErrorHandling(async (
           MENTIKO_NAMESPACE_ROOT: nsPath(nsId),
           NAMESPACE_ID: nsId,
           ORG_ID: orgId,
-          AGENT_CHAIN_RUN_ID: runId,
-          MENTIKO_RESUME_PROVENANCE: resumeProvenanceEnv,
+          MENTIKO_RUN_ID: runId,
+          RUN_ID: runId,
+          MENTIKO_RUN_DIR: runDir,
+          MENTIKO_COMPLETION_OCCURRENCE_ID: occurrenceId,
+          MENTIKO_RUNNER_V2: "1",
+          MENTIKO_RUNNER_V2_COMPLETION: "1",
+          ...(resumedRun.workspacePath ? { MENTIKO_WORKSPACE_PATH: resumedRun.workspacePath } : {}),
+          ...(resumedRun.taskId ? { MENTIKO_TASK_ID: resumedRun.taskId } : {}),
+          ...(resumedRun.debug ? { MENTIKO_DEBUG: "1" } : {}),
+          ...sessionEnv,
         });
         delete e.CLAUDECODE;
         return e;
@@ -288,6 +331,7 @@ export const POST = withErrorHandling(async (
     resumeFrom: resumeAgentId,
     completedAgents: completed.map((a) => a.id),
     resumingAgents: incomplete.map((a) => a.id),
+    launchOccurrenceId: occurrenceId,
     pid: child.pid,
   });
 });
