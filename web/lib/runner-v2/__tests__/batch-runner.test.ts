@@ -1,6 +1,11 @@
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
+
+// batch-runner -> direct-run -> session-token pulls in jose (ESM-only).
+// Crypto-backed HS256 mirror so minting works and mismatches fail loudly.
+jest.mock("jose", () => require("./helpers/functional-jose"));
+
 import {
   parseBatchRunRecord,
   readBatchChainResult,
