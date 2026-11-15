@@ -176,11 +176,14 @@ jobs:
           exit $status
 
   # Aggregate keeps the exact required "ci/tests" check name expected by
-  # branch protection. It succeeds only when both test jobs do.
+  # branch protection. It runs on EVERY outcome (if: always()) and succeeds
+  # only when both test jobs' results are exactly "success" — a cancelled,
+  # skipped, failed or stale leg fails the aggregate, so a required check
+  # can never go green by not running.
   required_tests:
     name: ci/tests
     needs: [web_tests, root-tests]
-    if: ${{ !cancelled() }}
+    if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Fail unless every required test job passed
@@ -249,16 +252,28 @@ jobs:
       # The scan gates what a change ADDS, not history: main already carries
       # pre-existing generic-api-key findings (triage list kept out of band;
       # they live in the secrets/crypto subsystem and its test fixtures).
+      # Two scans over the same base..HEAD range, each fail-closed:
       #
-      # It scans the TREE DIFF against the merge base, not per-commit
-      # patches: `git log -p` omits merge-commit diffs, so a secret
-      # introduced only during conflict resolution could escape a commit
-      # range scan. The tree diff contains every added line, merge or not.
-      # Only '+' lines are scanned, so pre-existing content on the base side
-      # (context lines, deletions) cannot produce findings the PR did not
-      # add. An unresolvable or empty range FAILS the job — a gate that
-      # silently passes on a range it could not inspect is decorative.
-      - name: Run Gitleaks (added lines vs merge base)
+      # (a) HISTORY scan of every added line in every commit in
+      #     merge-base..HEAD: catches a secret committed and later removed
+      #     in the same PR (it stays reachable through the PR's commits even
+      #     though the final tree no longer has it).
+      # (b) TREE scan of the added lines of the final tree diff against the
+      #     merge base: `git log -p` omits merge-commit diffs, so a secret
+      #     introduced only during conflict resolution could escape (a);
+      #     the tree diff contains every added line, merge or not.
+      #
+      # Both extract only '+' CONTENT lines with a stateful awk parser: a
+      # naive `grep -v '^+++'` drops real added lines that begin with '++'.
+      # Here a '+++'-prefixed line is skipped only in the file-header block
+      # (before the first '@@' of each file); inside a hunk it is content.
+      # Added BINARY files carry no textual '+' lines, so each added binary
+      # path is additionally scanned by gitleaks' file mode; a binary that
+      # cannot be scanned fails the job. An unresolvable range fails the
+      # job — a gate that silently passes on a range it could not inspect
+      # is decorative. A range that resolves but adds no lines (a
+      # deletion-only change) is a valid empty delta, not an error.
+      - name: Run Gitleaks (history + final tree, vs merge base)
         env:
           EVENT_NAME: ${{ github.event_name }}
           PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
@@ -271,7 +286,7 @@ jobs:
             # base tip at event time can lag; fetch the branch tip and diff
             # against the true merge base with HEAD.
             git fetch --no-tags origin "$PR_BASE_REF"
-            base="$(git merge-base FETCH_HEAD HEAD || true)"
+            base="$(git merge-base FETCH_HEAD HEAD)"
           elif [ "$EVENT_NAME" = "push" ]; then
             if [[ "$PUSH_BEFORE" =~ ^0+$ ]]; then
               # first push on a new branch: the empty tree covers the root
@@ -279,8 +294,8 @@ jobs:
               base="$empty_tree"
             else
               git cat-file -e "$PUSH_BEFORE" 2>/dev/null \
-                || git fetch --no-tags origin "$PUSH_BEFORE" || true
-              base="$(git merge-base "$PUSH_BEFORE" HEAD || true)"
+                || git fetch --no-tags origin "$PUSH_BEFORE"
+              base="$(git merge-base "$PUSH_BEFORE" HEAD)"
             fi
           else
             # manual dispatch: scan the last commit's changes
@@ -290,11 +305,66 @@ jobs:
             echo "::error::secret scan range unresolvable; failing closed"
             exit 1
           fi
-          diff_file="$RUNNER_TEMP/added-lines.diff"
-          git diff "$base" HEAD --unified=0 \
-            | /usr/bin/grep -E '^\+' | /usr/bin/grep -vE '^\+\+\+' > "$diff_file" || true
-          if [ ! -s "$diff_file" ]; then
-            echo "::error::secret scan range $base..HEAD adds no lines; failing closed"
-            exit 1
+          echo "scan range: $base..$(git rev-parse HEAD)"
+
+          # awk state machine: skip each file's header block (diff --git,
+          # index, ---/+++ path lines, mode/binary notices, commit metadata)
+          # and hunk headers; print every '+' line inside a hunk as content.
+          added_lines='
+            /^diff --git / { inhunk=0; next }
+            /^@@ /         { inhunk=1; next }
+            inhunk==0      { next }
+            /^\\/          { next }
+            /^\+/          { print }
+          '
+
+          # (a) history scan: added lines of every commit in the range
+          # (--format= drops commit metadata; merge-commit diffs are absent
+          # from `git log -p` output by design — scan (b) covers them).
+          hist_file="$RUNNER_TEMP/history-added.diff"
+          git log --format= -p --unified=0 "$base..HEAD" | awk "$added_lines" > "$hist_file"
+          echo "history scan: $(wc -l < "$hist_file") added lines across $(git rev-list --count "$base..HEAD") commits"
+          if [ -s "$hist_file" ]; then
+            gitleaks stdin --redact --verbose < "$hist_file"
+          else
+            echo "history scan: range adds no lines (deletion-only commits); nothing to scan"
           fi
-          gitleaks stdin --redact --verbose < "$diff_file"
+
+          # (b) final-tree scan: added lines of the tree diff vs merge base
+          tree_file="$RUNNER_TEMP/tree-added.diff"
+          git diff --no-prefix --unified=0 "$base" HEAD | awk "$added_lines" > "$tree_file"
+          echo "tree scan: $(wc -l < "$tree_file") added lines"
+          if [ -s "$tree_file" ]; then
+            gitleaks stdin --redact --verbose < "$tree_file"
+          else
+            if git diff --quiet "$base" HEAD; then
+              echo "::error::tree scan: no diff at all vs base; unexpected for a PR/push event, failing closed"
+              exit 1
+            fi
+            echo "tree scan: deletion-only diff; no added lines to scan"
+          fi
+
+          # added binary files carry no textual '+' lines above, so scan
+          # each by path: gitleaks dir for files its own filter accepts,
+          # plus a `strings` extraction piped to gitleaks stdin — dir mode
+          # alone silently skips .bin-style and content-binary files (a
+          # plaintext secret embedded in a .bin escapes it). numstat -z
+          # emits per file: "<added>\t<deleted>\0<path>\0"; binaries show
+          # "-" for both counts. An unscannable binary fails the job.
+          while IFS=$'\t' read -r -d '' nums _ && IFS= read -r -d '' path; do
+            [ "${nums%%$'\t'*}" = "-" ] || continue
+            echo "binary added: $path — scanning by path (dir + strings)"
+            set +e
+            gitleaks dir --redact --no-banner "$path"
+            rc=$?
+            strings "$path" | gitleaks stdin --redact --no-banner
+            rc2=$?
+            set -e
+            if [ "$rc" -eq 1 ] || [ "$rc2" -eq 1 ]; then
+              echo "::error::leak detected in added binary file $path"
+              exit 1
+            elif [ "$rc" -ne 0 ] || [ "$rc2" -ne 0 ]; then
+              echo "::error::cannot scan added binary file $path (gitleaks exits: dir=$rc strings=$rc2); failing closed"
+              exit 1
+            fi
+          done < <(git diff --numstat --diff-filter=A -z "$base" HEAD)
