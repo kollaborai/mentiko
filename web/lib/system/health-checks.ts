@@ -1,8 +1,9 @@
-import { existsSync, readdirSync, statfsSync } from "fs";
+import { existsSync, readdirSync, statfsSync, statSync } from "fs";
 import { getHeapStatistics } from "v8";
 import { join } from "path";
 import config from "@/lib/config";
 import { ping as redisPing, redisConfigured } from "@/lib/system/redis";
+import type { BackgroundWorkerStatePaths } from "@/lib/system/background-worker-state";
 
 // detect runtime environment for conditional checks
 // /.dockerenv is created by Docker in every container - most reliable signal
@@ -280,15 +281,59 @@ export async function checkAuditQueue(): Promise<{ status: CheckStatus; message:
   }
 }
 
+// issue #136: the background worker is the task board's heartbeat. Signals:
+// the registered owner pid's liveness, plus the status-file mtime the worker
+// refreshes on every 5s heartbeat tick.
+const WORKER_HEARTBEAT_STALE_MS = 120_000;
+
+export async function checkBackgroundWorker(
+  paths?: BackgroundWorkerStatePaths,
+): Promise<HealthCheckResult> {
+  try {
+    const workerState = await import("@/lib/system/background-worker-state");
+    const statePaths = paths ?? workerState.getBackgroundWorkerPaths();
+    const owner = workerState.readBackgroundWorkerOwner(statePaths);
+    const status = workerState.readBackgroundWorkerStatusFile(statePaths);
+    if (!owner) {
+      return {
+        status: "warn",
+        message: status?.status === "stopped"
+          ? "background worker stopped"
+          : "background worker not registered",
+      };
+    }
+    if (!workerState.isProcessAlive(owner.pid)) {
+      return {
+        status: "fail",
+        message: `background worker pid ${owner.pid} is not running (last status: ${status?.status ?? "unknown"})`,
+      };
+    }
+    const heartbeatAge = Date.now() - statSync(statePaths.statusFile).mtimeMs;
+    if (heartbeatAge > WORKER_HEARTBEAT_STALE_MS) {
+      return {
+        status: "warn",
+        message: `background worker heartbeat stale (${Math.round(heartbeatAge / 1000)}s old, pid ${owner.pid} alive)`,
+      };
+    }
+    return { status: "pass", message: `background worker running (pid ${owner.pid})` };
+  } catch (err) {
+    return {
+      status: "warn",
+      message: `background worker check unavailable: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+}
+
 /** Every platform health check, keyed exactly as /api/health reports them. */
 export async function runAllHealthChecks(mode: RuntimeMode = detectMode()): Promise<HealthChecks> {
-  const [ptyCheck, sessionsCheck, dbCheck, authCheck, redisCheck, auditCheck] = await Promise.all([
+  const [ptyCheck, sessionsCheck, dbCheck, authCheck, redisCheck, auditCheck, workerCheck] = await Promise.all([
     checkPtyDaemon(),
     checkActiveSessions(),
     checkDatabase(),
     checkAuth(),
     checkRedis(),
     checkAuditQueue(),
+    checkBackgroundWorker(),
   ]);
 
   return {
@@ -303,6 +348,7 @@ export async function runAllHealthChecks(mode: RuntimeMode = detectMode()): Prom
     runs: checkRecentRuns(),
     redis: redisCheck,
     audit_queue: auditCheck,
+    background_worker: workerCheck,
   };
 }
 
