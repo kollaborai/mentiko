@@ -1,0 +1,222 @@
+# CI — the merge gate ported from kollab's branch-protection model (issue #121).
+#
+# Three jobs whose display names are exactly `ci/tests`, `ci/standards-check`,
+# `ci/security-scan`: the names branch protection will require. Existing
+# workflows (auth-coverage, engine-tests, build-*, smoke-test, publish-mcp,
+# trigger-platform-build) keep their own triggers and are untouched.
+#
+# Suite exclusions live in the jest step below, each named with its failure
+# reason; see the linked issue before removing one.
+
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  # A push performed with GITHUB_TOKEN cannot trigger another workflow; this
+  # lets CI run on main after bot-driven merges.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  web_tests:
+    name: ci/tests (web jest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # npm 12 (bundled with Node 24+) blocks install scripts; Node 22's npm
+      # still runs them, and better-sqlite3 needs its postinstall build.
+      - name: Install web dependencies
+        run: npm ci --no-audit --no-fund
+
+      # Suites excluded by name — none currently. When a suite fails on a
+      # clean runner, exclude it here with its reason and list it in the PR
+      # body; never `|| true` the whole job.
+      - name: Run jest suite
+        run: npm test -- --ci
+
+  root-tests:
+    name: ci/tests (root)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # tests/runner-typed-bundle-parity.test.mjs rebuilds the runner bundles
+      # with esbuild from web/, so web deps must be installed.
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci --no-audit --no-fund
+
+      # scheduler's cmd_next delegates cron parsing to python croniter.
+      - name: Install croniter
+        run: python3 -m pip install croniter==6.0.0
+
+      # Root contract tests under tests/*.test.mjs are plain node scripts:
+      # they exit non-zero on failure.
+      #
+      # Excluded by name:
+      # - tests/session-transport.test.mjs — needs a live pty-manager daemon,
+      #   which only exists inside the mentiko-base image; the engine-tests
+      #   workflow covers that environment.
+      # - tests/chain-runner-activity-start.test.mjs — asserts activity
+      #   delegation markers inside lib/chain-runner.sh that no longer exist;
+      #   the delegation now lives in lib/agent-activity-capture.sh and is
+      #   covered by tests/agent-activity-capture-shell-boundary.test.mjs.
+      - name: Run root .mjs contract tests
+        run: |
+          set -euo pipefail
+          exclude="tests/session-transport.test.mjs tests/chain-runner-activity-start.test.mjs"
+          status=0
+          for f in tests/*.test.mjs; do
+            skip=0
+            for x in $exclude; do [ "$f" = "$x" ] && skip=1; done
+            if [ "$skip" = 1 ]; then
+              echo "SKIP $f (excluded, see workflow comment)"
+              continue
+            fi
+            if node "$f"; then
+              echo "PASS $f"
+            else
+              echo "FAIL $f"
+              status=1
+            fi
+          done
+          exit $status
+
+      # tests/bash/*.sh unit suites (bash 5 + jq, both on ubuntu-latest).
+      #
+      # Excluded by name — pre-typed-era source contracts that drifted when
+      # chain-runner.sh moved to the typed runtime; the functions they grep
+      # for (substitute_placeholders, _monitor_v2_script) no longer exist in
+      # lib/. Current engine behavior is covered by the engine-tests
+      # workflow's web/e2e/engine suites in the mentiko-base image:
+      # - tests/bash/test-bug022-durable-completion.sh
+      # - tests/bash/test-monitor-completion.sh
+      # - tests/bash/test-chain-runner-placeholders.sh
+      # - tests/bash/test-chain-runner-ref-resolution.sh
+      # - tests/bash/test-secret-decryption.sh (better-sqlite3 native addon
+      #   path; fails outside the mentiko-base image)
+      - name: Run tests/bash unit suites
+        run: |
+          set -euo pipefail
+          exclude="tests/bash/test-bug022-durable-completion.sh tests/bash/test-monitor-completion.sh tests/bash/test-chain-runner-placeholders.sh tests/bash/test-chain-runner-ref-resolution.sh tests/bash/test-secret-decryption.sh"
+          status=0
+          for f in tests/bash/*.sh; do
+            skip=0
+            for x in $exclude; do [ "$f" = "$x" ] && skip=1; done
+            if [ "$skip" = 1 ]; then
+              echo "SKIP $f (excluded, see workflow comment)"
+              continue
+            fi
+            if bash "$f"; then
+              echo "PASS $f"
+            else
+              echo "FAIL $f"
+              status=1
+            fi
+          done
+          exit $status
+
+  # Aggregate keeps the exact required "ci/tests" check name expected by
+  # branch protection. It succeeds only when both test jobs do.
+  required_tests:
+    name: ci/tests
+    needs: [web_tests, root-tests]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail unless every required test job passed
+        env:
+          WEB_RESULT: ${{ needs.web_tests.result }}
+          ROOT_RESULT: ${{ needs.root-tests.result }}
+        run: |
+          case "$WEB_RESULT:$ROOT_RESULT" in
+            success:success) echo "ci/tests: all required test jobs succeeded"; exit 0 ;;
+            *) echo "ci/tests: web jest '$WEB_RESULT'; root .mjs '$ROOT_RESULT'"; exit 1 ;;
+          esac
+
+  standards-check:
+    name: ci/standards-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Typecheck
+        run: npx tsc --noEmit -p .
+
+      # Advisory for now: main carries ~53 pre-existing eslint errors
+      # (mostly no-explicit-any) that predate CI. tsc is the blocking gate;
+      # lint blocks once that debt is paid down (issue #121 follow-up).
+      - name: Lint (advisory)
+        run: npm run lint
+        continue-on-error: true
+
+  security-scan:
+    name: ci/security-scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Gitleaks
+        env:
+          GITLEAKS_VERSION: "8.30.1"
+        run: |
+          cd "$RUNNER_TEMP"
+          curl -fsSLO "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSLO "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+          grep "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" "gitleaks_${GITLEAKS_VERSION}_checksums.txt" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/gitleaks-bin"
+          tar -xzf "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" -C "$RUNNER_TEMP/gitleaks-bin" gitleaks
+          echo "$RUNNER_TEMP/gitleaks-bin" >> "$GITHUB_PATH"
+
+      - name: Run Gitleaks
+        run: gitleaks detect --source . --redact --verbose

@@ -1,0 +1,25 @@
+# pr-gates: per-PR quality gates (issue #121), ported from kollab (#724).
+# `enabled` turns the definition-of-done check on or off. The script is
+# scripts/pr_gates_dod.py; the workflow is pr-gates-dod.yml.
+
+[pr_gates.dod]
+enabled = true
+# Name of the single check run posted on each PR (configurable).
+check_name = "dod/ready-for-review"
+# Which checks run; remove or comment out entries to toggle a check off.
+# Dropped from kollab's set when porting (reasons in issue #121):
+#   signed_commits    - agent commits are unsigned; would fail every PR.
+#   regression_test   - mentiko reviews do not use the F<number> finding-id
+#                       convention the check keys on.
+#   spec_or_fix_brief - mentiko has no docs/specs/ or Fix-brief convention.
+checks = [
+  "docs_paths",
+  "threads_resolved",
+  "base_current",
+  "conventional_title",
+  "linked_issue",
+]
+
+# Maps a regex over changed paths to the docs that must also be updated in
+# the same PR. Un-comment to require e.g. docs for web changes.
+[pr_gates.dod.docs_paths]
