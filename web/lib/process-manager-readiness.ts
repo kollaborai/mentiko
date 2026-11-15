@@ -1,4 +1,4 @@
-import type { ReadinessConfig, RestartConfig } from "./pm-types";
+import type { ProcessStatus, ReadinessConfig, RestartConfig } from "./pm-types";
 
 type EnvSource = Record<string, string | undefined>;
 
@@ -42,11 +42,15 @@ export function formatReadinessTimeout(
   return `${processName} readiness timeout after ${timeoutMs}ms (${describeReadinessTarget(readiness, expand)}), killing`;
 }
 
+// issue #136: an enabled restart policy never reaches a permanent off state.
+// once the budget is spent, attempts continue at the capped backoff; callers
+// use `exhausted` to log the capped-retry state (and, for critical services,
+// to decide whether to give up and take the manager down instead).
 export function resolveRestartDelay(
   restart: RestartConfig | undefined,
   restarts: number,
   random: () => number = Math.random,
-): { delayMs: number; maxRestarts: number } | null {
+): { delayMs: number; maxRestarts: number; exhausted: boolean } | null {
   const policy = restart ?? {
     enabled: true,
     maxRestarts: 10,
@@ -55,13 +59,22 @@ export function resolveRestartDelay(
     resetAfter: 60000,
     jitter: true,
   };
+  if (!policy.enabled) return null;
   const maxRestarts = policy.maxRestarts ?? 10;
-  if (!policy.enabled || restarts >= maxRestarts) return null;
+  const exhausted = restarts >= maxRestarts;
 
   let delayMs = Math.min(
     (policy.baseDelay ?? 1000) * Math.pow(2, restarts),
     policy.maxDelay ?? 30000,
   );
   if (policy.jitter ?? true) delayMs = Math.round(delayMs * (0.85 + random() * 0.3));
-  return { delayMs, maxRestarts };
+  return { delayMs, maxRestarts, exhausted };
+}
+
+// issue #136: never report "ready" for a managed service with no live process.
+export function reportedProcessStatus(
+  status: ProcessStatus,
+  hasLiveProcess: boolean,
+): ProcessStatus {
+  return status === "ready" && !hasLiveProcess ? "crashed" : status;
 }

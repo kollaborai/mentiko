@@ -10,8 +10,7 @@ import * as http from 'http';
 import * as os from 'os';
 import * as crypto from 'crypto';
 import type {
-  ProcessConfig, ProcessesFile, ReadinessConfig,
-  IPCRequest,
+  ProcessConfig, ProcessesFile, ReadinessConfig, IPCRequest, ProcessStatus,
 } from './pm-types';
 import {
   buildManagedProcessEnv,
@@ -22,7 +21,9 @@ import {
   shouldReplaceUnavailableDevContainerRoot,
 } from './process-manager-env';
 import { registerKollabMentikoMcpServer } from './kollabor-mcp-settings';
-import { formatReadinessTimeout, resolveReadinessTimeout, resolveRestartDelay } from './process-manager-readiness';
+import {
+  formatReadinessTimeout, resolveReadinessTimeout, resolveRestartDelay, reportedProcessStatus,
+} from './process-manager-readiness';
 import {
   pmStateDir, writePidFile, removePidFile, readPidFiles,
   pidAlive, recordedPidStillOurs, portHeldByOthers,
@@ -281,16 +282,22 @@ function scheduleRestart(m: ManagedProcess) {
   const restart = m.config.restart;
   if (restart && !restart.enabled) { m.status = 'stopped'; return; }
   const nextRestart = resolveRestartDelay(restart, m.restarts);
-  const max = nextRestart?.maxRestarts ?? restart?.maxRestarts ?? 10;
-  if (!nextRestart) {
+  if (!nextRestart) { m.status = 'stopped'; return; }
+  const max = nextRestart.maxRestarts;
+  if (nextRestart.exhausted && m.config.critical) {
+    // issue #136: critical services still give up (a stack/container restart is
+    // their recovery path); everything else keeps retrying below, so no
+    // restart-enabled service ever has a permanent off state.
     m.status = 'failed';
-    logErr(`${m.config.name} exceeded max restarts (${max}/${max}), giving up`);
-    if (m.config.critical) { logErr(`critical process ${m.config.name} failed, shutting down`); exitCode = 1; shutdown(); }
+    logErr(`${m.config.name} exceeded max restarts (${max}/${max}), critical, giving up`);
+    exitCode = 1; shutdown();
     return;
   }
   const delay = nextRestart.delayMs;
   m.restarts++;
-  log(`${m.config.name} restarting in ${delay}ms (attempt ${m.restarts}/${max})`);
+  log(nextRestart.exhausted
+    ? `${m.config.name} restart budget exhausted (${max}), still retrying in ${delay}ms (capped backoff, attempt ${m.restarts})`
+    : `${m.config.name} restarting in ${delay}ms (attempt ${m.restarts}/${max})`);
   m.restartTimer = setTimeout(async () => {
     m.restartTimer = null;
     if (!shuttingDown) await startOne(m.config);
@@ -342,7 +349,7 @@ async function startOne(config: ProcessConfig, options: StartOptions = {}): Prom
   m.stoppedByUser = prev?.stoppedByUser ?? false;
   managed.set(config.name, m);
   const ready = await waitReady(config.name, config.readiness);
-  if (ready) {
+  if (ready && (m.child || m.pid)) {
     m.status = 'ready';
     const r = config.readiness;
     const detail = !r ? '' : r.type === 'socket' && r.path ? ` (socket at ${expandEnv(r.path)})`
@@ -360,27 +367,36 @@ async function startOne(config: ProcessConfig, options: StartOptions = {}): Prom
       }
     }
   } else if (!shuttingDown) {
-    const timeoutMs = resolveReadinessTimeout(config.readiness);
-    logErr(formatReadinessTimeout(config.name, config.readiness, timeoutMs, expandEnv));
-    await killProc(m);
-    m.status = 'crashed';
-    if (options.abortCriticalReadinessTimeout && config.critical) {
-      const retry = config.restart?.retryOnStartup
-        ? resolveRestartDelay(config.restart, m.restarts)
-        : null;
-      if (retry) {
-        m.restarts++;
-        log(`${config.name} retrying startup in ${retry.delayMs}ms after readiness timeout (attempt ${m.restarts}/${retry.maxRestarts})`);
-        await sleep(retry.delayMs);
-        if (shuttingDown) return m;
-        return startOne(config, options);
-      }
-      m.status = 'failed';
-      logErr(`${config.name} failed readiness during startup after ${m.restarts} retries (max ${config.restart?.maxRestarts ?? 0})`);
-      exitCode = 1;
-      await shutdown();
+    if (ready) {
+      // issue #136: the child died while the readiness probe was running.
+      // handleExit already ran (it scheduled a restart); never report ready
+      // for a dead process and do not schedule a second restart timer.
+      logErr(`${config.name} exited during readiness probe, not ready`);
+      m.status = 'crashed';
+      if (!m.restartTimer) scheduleRestart(m);
     } else {
-      scheduleRestart(m);
+      const timeoutMs = resolveReadinessTimeout(config.readiness);
+      logErr(formatReadinessTimeout(config.name, config.readiness, timeoutMs, expandEnv));
+      await killProc(m);
+      m.status = 'crashed';
+      if (options.abortCriticalReadinessTimeout && config.critical) {
+        const retry = config.restart?.retryOnStartup
+          ? resolveRestartDelay(config.restart, m.restarts)
+          : null;
+        if (retry && !retry.exhausted) {
+          m.restarts++;
+          log(`${config.name} retrying startup in ${retry.delayMs}ms after readiness timeout (attempt ${m.restarts}/${retry.maxRestarts})`);
+          await sleep(retry.delayMs);
+          if (shuttingDown) return m;
+          return startOne(config, options);
+        }
+        m.status = 'failed';
+        logErr(`${config.name} failed readiness during startup after ${m.restarts} retries (max ${config.restart?.maxRestarts ?? 0})`);
+        exitCode = 1;
+        await shutdown();
+      } else {
+        scheduleRestart(m);
+      }
     }
   }
   return m;
@@ -617,19 +633,26 @@ async function handleIpc(raw: string, conn: net.Socket) {
   try {
     switch (req.cmd) {
       case 'status': {
-        const procs = Array.from(managed.values()).map(m => ({
-          name: m.config.name, pid: m.pid, status: m.status, restarts: m.restarts,
-          uptime: m.status === 'ready' ? Date.now() - m.startedAt : 0,
-          lastExit: m.lastExit, lastExitCode: m.lastExitCode,
-        }));
+        const procs = Array.from(managed.values()).map(m => {
+          // issue #136: never report "ready" for a service with no live process
+          const status = reportedProcessStatus(m.status as ProcessStatus, !!(m.child || m.pid));
+          return {
+            name: m.config.name, pid: m.pid, status, restarts: m.restarts,
+            uptime: status === 'ready' ? Date.now() - m.startedAt : 0,
+            lastExit: m.lastExit, lastExitCode: m.lastExitCode,
+          };
+        });
         ok({ processes: procs, uptime: Date.now() - bootTime, version: 1 });
         break;
       }
       case 'list': {
-        ok({ processes: Array.from(managed.values()).map(m => ({
-          name: m.config.name, status: m.status, pid: m.pid,
-          uptime: m.status === 'ready' ? Date.now() - m.startedAt : 0, restarts: m.restarts,
-        }))});
+        ok({ processes: Array.from(managed.values()).map(m => {
+          const status = reportedProcessStatus(m.status as ProcessStatus, !!(m.child || m.pid));
+          return {
+            name: m.config.name, status, pid: m.pid,
+            uptime: status === 'ready' ? Date.now() - m.startedAt : 0, restarts: m.restarts,
+          };
+        })});
         break;
       }
       case 'stop': {
