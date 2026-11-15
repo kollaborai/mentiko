@@ -524,7 +524,10 @@ export async function applyCompletionAudit(
   // audit reported close+applied.
   const closeVerdictNotYetClosed =
     audit.verdict === "close" && !CLOSED_TASK_STATUSES.has(task.status);
-  if (auditAlreadyApplied && !closeVerdictNotYetClosed) {
+  // A summary-failure escalation is not a repeat of an earlier audit of the
+  // same run: no verdict was ever produced for this attempt, so the applied
+  // marker must not skip it. Decision creation dedups by run and fingerprint.
+  if (auditAlreadyApplied && !closeVerdictNotYetClosed && !input.summaryFailureReason) {
     if (audit.verdict === "close"
       && closeExecutionMetadataNeedsRepair(metadata, runId, runFingerprint)) {
       taskMergeMeta(orgId, task.id, {

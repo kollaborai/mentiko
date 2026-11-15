@@ -323,6 +323,29 @@ describe("applyCompletionAudit", () => {
     expect(taskAddDep).toHaveBeenCalledWith("default", "TASK-42", "DEC-1", "default", "/repo");
   });
 
+  it("summary failure: an earlier applied audit of the same run does not skip the escalation", async () => {
+    const task = makeTask();
+    const reason = "The outcome summary for run run-abc failed 2 times, so this task has no audit verdict.";
+
+    const result = await applyCompletionAudit({
+      ...makeInput(
+        task,
+        { verdict: "decision", reason, decision: { prompt: "Review the run." } },
+        {
+          lifecycle_phase: "summarizing",
+          completion_audit_run_id: "run-abc",
+          completion_audit_run_fingerprint: "completed:t1",
+          completion_audit_apply_status: "applied",
+        },
+      ),
+      runFingerprint: "completed:t1",
+      summaryFailureReason: reason,
+    });
+
+    expect(result.action).toBe("decision_created");
+    expect(createTaskDecision).toHaveBeenCalledTimes(1);
+  });
+
   it("decision: skips duplicate completion-audit DEC tasks for the same parent/source run/fingerprint", async () => {
     taskList.mockReturnValue([
       makeTask({

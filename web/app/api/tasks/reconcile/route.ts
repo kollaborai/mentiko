@@ -99,6 +99,18 @@ function summaryFailuresExhausted(meta: Record<string, unknown>): boolean {
   );
 }
 
+// Only a task parked in `summarizing` behind a TERMINAL execution run may be
+// escalated; a running run belongs to the running sweep alone.
+function isExhaustedSummaryEscalationCandidate(meta: Record<string, unknown>): boolean {
+  return (
+    meta.lifecycle_phase === "summarizing"
+    && typeof meta.last_run_id === "string"
+    && typeof meta.last_run_status === "string"
+    && TERMINAL_RUN_STATUSES.has(meta.last_run_status)
+    && summaryFailuresExhausted(meta)
+  );
+}
+
 function shouldAuditCompletedAutoRun(meta: Record<string, unknown>, autoRunEnabled: boolean): boolean {
   const generatedTaskHasExecutionChain =
     !meta.generation_job_id ||
@@ -211,9 +223,7 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     if (DONE_TASK_STATUSES.has(issue.status)) return false;
     const meta = parseMetadata(issue.metadata);
     return !!meta
-      && meta.lifecycle_phase === "summarizing"
-      && typeof meta.last_run_id === "string"
-      && summaryFailuresExhausted(meta);
+      && isExhaustedSummaryEscalationCandidate(meta);
   });
   // FEAT-001 stall class: a task parked at decision_blocked whose LINKED
   // decision has since resolved out-of-band (the approval's lifecycle pass
@@ -359,7 +369,13 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
 
   for (const issue of exhaustedOutcomeSummaryTasks) {
     try {
-      const meta = parseMetadata(issue.metadata)!;
+      // Re-read: an earlier sweep in this pass, or another reconciler, may
+      // have moved the task since the list snapshot was taken.
+      const fresh = taskGet(orgId, issue.id, namespaceId);
+      const meta = parseMetadata(fresh?.metadata);
+      if (!fresh || !meta || DONE_TASK_STATUSES.has(fresh.status) || !isExhaustedSummaryEscalationCandidate(meta)) {
+        continue;
+      }
       const runId = String(meta.last_run_id);
       const failures = Number(meta.task_outcome_summary_failures);
       const error = typeof meta.task_outcome_summary_error === "string" && meta.task_outcome_summary_error
@@ -370,7 +386,7 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
         request,
         namespaceId,
         orgId,
-        task: issue,
+        task: fresh,
         audit: {
           verdict: "decision",
           reason,
@@ -386,8 +402,10 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
         taskId: issue.id,
         runId,
         previousStatus: "summarizing",
-        newStatus: "summary_escalated",
-        reason: `summary failure limit reached; ${outcome.action}${outcome.decisionTaskId ? ` ${outcome.decisionTaskId}` : ""}`,
+        newStatus: outcome.decisionTaskId ? "summary_escalated" : "summary_escalation_skipped",
+        reason: outcome.decisionTaskId
+          ? `summary failure limit reached; ${outcome.action} ${outcome.decisionTaskId}`
+          : `summary failure limit reached but no decision is linked: ${outcome.detail || outcome.action}`,
       });
     } catch (error) {
       failed.push({ taskId: issue.id, error: `Failed to escalate exhausted outcome summary: ${(error as Error).message}` });

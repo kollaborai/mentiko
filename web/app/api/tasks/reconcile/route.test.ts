@@ -326,6 +326,7 @@ describe("GET /api/tasks/reconcile", () => {
         metadata: {
           lifecycle_phase: "summarizing",
           last_run_id: "run-execution",
+          last_run_status: "completed",
           task_outcome_summary_status: "failed",
           task_outcome_summary_source_run_id: "run-execution",
           task_outcome_summary_failures: 2,
@@ -333,6 +334,7 @@ describe("GET /api/tasks/reconcile", () => {
         },
       },
     ]);
+    mockTaskGet.mockImplementation(() => mockTaskList()[0]);
     mockApplyCompletionAudit.mockResolvedValueOnce({ action: "decision_created", decisionTaskId: "DEC-9" });
 
     const res = await GET(makeRequest() as never);
@@ -350,6 +352,89 @@ describe("GET /api/tasks/reconcile", () => {
       previousStatus: "summarizing",
       newStatus: "summary_escalated",
     }));
+  });
+
+  it("reports a skipped escalation truthfully when no decision was linked", async () => {
+    mockTaskList.mockReturnValue([
+      {
+        id: "TASK-008",
+        title: "Summary failed twice",
+        status: "open",
+        metadata: {
+          lifecycle_phase: "summarizing",
+          last_run_id: "run-execution",
+          last_run_status: "completed",
+          task_outcome_summary_status: "failed",
+          task_outcome_summary_source_run_id: "run-execution",
+          task_outcome_summary_failures: 2,
+        },
+      },
+    ]);
+    mockTaskGet.mockImplementation(() => mockTaskList()[0]);
+    mockApplyCompletionAudit.mockResolvedValueOnce({ action: "skipped", detail: "audit already applied for this run" });
+
+    const res = await GET(makeRequest() as never);
+    const body = await res.json();
+
+    expect(body.data.results).toContainEqual(expect.objectContaining({
+      taskId: "TASK-008",
+      newStatus: "summary_escalation_skipped",
+    }));
+    expect(body.data.results).not.toContainEqual(expect.objectContaining({ newStatus: "summary_escalated" }));
+  });
+
+  it("does not escalate a summary failure while the task's run is still running", async () => {
+    mockTaskList.mockReturnValue([
+      {
+        id: "TASK-008",
+        title: "Summary failed twice",
+        status: "open",
+        metadata: {
+          lifecycle_phase: "summarizing",
+          last_run_id: "run-execution",
+          last_run_status: "running",
+          task_outcome_summary_status: "failed",
+          task_outcome_summary_source_run_id: "run-execution",
+          task_outcome_summary_failures: 2,
+        },
+      },
+    ]);
+    mockTaskGet.mockImplementation(() => mockTaskList()[0]);
+
+    await GET(makeRequest() as never);
+
+    expect(mockApplyCompletionAudit).not.toHaveBeenCalledWith(
+      expect.objectContaining({ summaryFailureReason: expect.any(String) }),
+    );
+  });
+
+  it("does not escalate when the task moved on between the list snapshot and the sweep", async () => {
+    mockTaskList.mockReturnValue([
+      {
+        id: "TASK-008",
+        title: "Summary failed twice",
+        status: "open",
+        metadata: {
+          lifecycle_phase: "summarizing",
+          last_run_id: "run-execution",
+          last_run_status: "completed",
+          task_outcome_summary_status: "failed",
+          task_outcome_summary_source_run_id: "run-execution",
+          task_outcome_summary_failures: 2,
+        },
+      },
+    ]);
+    mockTaskGet.mockReturnValue({
+      id: "TASK-008",
+      status: "blocked",
+      metadata: { lifecycle_phase: "decision_blocked", last_run_id: "run-execution", last_run_status: "completed" },
+    });
+
+    await GET(makeRequest() as never);
+
+    expect(mockApplyCompletionAudit).not.toHaveBeenCalledWith(
+      expect.objectContaining({ summaryFailureReason: expect.any(String) }),
+    );
   });
 
   it("leaves a task with one summary failure for the bounded summary retry", async () => {

@@ -421,8 +421,12 @@ function outcomeAuditLifecycleMetadata(
   runFingerprint: string,
   extra: Record<string, unknown> = {},
 ): Record<string, unknown> {
+  // The failure count belongs to one source run. A summary for a different
+  // run starts from zero, or its first failure would read as exhausted.
+  const sourceChanged = metadata.task_outcome_summary_source_run_id !== sourceRunId;
   return {
     ...metadata,
+    ...(sourceChanged ? { task_outcome_summary_failures: 0 } : {}),
     ...extra,
     task_outcome_summary_source_run_id: sourceRunId,
     task_outcome_summary_run_fingerprint: runFingerprint,
