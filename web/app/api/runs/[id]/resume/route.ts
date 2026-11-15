@@ -29,6 +29,7 @@ import { parseRunnerEvent, type RunnerEventRecord } from "@/lib/runner-v2/events
 import { NotFound, Conflict, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { collectStaleRunSessionNames } from "@/lib/runs/stale-run-sessions";
+import { resolveResumeChainPath } from "@/lib/runs/resume-chain-path";
 import { terminateRunProcess } from "@/lib/runs/run-process";
 import { updateRunJson } from "@/lib/runner-v2/run-state";
 
@@ -48,7 +49,7 @@ interface RunAgent {
 interface RunJson {
   id: string;
   chain: string;
-  chainId: string;
+  chainId?: string;
   goal?: string;
   started: string;
   status: string;
@@ -115,14 +116,19 @@ export const POST = withErrorHandling(async (
     throw new Conflict("Run is already running");
   }
 
-  // find the chain file (saved in run dir at start, or in chains dir)
-  const chainInRun = join(runDir, "chain.json");
+  // find the chain file: the run's own snapshot first, the chains-dir copy
+  // second. A record without chainId must resolve through its own snapshot,
+  // never throw on join(chainsDir, undefined) (issue #142).
   const chainsDir = orgPath(nsId, orgId, "chains");
-  const chainInChains = join(chainsDir, run.chainId, "chain.json");
-  const chainPath = existsSync(chainInRun) ? chainInRun : existsSync(chainInChains) ? chainInChains : null;
+  const chainPath = resolveResumeChainPath({ runDir, chainId: run.chainId, chainsDir });
 
   if (!chainPath) {
-    throw new NotFound("Chain", run.chainId);
+    throw new NotFound(
+      "Chain",
+      typeof run.chainId === "string" && run.chainId
+        ? run.chainId
+        : `${runId} (run has no chainId and no chain.json in its run directory)`,
+    );
   }
 
   // analyze agent states
