@@ -22,6 +22,14 @@ import { parseRunnerEvent } from "../runner-v2/events";
 import { runnerEventIdentityMatches } from "../runner-v2/event-identity";
 import type { RunStatusReason } from "./run-record";
 
+/**
+ * Grace after a resume marks a run running again: the relaunched chain-runner
+ * needs time to create its sessions. Shared with the task reconciler so both
+ * reconcilers apply the same window (issue #142: the task reconciler stopped
+ * a resumed run 59s after resume because only the run reconciler honored it).
+ */
+export const RUN_RESUME_GRACE_MS = 120_000;
+
 interface ReconcilerContext {
   namespaceId: string;
   orgId: string;
@@ -524,7 +532,7 @@ export async function reconcileOrphanedRuns(options: ReconcileOptions = {}): Pro
       const resumedAt = run.resumedAt as string | undefined;
       if (resumedAt) {
         const resumeAge = now - new Date(resumedAt).getTime();
-        if (resumeAge < 120_000) continue; // skip, still starting up
+        if (resumeAge < RUN_RESUME_GRACE_MS) continue; // skip, still starting up
       }
 
       // check if any agent session is alive
@@ -573,7 +581,13 @@ export async function reconcileOrphanedRuns(options: ReconcileOptions = {}): Pro
         orphaned++;
         run.status = "stopped";
         run.completed = run.completed || new Date().toISOString();
-        run.statusReason = { actor: "reaper", reason: "no live agent session found after startup/handoff grace windows" };
+        // Same terminal-cause policy as the task reconciler (#142): a run that
+        // already carries a recorded terminal reason (the failure that led to
+        // the resume, e.g. a quality-gate rejection) keeps it. Overwriting it
+        // with the generic reaper reason is what erased the real cause when
+        // this reconciler raced the task reconciler stopping a resumed run.
+        run.statusReason = run.statusReason
+          ?? { actor: "reaper", reason: "no live agent session found after startup/handoff grace windows" };
         changed = true;
       }
     }
