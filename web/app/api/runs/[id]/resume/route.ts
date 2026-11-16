@@ -550,7 +550,7 @@ export const POST = withErrorHandling(async (
             // byte-for-byte the canonical persisted env; the session keys are
             // added on top and are not in the persisted whitelist, so the
             // launcher's idempotent re-persist still computes the same job.
-            env: { ...canonicalChildEnv, ...sessionEnv },
+            env: { ...canonicalChildEnv, ...sessionEnv } as NodeJS.ProcessEnv,
           }
         );
       } finally {

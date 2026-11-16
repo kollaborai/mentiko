@@ -537,6 +537,7 @@ export async function reconcileOrphanedRuns(options: ReconcileOptions = {}): Pro
     let finalRun: Record<string, unknown> | undefined;
     try {
       finalRun = updateRunJsonRecord(runFile, (currentRecord) => {
+        if (!currentRecord) throw new Error(`run.json vanished before reconciliation: ${runFile}`);
         const run = { ...currentRecord } as RunJson;
         const resumeAttempt = run.resumeAttempt as { outcome?: unknown } | undefined;
         if (resumeAttempt && typeof resumeAttempt === "object" && !Array.isArray(resumeAttempt)

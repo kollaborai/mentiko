@@ -112,7 +112,7 @@ describe("reconcileOrphanedRuns vs route-owned resume work", () => {
     const record = readRun("run-job");
     expect(record.status).toBe("running");
     expect(record.resumeAttempt.outcome).toBe("accepted");
-    const jobs = Object.values(record.runnerV2.launchJobs);
+    const jobs = Object.values(record.runnerV2.launchJobs) as Array<Record<string, any>>;
     expect(jobs).toHaveLength(1);
     expect(jobs[0].status).toBe("queued");
   });
@@ -142,7 +142,7 @@ describe("reconcileOrphanedRuns vs route-owned resume work", () => {
 
     const record = readRun("run-leased");
     expect(record.status).toBe("running");
-    expect(Object.values(record.runnerV2.launchJobs)[0].status).toBe("leased");
+    expect((Object.values(record.runnerV2.launchJobs) as Array<Record<string, any>>)[0].status).toBe("leased");
   });
 
   it("an EXPIRED lease no longer protects the run, but the attempt and job records are never removed", async () => {
@@ -171,7 +171,7 @@ describe("reconcileOrphanedRuns vs route-owned resume work", () => {
     expect(record.status).toBe("stopped");
     // the durable recovery evidence survived the stop
     expect(record.resumeAttempt.outcome).toBe("accepted");
-    expect(Object.values(record.runnerV2.launchJobs)[0].status).toBe("leased");
+    expect((Object.values(record.runnerV2.launchJobs) as Array<Record<string, any>>)[0].status).toBe("leased");
   });
 
   it("leaves a preparing resume attempt entirely alone (a resume is in flight under its claim)", async () => {
@@ -210,6 +210,6 @@ describe("reconcileOrphanedRuns vs route-owned resume work", () => {
     const record = readRun("run-race");
     expect(record.status).toBe("running");
     expect(record.resumeAttempt.outcome).toBe("accepted");
-    expect(Object.values(record.runnerV2.launchJobs)[0].status).toBe("queued");
+    expect((Object.values(record.runnerV2.launchJobs) as Array<Record<string, any>>)[0].status).toBe("queued");
   });
 });
