@@ -136,6 +136,24 @@ function runMigrations(db: Database.Database): void {
     `);
   }
 
+  // Issue #141: monotonic write counter. updated_at has millisecond precision
+  // (now()), so two writes inside one ms produce identical strings and a
+  // timestamp compare-and-set can be fooled. revision increments on every
+  // tasks-row write, so taskUpdateIfUnchanged can guard on it instead.
+  //
+  // Deliberately NOT a new _migrations row: the shared MAX(version) ladder is
+  // also used by task-attachment-store.ts, which already claims version 2. A
+  // versioned block here would make fresh DBs skip the attachments migration
+  // (or vice versa). An idempotent column check cannot collide with it; the
+  // IMMEDIATE transaction serializes concurrent first opens on the write lock.
+  const addRevisionColumn = db.transaction(() => {
+    const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
+    if (!cols.some((c) => c.name === "revision")) {
+      db.exec("ALTER TABLE tasks ADD COLUMN revision INTEGER NOT NULL DEFAULT 0");
+    }
+  });
+  addRevisionColumn.immediate();
+
   // Invariant repair (idempotent, runs once per process per namespace): any
   // task with no workspace_id whose parent IS workspace-scoped inherits the
   // parent's workspace_id. Backfills the orphan class produced by older
@@ -236,6 +254,7 @@ interface RawTaskRow {
   created_by: string;
   updated_at: string;
   closed_at: string | null;
+  revision: number;
 }
 
 function rowToTaskRecord(row: RawTaskRow): TaskRecord {
@@ -481,16 +500,15 @@ export function taskCreate(
   return taskGet(orgId, id, namespaceId)!;
 }
 
-export function taskUpdate(
-  orgId: string,
-  id: string,
-  fields: TaskUpdateFields,
-  namespaceId?: string
-): void {
-  const db = getDb(namespaceId);
-  const timestamp = now();
-  const sets: string[] = ["updated_at = ?"];
-  const params: unknown[] = [timestamp];
+// Shared SET-clause builder for every field-level tasks write (taskUpdate and
+// taskUpdateIfUnchanged use the same one so their handling cannot drift).
+// Excludes updated_at / revision — callers add those per write semantics.
+function buildTaskSetClause(fields: TaskUpdateFields, timestamp: string): {
+  sets: string[];
+  params: unknown[];
+} {
+  const sets: string[] = [];
+  const params: unknown[] = [];
 
   if (fields.title !== undefined) { sets.push("title = ?"); params.push(fields.title); }
   if (fields.description !== undefined) { sets.push("description = ?"); params.push(fields.description); }
@@ -510,8 +528,100 @@ export function taskUpdate(
   if (fields.due_at !== undefined) { sets.push("due_at = ?"); params.push(fields.due_at); }
   if (fields.workspace_id !== undefined) { sets.push("workspace_id = ?"); params.push(fields.workspace_id); }
 
+  return { sets, params };
+}
+
+export function taskUpdate(
+  orgId: string,
+  id: string,
+  fields: TaskUpdateFields,
+  namespaceId?: string
+): void {
+  const db = getDb(namespaceId);
+  const timestamp = now();
+  const { sets, params } = buildTaskSetClause(fields, timestamp);
+
   params.push(id, orgId);
-  db.prepare(`UPDATE tasks SET ${sets.join(", ")} WHERE id = ? AND org_id = ?`).run(...params);
+  db.prepare(`
+    UPDATE tasks
+    SET updated_at = ?, revision = revision + 1${sets.length ? ", " + sets.join(", ") : ""}
+    WHERE id = ? AND org_id = ?
+  `).run(timestamp, ...params);
+}
+
+/**
+ * Compare-and-set field update for issue #141 (rule 5, one writer per record):
+ * the write lands only if the row's revision still equals expectedRevision
+ * (the revision the caller read). Returns true iff exactly one row changed.
+ *
+ * Guards on `revision`, not updated_at: now() has millisecond precision, so
+ * two writes inside one millisecond produce identical updated_at strings and a
+ * timestamp guard would let a stale write through. revision increments on
+ * every tasks-row write (taskUpdate, taskClose, taskClaimMetadataKeyIfUnset,
+ * this function), so it can never collide across distinct writes.
+ *
+ * This PR adds the primitive only; no caller is converted yet.
+ */
+export function taskUpdateIfUnchanged(
+  orgId: string,
+  id: string,
+  expectedRevision: number,
+  fields: TaskUpdateFields,
+  namespaceId?: string
+): boolean {
+  const db = getDb(namespaceId);
+  const timestamp = now();
+  const { sets, params } = buildTaskSetClause(fields, timestamp);
+
+  params.push(id, orgId, expectedRevision);
+  const result = db.prepare(`
+    UPDATE tasks
+    SET updated_at = ?, revision = revision + 1${sets.length ? ", " + sets.join(", ") : ""}
+    WHERE id = ? AND org_id = ? AND revision = ?
+  `).run(timestamp, ...params);
+  return result.changes > 0;
+}
+
+/**
+ * Read-modify-write metadata loop for issue #141: reads the task, lets
+ * `mutate(currentMetadata, task)` compute the new metadata (return null for
+ * "no change wanted"), and writes it with taskUpdateIfUnchanged. On a lost
+ * race (another writer bumped revision in between) it re-reads and calls
+ * `mutate` again, up to maxAttempts (default 3). `mutate` must be pure with
+ * respect to the store — no reads or writes of its own — or the retry loop
+ * cannot reason about what changed. Returns { ok: true, task } after a landed
+ * write (or a null/no-change decision), { ok: false } when attempts run out
+ * or the task vanished. This PR adds the primitive only; no caller is
+ * converted yet.
+ */
+export function taskMutateMetadata(
+  orgId: string,
+  id: string,
+  mutate: (
+    currentMetadata: Record<string, unknown>,
+    task: TaskRecord
+  ) => Record<string, unknown> | null,
+  namespaceId?: string,
+  options?: { maxAttempts?: number }
+): { ok: boolean; task?: TaskRecord } {
+  const maxAttempts = options?.maxAttempts ?? 3;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const task = taskGet(orgId, id, namespaceId);
+    if (!task || task.revision === undefined) return { ok: false };
+
+    const next = mutate(task.metadata, task);
+    if (next === null) return { ok: true, task };
+
+    const landed = taskUpdateIfUnchanged(
+      orgId,
+      id,
+      task.revision,
+      { metadata: next },
+      namespaceId
+    );
+    if (landed) return { ok: true, task: taskGet(orgId, id, namespaceId)! };
+  }
+  return { ok: false };
 }
 
 export function taskClaimMetadataKeyIfUnset(
@@ -550,7 +660,7 @@ export function taskClaimMetadataKeyIfUnset(
 
   const result = db.prepare(`
     UPDATE tasks
-    SET metadata = ${metadataExpression}, updated_at = ?
+    SET metadata = ${metadataExpression}, updated_at = ?, revision = revision + 1
     WHERE id = ?
       AND org_id = ?
       AND ${predicates.join(" AND ")}
@@ -594,7 +704,7 @@ export function taskClose(
   const db = getDb(namespaceId);
   const timestamp = now();
   db.prepare(
-    "UPDATE tasks SET status = 'closed', closed_at = ?, updated_at = ? WHERE id = ? AND org_id = ?"
+    "UPDATE tasks SET status = 'closed', closed_at = ?, updated_at = ?, revision = revision + 1 WHERE id = ? AND org_id = ?"
   ).run(timestamp, timestamp, id, orgId);
 }
 
