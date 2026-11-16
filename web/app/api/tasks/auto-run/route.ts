@@ -26,6 +26,7 @@ import {
   removeRunFromSnapshot,
   type RunsSnapshot,
 } from "@/lib/runs/auto-run";
+import { consumeFailedResumeRetry } from "@/lib/runs/resume-retry-accounting";
 import { taskAddDep, taskClaimMetadataKeyIfUnset, taskGet, taskUpdate } from "@/lib/tasks/task-store";
 import { isTaskWorkMode, resolveTaskWorkMode } from "@/lib/tasks/work-mode";
 import { chainHasDeliveryAgent } from "@/lib/tasks/completion-audit-delivery-gate";
@@ -699,20 +700,25 @@ async function resumeExistingRun(
     // A failed resume is a transient auto-run failure like the others here:
     // consume one auto_run_retries so the shared MAX_AUTO_RUN_RETRIES ceiling
     // ends the every-minute resume loop instead of parking the task in
-    // `resuming` with no next step (#142).
-    try {
-      const currentMeta = taskMetadataForUpdate(orgId, taskId, namespaceId, metadata);
-      taskUpdate(orgId, taskId, {
-        metadata: {
-          ...currentMeta,
-          auto_run_retries: Math.min(
-            MAX_AUTO_RUN_RETRIES,
-            ((currentMeta.auto_run_retries as number) || 0) + 1,
-          ),
-          resume_last_error: resumeFailure.message,
-        },
-      }, namespaceId);
-    } catch { /* non-fatal: the next scan consumes the retry instead */ }
+    // `resuming` with no next step (#142). The accounting is fenced through
+    // the guarded write: a late response whose task has moved on (different
+    // last_run_id, closed, or already executing again) spends nothing.
+    const consumed = consumeFailedResumeRetry({
+      orgId,
+      taskId,
+      namespaceId,
+      runId,
+      message: resumeFailure.message,
+    });
+    if (!consumed) {
+      return {
+        triggered: false,
+        taskId,
+        runId,
+        action: "resume_superseded",
+        reason: `Task no longer owns run ${runId}; retry budget not consumed`,
+      };
+    }
     return {
       triggered: false,
       taskId,

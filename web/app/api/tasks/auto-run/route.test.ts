@@ -83,11 +83,37 @@ const mockTaskGet = jest.fn();
 const mockTaskUpdate = jest.fn();
 const mockTaskClaimMetadataKeyIfUnset = jest.fn();
 const mockTaskAddDep = jest.fn();
+// Faithful in-memory taskMutateMetadata: runs the caller's REAL mutate (the
+// guarded-write semantics live in the store's own suite) against the mocked
+// record and lands the write through mockTaskUpdate, so route assertions on
+// taskUpdate keep observing the metadata the route produced.
+const mockTaskMutateMetadata = jest.fn(
+  (
+    orgId: string,
+    id: string,
+    mutate: (
+      metadata: Record<string, unknown>,
+      task: Record<string, unknown> & { revision?: number }
+    ) => Record<string, unknown> | null,
+    namespaceId?: string
+  ) => {
+    const task = mockTaskGet(orgId, id, namespaceId);
+    if (!task) return { ok: false };
+    const meta = task.metadata && typeof task.metadata === "object"
+      ? (task.metadata as Record<string, unknown>)
+      : {};
+    const next = mutate(meta, task);
+    if (next === null) return { ok: true, task };
+    mockTaskUpdate(orgId, id, { metadata: next }, namespaceId);
+    return { ok: true, task: { ...task, metadata: next } };
+  }
+);
 jest.mock("@/lib/tasks/task-store", () => ({
   taskGet: (...args: unknown[]) => mockTaskGet(...args),
   taskUpdate: (...args: unknown[]) => mockTaskUpdate(...args),
   taskClaimMetadataKeyIfUnset: (...args: unknown[]) => mockTaskClaimMetadataKeyIfUnset(...args),
   taskAddDep: (...args: unknown[]) => mockTaskAddDep(...args),
+  taskMutateMetadata: (...args: unknown[]) => mockTaskMutateMetadata(...args as Parameters<typeof mockTaskMutateMetadata>),
 }));
 
 const mockLocateTaskRun = jest.fn();
@@ -920,6 +946,55 @@ describe("POST /api/tasks/auto-run", () => {
       },
       "default",
     );
+  });
+
+  it("does not consume the budget when a late failed-resume response arrives after the task moved to a newer run", async () => {
+    let meta: Record<string, unknown> = {
+      auto_run: true,
+      chain_id: "release-review",
+      last_run_id: "run-late",
+      last_run_status: "stopped",
+      auto_run_retries: 1,
+    };
+    mockTaskGet.mockImplementation(() => ({
+      id: "TASK-LATE",
+      title: "Late response",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      revision: 4,
+      metadata: meta,
+    }));
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      taskId: "TASK-LATE",
+      chainId: "release-review",
+      status: "stopped",
+      agents: [
+        { id: "planner", status: "complete" },
+        { id: "reviewer", status: "stopped" },
+      ],
+    }));
+    (global.fetch as jest.Mock).mockImplementation(async () => {
+      // While the resume request is in flight, a competing scan starts a
+      // NEWER run; its execution-start write moves the task's last_run_id
+      // before our failure response is processed.
+      meta = { ...meta, last_run_id: "run-newer", last_run_status: "running" };
+      return jsonResponse({ error: { message: "Resume rejected by the runner" } }, 500);
+    });
+
+    const res = await POST(makeRequest({ taskId: "TASK-LATE" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      triggered: false,
+      taskId: "TASK-LATE",
+      runId: "run-late",
+      action: "resume_superseded",
+    });
+    expect(mockTaskUpdate).not.toHaveBeenCalled();
+    expect(meta.auto_run_retries).toBe(1); // budget untouched
   });
 
   it("counts a rejected resume fetch (transport error) against auto_run_retries", async () => {
