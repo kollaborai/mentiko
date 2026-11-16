@@ -51,6 +51,7 @@ import { upsertRoutedLaunchJobRecord, type RoutedLaunchJob } from "@/lib/runner-
 import { taskGet } from "@/lib/tasks/task-store";
 import {
   appendResumeHistory,
+  RESUME_SOURCE_HEADER,
   currentResumeSeries,
   newResumeAttempt,
   projectConfirmedResumeFailure,
@@ -59,9 +60,6 @@ import {
 } from "@/lib/runs/resume-attempt";
 
 export const dynamic = "force-dynamic";
-
-/** Header the auto-run scanner sends so the route can tell automatic attempts (which debit task retries when they fail) from manual ones. */
-export const RESUME_SOURCE_HEADER = "x-mentiko-resume-source";
 
 interface RunAgent {
   id: string;

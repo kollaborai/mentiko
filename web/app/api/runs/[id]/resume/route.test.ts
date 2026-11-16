@@ -92,7 +92,8 @@ jest.mock("@/lib/runs/run-process", () => ({
 
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { POST, RESUME_SOURCE_HEADER } from "./route";
+import { POST } from "./route";
+import { RESUME_SOURCE_HEADER } from "@/lib/runs/resume-attempt";
 // REAL sqlite task store, isolated under the mocked config globalRoot.
 import { closeAll, taskCreate, taskGet } from "@/lib/tasks/task-store";
 

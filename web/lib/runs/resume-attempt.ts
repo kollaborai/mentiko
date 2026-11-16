@@ -14,6 +14,14 @@ import { taskMutateMetadata } from "@/lib/tasks/task-store";
 
 export type ResumeAttemptOutcome = "preparing" | "failed" | "accepted";
 
+/**
+ * Header the auto-run scanner sends on its resume fetch so the route can tell
+ * automatic attempts (which debit task retries on confirmed failure) from
+ * manual ones (which never debit).
+ */
+export const RESUME_SOURCE_HEADER = "x-mentiko-resume-source";
+export const RESUME_SOURCE_AUTO_RUN = "auto-run";
+
 export interface ResumeAttemptRecord {
   /** Unique id of this attempt; stable across crash recovery of a preparing attempt. */
   id: string;
