@@ -46,7 +46,13 @@ export const POST = requirePermission("manage_tasks")(
         metadata: {
           ...epicMeta,
           auto_run: body.auto_run,
-          ...(body.auto_run ? { auto_run_retries: 0, last_run_error: undefined, resume_last_error: undefined } : {}),
+          ...(body.auto_run ? {
+            auto_run_retries: 0,
+            last_run_error: undefined,
+            resume_last_error: undefined,
+            resume_attempt_id: undefined,
+            resume_attempt_run_id: undefined,
+          } : {}),
         },
       }, namespaceId);
 
@@ -64,7 +70,13 @@ export const POST = requirePermission("manage_tasks")(
           metadata: {
             ...childMeta,
             auto_run: body.auto_run,
-            ...(body.auto_run ? { auto_run_retries: 0, last_run_error: undefined, resume_last_error: undefined } : {}),
+            ...(body.auto_run ? {
+              auto_run_retries: 0,
+              last_run_error: undefined,
+              resume_last_error: undefined,
+              resume_attempt_id: undefined,
+              resume_attempt_run_id: undefined,
+            } : {}),
           },
         }, namespaceId);
         updated.push(child.id);

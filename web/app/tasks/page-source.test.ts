@@ -49,4 +49,24 @@ describe("tasks page source contract", () => {
     expect(resets).toBeGreaterThanOrEqual(4);
     expect(cleared).toBeGreaterThanOrEqual(3); // assign-chain, toggle fallback, retry-task reset
   });
+
+  it("retires the stamped resume attempt id at every retry reset (#142 round 4: an in-flight response cannot charge the fresh series)", () => {
+    // every server PATCH that resets the budget must also null the stamped
+    // attempt identity, or a late failure response from before the reset
+    // still matches the (unchanged) run id and charges the new series.
+    const cleared = source.split("resume_attempt_id: null").length - 1;
+    expect(cleared).toBeGreaterThanOrEqual(3); // assign-chain, toggle fallback, retry-task reset
+  });
+
+  it("clears the displayed exhausted state optimistically at every retry reset (#142 review P2)", () => {
+    // the detail header reads task.autoRun and task.metadata, not
+    // chainBinding: after Retry task / assign / toggle-enable the page must
+    // clear those too, or the stale "Auto paused 3/3" banner and stale resume
+    // reason stay on screen until a detail refresh.
+    expect(source).toContain("const applyRetryResetToTask = useCallback");
+    const uses = source.split("applyRetryResetToTask(selected.id)").length - 1;
+    expect(uses).toBeGreaterThanOrEqual(3); // assign-chain, toggle-enable, retry-task reset
+    expect(source).toContain("retriesExhausted: false");
+    expect(source).toContain("resume_last_error: undefined");
+  });
 });

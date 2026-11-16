@@ -501,6 +501,30 @@ function TasksPageContent() {
     []
   );
 
+  // Optimistic retry-reset for the TASK record itself (#142 review P2): the
+  // detail header reads task.autoRun (retries/exhausted) and
+  // task.metadata.resume_last_error, not chainBinding — so a reset that only
+  // updates the binding leaves the stale exhausted state on screen until a
+  // detail refresh. Clear exactly the fields the server PATCH clears.
+  const applyRetryResetToTask = useCallback((taskId: string) => {
+    const clear = (t: Task): Task => ({
+      ...t,
+      autoRun: t.autoRun
+        ? { ...t.autoRun, retries: 0, retriesExhausted: false, willAdmit: t.autoRun.enabled && !t.autoRun.userPaused && !t.autoRun.generationStopped && !t.completed }
+        : t.autoRun,
+      metadata: t.metadata
+        ? {
+            ...t.metadata,
+            auto_run_retries: 0,
+            last_run_error: undefined,
+            resume_last_error: undefined,
+          }
+        : t.metadata,
+    });
+    setTasks((items) => items.map((item) => (item.id === taskId ? clear(item) : item)));
+    setSelected((prev) => (prev?.id === taskId ? clear(prev) : prev));
+  }, []);
+
   const handleToggleComplete = useCallback(
     async (task: Task) => {
       const id = encodeURIComponent(task.id);
@@ -555,9 +579,12 @@ function TasksPageContent() {
         auto_run_retries: 0,
         // nulls, not undefined: the server PATCH merges metadata, and
         // JSON.stringify drops undefined keys, so undefined would keep the
-        // stale errors alive (#142 review P2).
+        // stale errors alive (#142 review P2). The stamped resume-attempt
+        // identity retires too (review round 4).
         last_run_error: null,
         resume_last_error: null,
+        resume_attempt_id: null,
+        resume_attempt_run_id: null,
       };
       await fetchWithNamespace(`/api/tasks/${id}${wsParam}`, {
         method: "PATCH",
@@ -570,9 +597,10 @@ function TasksPageContent() {
         auto_run: true,
         auto_run_retries: 0,
       }));
+      applyRetryResetToTask(selected.id);
       fetchOpStates();
     },
-    [selected, wsParam, fetchWithNamespace, updateTaskBinding, fetchOpStates]
+    [selected, wsParam, fetchWithNamespace, updateTaskBinding, applyRetryResetToTask, fetchOpStates]
   );
 
   const handleRemoveChain = useCallback(async () => {
@@ -658,7 +686,13 @@ function TasksPageContent() {
         const metadata = {
           ...selected.chainBinding,
           auto_run: autoRun,
-          ...(autoRun ? { auto_run_retries: 0, last_run_error: null, resume_last_error: null } : {}),
+          ...(autoRun ? {
+            auto_run_retries: 0,
+            last_run_error: null,
+            resume_last_error: null,
+            resume_attempt_id: null,
+            resume_attempt_run_id: null,
+          } : {}),
         };
         await fetchWithNamespace(`/api/tasks/${id}${wsParam}`, {
           method: "PATCH",
@@ -676,6 +710,7 @@ function TasksPageContent() {
             }
           : binding
       );
+      if (autoRun) applyRetryResetToTask(selected.id);
 
       // trigger auto-run scan so ready tasks start immediately
       if (autoRun) {
@@ -687,7 +722,7 @@ function TasksPageContent() {
       }
       fetchOpStates();
     },
-    [selected, wsParam, fetchWithNamespace, updateTaskBinding, fetchOpStates]
+    [selected, wsParam, fetchWithNamespace, updateTaskBinding, applyRetryResetToTask, fetchOpStates]
   );
 
   const handleResetAutoRunAttempts = useCallback(async () => {
@@ -698,9 +733,14 @@ function TasksPageContent() {
       auto_run: true,
       auto_run_retries: 0,
       // nulls survive the server-side metadata merge (undefined keys are
-      // dropped by JSON.stringify and the stale chainBinding copy would win)
+      // dropped by JSON.stringify and the stale chainBinding copy would win).
+      // The stamped resume-attempt identity retires too, so an in-flight
+      // failure response from before the reset cannot charge the fresh
+      // series (#142 review round 4).
       last_run_error: null,
       resume_last_error: null,
+      resume_attempt_id: null,
+      resume_attempt_run_id: null,
     };
 
     await fetchWithNamespace(`/api/tasks/${id}${wsParam}`, {
@@ -720,6 +760,9 @@ function TasksPageContent() {
           }
         : binding
     );
+    // the header reads task.autoRun / task.metadata, not chainBinding — clear
+    // those too or the exhausted banner outlives the reset (#142 review P2)
+    applyRetryResetToTask(selected.id);
 
     await fetchWithNamespace("/api/tasks/auto-run", {
       method: "POST",
@@ -727,7 +770,7 @@ function TasksPageContent() {
       body: JSON.stringify({}),
     }).catch(() => {});
     fetchOpStates();
-  }, [selected, wsParam, fetchWithNamespace, updateTaskBinding, fetchOpStates]);
+  }, [selected, wsParam, fetchWithNamespace, updateTaskBinding, applyRetryResetToTask, fetchOpStates]);
 
   const handleToggleAutoRunPause = useCallback(
     async (paused: boolean) => {

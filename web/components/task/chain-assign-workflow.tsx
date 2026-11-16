@@ -1086,9 +1086,13 @@ export function ChainAssignWorkflow({
                 generation_rejection_fingerprints: null,
                 generation_last_error: null,
                 // a fresh attempt must not wear the previous run's or the
-                // previous resume loop's error as its current reason (#142)
+                // previous resume loop's error as its current reason (#142);
+                // the stamped resume-attempt identity retires too, so an
+                // in-flight failure response cannot charge the fresh series
                 last_run_error: null,
                 resume_last_error: null,
+                resume_attempt_id: null,
+                resume_attempt_run_id: null,
                 auto_run_retries: 0,
               };
               await fetchWithNamespace(`/api/tasks/${encodeURIComponent(task.id)}${wsParam}`, {

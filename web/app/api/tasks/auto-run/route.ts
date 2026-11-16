@@ -26,7 +26,7 @@ import {
   removeRunFromSnapshot,
   type RunsSnapshot,
 } from "@/lib/runs/auto-run";
-import { consumeFailedResumeRetry } from "@/lib/runs/resume-retry-accounting";
+import { consumeFailedResumeRetry, stampResumeAttempt } from "@/lib/runs/resume-retry-accounting";
 import { taskAddDep, taskClaimMetadataKeyIfUnset, taskGet, taskUpdate } from "@/lib/tasks/task-store";
 import { isTaskWorkMode, resolveTaskWorkMode } from "@/lib/tasks/work-mode";
 import { chainHasDeliveryAgent } from "@/lib/tasks/completion-audit-delivery-gate";
@@ -649,6 +649,32 @@ async function resumeExistingRun(
   request: NextRequest,
   metadata: Record<string, unknown>
 ): Promise<TriggerResult> {
+  // Give this resume attempt an identity BEFORE the request leaves: the
+  // failure accounting charges budget only against the attempt id that is
+  // still current when the response lands, so a late response from an
+  // earlier attempt (or one that outlived a "Retry task" reset) cannot
+  // spend the task's budget (#142 review round 4 P1). If the stamp cannot
+  // land, do not send the resume in this scan.
+  const stamp = stampResumeAttempt({ orgId, taskId, namespaceId, runId });
+  if (!stamp.ok) {
+    if (stamp.stale) {
+      return {
+        triggered: false,
+        taskId,
+        runId,
+        action: "resume_superseded",
+        reason: `Task no longer owns run ${runId}; resume not sent`,
+      };
+    }
+    return {
+      triggered: false,
+      taskId,
+      runId,
+      action: "resume_accounting_failed",
+      reason: `Could not stamp the resume attempt for run ${runId}: ${stamp.error}; resume not sent`,
+    };
+  }
+
   let resumeFailure: { message: string; status?: number } | null = null;
   try {
     const resumeRes = await fetch(internalApiUrl(`/api/runs/${encodeURIComponent(runId)}/resume`, request.url), {
@@ -701,22 +727,36 @@ async function resumeExistingRun(
     // consume one auto_run_retries so the shared MAX_AUTO_RUN_RETRIES ceiling
     // ends the every-minute resume loop instead of parking the task in
     // `resuming` with no next step (#142). The accounting is fenced through
-    // the guarded write: a late response whose task has moved on (different
-    // last_run_id, closed, or already executing again) spends nothing.
-    const consumed = consumeFailedResumeRetry({
+    // the guarded write AND the stamped attempt id: a late response whose
+    // task has moved on (different last_run_id, closed, already executing
+    // again, a newer attempt stamped, or the series reset) spends nothing.
+    const accounted = consumeFailedResumeRetry({
       orgId,
       taskId,
       namespaceId,
       runId,
+      attemptId: stamp.attemptId,
       message: resumeFailure.message,
     });
-    if (!consumed) {
+    if (accounted.outcome === "superseded") {
       return {
         triggered: false,
         taskId,
         runId,
         action: "resume_superseded",
         reason: `Task no longer owns run ${runId}; retry budget not consumed`,
+      };
+    }
+    if (accounted.outcome === "accounting_failed") {
+      // Truthful reporting (#142 review P2): a store failure or exhausted
+      // compare-and-set is NOT a superseded response; say what actually
+      // happened so a persistently failing store is visible, not silent.
+      return {
+        triggered: false,
+        taskId,
+        runId,
+        action: "resume_accounting_failed",
+        reason: `Failed to record the failed resume attempt for run ${runId}: ${accounted.error}`,
       };
     }
     return {

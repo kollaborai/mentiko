@@ -85,8 +85,10 @@ const mockTaskClaimMetadataKeyIfUnset = jest.fn();
 const mockTaskAddDep = jest.fn();
 // Faithful in-memory taskMutateMetadata: runs the caller's REAL mutate (the
 // guarded-write semantics live in the store's own suite) against the mocked
-// record and lands the write through mockTaskUpdate, so route assertions on
-// taskUpdate keep observing the metadata the route produced.
+// record and lands the write through mockTaskUpdate AND on the record itself
+// (so a later taskGet re-read — e.g. the stamped resume attempt id the
+// accounting checks — observes it, like the real store would), keeping route
+// assertions on taskUpdate observing the metadata the route produced.
 const mockTaskMutateMetadata = jest.fn(
   (
     orgId: string,
@@ -105,6 +107,7 @@ const mockTaskMutateMetadata = jest.fn(
     const next = mutate(meta, task);
     if (next === null) return { ok: true, task };
     mockTaskUpdate(orgId, id, { metadata: next }, namespaceId);
+    task.metadata = next; // persist on the record the mock serves
     return { ok: true, task: { ...task, metadata: next } };
   }
 );
@@ -843,7 +846,7 @@ describe("POST /api/tasks/auto-run", () => {
   });
 
   it("does not consume a retry when a 409 conflict means another scan resumed the run", async () => {
-    mockTaskGet.mockReturnValue({
+    const raceFixture = {
       id: "TASK-RACE",
       title: "Concurrent resume",
       status: "open",
@@ -856,7 +859,8 @@ describe("POST /api/tasks/auto-run", () => {
         last_run_status: "stopped",
         auto_run_retries: 1,
       },
-    });
+    };
+    mockTaskGet.mockReturnValue(raceFixture);
     mockExistsSync.mockReturnValue(true);
     mockReadFileSync.mockReturnValue(JSON.stringify({
       taskId: "TASK-RACE",
@@ -893,7 +897,12 @@ describe("POST /api/tasks/auto-run", () => {
       action: "resume_in_progress",
       reason: "Run is already running",
     });
-    expect(mockTaskUpdate).not.toHaveBeenCalled();
+    // the attempt STAMP rewrites metadata (carrying the unchanged retries
+    // value), but the budget itself is untouched: retries and resume error
+    // keep their pre-scan values.
+    const afterMeta = raceFixture.metadata as Record<string, unknown>;
+    expect(afterMeta.auto_run_retries).toBe(1);
+    expect(afterMeta.resume_last_error).toBeUndefined();
   });
 
   it("consumes a retry when a 409 conflict leaves the run still resumable (stale conflict)", async () => {
@@ -993,8 +1002,150 @@ describe("POST /api/tasks/auto-run", () => {
       runId: "run-late",
       action: "resume_superseded",
     });
-    expect(mockTaskUpdate).not.toHaveBeenCalled();
+    // the attempt STAMP rewrites metadata, but the budget value is untouched.
     expect(meta.auto_run_retries).toBe(1); // budget untouched
+    expect(meta.resume_last_error).toBeUndefined();
+  });
+
+  it("does not consume the budget when a newer scan re-stamped the attempt while an older response was in flight", async () => {
+    let meta: Record<string, unknown> = {
+      auto_run: true,
+      chain_id: "release-review",
+      last_run_id: "run-overlap",
+      last_run_status: "stopped",
+      auto_run_retries: 0,
+    };
+    mockTaskGet.mockImplementation(() => ({
+      id: "TASK-OVERLAP",
+      title: "Overlapping attempts",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      revision: 2,
+      metadata: meta,
+    }));
+    mockTaskUpdate.mockImplementation((_org: string, _id: string, patch: { metadata?: Record<string, unknown> }) => {
+      meta = { ...meta, ...(patch.metadata || {}) };
+    });
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      taskId: "TASK-OVERLAP",
+      chainId: "release-review",
+      status: "stopped",
+      agents: [
+        { id: "planner", status: "complete" },
+        { id: "reviewer", status: "stopped" },
+      ],
+    }));
+    (global.fetch as jest.Mock).mockImplementation(async () => {
+      // a NEWER scan stamps its own attempt id while our response is in
+      // flight; the run id and open status still match ours.
+      meta = { ...meta, resume_attempt_id: "resume-newer-scan" };
+      return jsonResponse({ error: { message: "Resume rejected by the runner" } }, 500);
+    });
+
+    const res = await POST(makeRequest({ taskId: "TASK-OVERLAP" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      triggered: false,
+      taskId: "TASK-OVERLAP",
+      runId: "run-overlap",
+      action: "resume_superseded",
+    });
+    expect(meta.auto_run_retries).toBe(0); // fresh series not charged
+  });
+
+  it("does not send the resume when the attempt stamp cannot land (store failure reported truthfully)", async () => {
+    mockTaskGet.mockReturnValue({
+      id: "TASK-STAMP-FAIL",
+      title: "Stamp store failure",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      metadata: {
+        auto_run: true,
+        chain_id: "release-review",
+        last_run_id: "run-stamp-fail",
+        last_run_status: "stopped",
+        auto_run_retries: 1,
+      },
+    });
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      taskId: "TASK-STAMP-FAIL",
+      chainId: "release-review",
+      status: "stopped",
+      agents: [
+        { id: "planner", status: "complete" },
+        { id: "reviewer", status: "stopped" },
+      ],
+    }));
+    mockTaskMutateMetadata.mockReturnValueOnce({ ok: false });
+
+    const res = await POST(makeRequest({ taskId: "TASK-STAMP-FAIL" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      triggered: false,
+      taskId: "TASK-STAMP-FAIL",
+      runId: "run-stamp-fail",
+      action: "resume_accounting_failed",
+    });
+    expect(body.data.reason).toContain("Could not stamp the resume attempt");
+    expect(global.fetch).not.toHaveBeenCalled(); // no resume sent this scan
+  });
+
+  it("does not send the resume when the task no longer owns the run at stamp time", async () => {
+    mockTaskGet.mockReturnValue({
+      id: "TASK-STAMP-STALE",
+      title: "Stamp stale",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      metadata: {
+        auto_run: true,
+        chain_id: "release-review",
+        last_run_id: "run-stamp-stale",
+        last_run_status: "stopped",
+        auto_run_retries: 1,
+      },
+    });
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      taskId: "TASK-STAMP-STALE",
+      chainId: "release-review",
+      status: "stopped",
+      agents: [
+        { id: "planner", status: "complete" },
+        { id: "reviewer", status: "stopped" },
+      ],
+    }));
+    // the guarded stamp sees a CLOSED task (the row changed between the
+    // gate's read and the stamp): stale, no resume sent.
+    mockTaskMutateMetadata.mockImplementationOnce(
+      (orgId: string, id: string, mutate: (m: Record<string, unknown>, t: Record<string, unknown>) => Record<string, unknown> | null, nsId?: string) => {
+        const task = mockTaskGet(orgId, id, nsId);
+        const closed = { ...task, status: "done" };
+        mutate((closed.metadata || {}) as Record<string, unknown>, closed);
+        return { ok: true, task: closed };
+      }
+    );
+
+    const res = await POST(makeRequest({ taskId: "TASK-STAMP-STALE" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      triggered: false,
+      taskId: "TASK-STAMP-STALE",
+      runId: "run-stamp-stale",
+      action: "resume_superseded",
+    });
+    expect(body.data.reason).toContain("resume not sent");
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 
   it("counts a rejected resume fetch (transport error) against auto_run_retries", async () => {
