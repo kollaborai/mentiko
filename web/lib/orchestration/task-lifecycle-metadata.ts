@@ -68,8 +68,10 @@ export function executionStartedLifecycleMetadata(input: {
     last_run_error: undefined,
     // A confirmed execution start supersedes any recorded resume error for
     // this run (#142). null, not undefined: undefined is dropped by the
-    // JSON round-trip and the stale error would survive the merge.
+    // JSON round-trip and the stale error would survive the merge. The same
+    // goes for the bounded transport-loss clock.
     resume_last_error: null,
+    resume_pending_since: null,
     last_run_completed: null,
     ...(input.chainId ? { chain_id: input.chainId } : {}),
   };

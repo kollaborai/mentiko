@@ -233,8 +233,8 @@ describe("POST /api/tasks/auto-run", () => {
     mockGetAutoRunCandidates.mockReturnValue([]);
     mockTaskClaimMetadataKeyIfUnset.mockReturnValue(true);
     mockTaskMutateMetadata.mockImplementation(
-      (_orgId: string, _id: string, mutate: (m: Record<string, unknown>) => Record<string, unknown> | null) =>
-        ({ ok: true, task: { metadata: mutate({}) ?? {} } }),
+      (_orgId: string, _id: string, mutate: (m: Record<string, unknown>, task: { status: string }) => Record<string, unknown> | null) =>
+        ({ ok: true, task: { metadata: mutate({}, { status: "open" }) ?? {} } }),
     );
     mockExistsSync.mockReturnValue(false);
     mockReaddirSync.mockReturnValue([]);
@@ -2547,7 +2547,15 @@ describe("POST /api/tasks/auto-run", () => {
       reason: expect.stringContaining("next scan retries the same attempt"),
     });
     expect(mockTaskUpdate).not.toHaveBeenCalled();
-    expect(mockTaskMutateMetadata).not.toHaveBeenCalled();
+    // The bounded unknown-pause clock starts (#142 r2 P2): one guarded write
+    // records resume_pending_since — never a pause, never a debit.
+    expect(mockTaskMutateMetadata).toHaveBeenCalledTimes(1);
+    const mutatePending = mockTaskMutateMetadata.mock.calls[0][2] as (
+      metadata: Record<string, unknown>, task: { status: string }
+    ) => Record<string, unknown> | null;
+    const next = mutatePending({ last_run_id: "run-outcome" }, { status: "open" }) as Record<string, unknown>;
+    expect(typeof next.resume_pending_since).toBe("string");
+    expect(next.auto_run_paused).toBeUndefined();
   });
 
   it("a non-ok response leaving the attempt preparing pauses dispatch visibly without a debit", async () => {
@@ -2568,8 +2576,10 @@ describe("POST /api/tasks/auto-run", () => {
       action: "resume_stuck_preparing",
     });
     expect(mockTaskMutateMetadata).toHaveBeenCalledTimes(1);
-    const mutate = mockTaskMutateMetadata.mock.calls[0][2] as (metadata: Record<string, unknown>) => Record<string, unknown>;
-    const paused = mutate({ last_run_id: "run-outcome" });
+    const mutate = mockTaskMutateMetadata.mock.calls[0][2] as (
+      metadata: Record<string, unknown>, task: { status: string }
+    ) => Record<string, unknown>;
+    const paused = mutate({ last_run_id: "run-outcome" }, { status: "open" });
     expect(paused).toMatchObject({
       auto_run_paused: true,
       auto_run_paused_reason: expect.stringContaining("still preparing"),
@@ -2691,6 +2701,66 @@ describe("POST /api/tasks/auto-run", () => {
     expect(body.data).toMatchObject({ triggered: true, action: "chain_resume" });
     expect(mockTaskUpdate).not.toHaveBeenCalled();
     expect(mockTaskUpdateIfUnchanged).not.toHaveBeenCalled();
+  });
+
+  // ---- bounded unknown pause for repeated transport loss (issue #142 r2 P2) ----
+
+  function preparingTransportLossFixture(metadata: Record<string, unknown>) {
+    mockTaskGet.mockReturnValue(resumableTaskFixture(metadata));
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(resumableRunRecord({
+      resumeAttempt: { id: "attempt-1", series: 0, taskId: "TASK-RESUME", outcome: "preparing", automatic: true },
+    }));
+    (global.fetch as jest.Mock).mockRejectedValue(new Error("ECONNREFUSED"));
+  }
+
+  it("the first stuck-preparing transport loss starts a bounded clock instead of pausing", async () => {
+    preparingTransportLossFixture({});
+    await POST(makeRequest({ taskId: "TASK-RESUME" }) as never);
+
+    expect(mockTaskMutateMetadata).toHaveBeenCalledTimes(1);
+    const mutate = mockTaskMutateMetadata.mock.calls[0][2] as (
+      metadata: Record<string, unknown>, task: { status: string }
+    ) => Record<string, unknown> | null;
+    const next = mutate({ last_run_id: "run-outcome" }, { status: "open" }) as Record<string, unknown>;
+    expect(typeof next.resume_pending_since).toBe("string");
+    expect(next.auto_run_paused).toBeUndefined();
+  });
+
+  it("transport loss stuck preparing past the bound pauses visibly, without a debit", async () => {
+    preparingTransportLossFixture({
+      resume_pending_since: new Date(Date.now() - 11 * 60_000).toISOString(),
+    });
+    const res = await POST(makeRequest({ taskId: "TASK-RESUME" }) as never);
+    const body = await res.json();
+
+    expect(body.data).toMatchObject({ action: "resume_pending" });
+    expect(mockTaskMutateMetadata).toHaveBeenCalledTimes(1);
+    const mutate = mockTaskMutateMetadata.mock.calls[0][2] as (
+      metadata: Record<string, unknown>, task: { status: string }
+    ) => Record<string, unknown> | null;
+    const next = mutate({
+      last_run_id: "run-outcome",
+      resume_pending_since: new Date(Date.now() - 11 * 60_000).toISOString(),
+    }, { status: "open" }) as Record<string, unknown>;
+    expect(next.auto_run_paused).toBe(true);
+    expect(next.auto_run_paused_reason).toContain("stayed preparing");
+    expect(next.auto_run_paused_reason).toContain("without consuming a retry");
+    expect(next.resume_pending_since).toBeNull();
+  });
+
+  it("a late unknown never pauses a task whose series moved on (reset fence)", async () => {
+    preparingTransportLossFixture({
+      resume_series: 2,
+      resume_pending_since: new Date(Date.now() - 11 * 60_000).toISOString(),
+    });
+    await POST(makeRequest({ taskId: "TASK-RESUME" }) as never);
+
+    expect(mockTaskMutateMetadata).toHaveBeenCalledTimes(1);
+    const mutate = mockTaskMutateMetadata.mock.calls[0][2] as (
+      metadata: Record<string, unknown>, task: { status: string }
+    ) => Record<string, unknown> | null;
+    expect(mutate({ last_run_id: "run-outcome", resume_series: 2 }, { status: "open" })).toBeNull();
   });
 
   it("an unfenced accepted projection lands as ONE guarded status-and-metadata write", async () => {

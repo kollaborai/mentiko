@@ -735,7 +735,9 @@ function pauseTaskForUnknownResumeOutcome(input: {
   runId: string;
   detail: string;
 }): boolean {
-  const result = taskMutateMetadata(input.orgId, input.taskId, (metadata) => {
+  const result = taskMutateMetadata(input.orgId, input.taskId, (metadata, task) => {
+    // A late unknown must never pause a task that closed or moved on.
+    if (isTerminalTaskStatus(task.status)) return null;
     const scope = metadata.task_run_scope;
     const scopeRunId = scope && typeof scope === "object" && !Array.isArray(scope)
       ? (scope as { runId?: unknown }).runId
@@ -745,10 +747,56 @@ function pauseTaskForUnknownResumeOutcome(input: {
     }
     return {
       ...metadata,
+      resume_pending_since: null,
       auto_run_paused: true,
       auto_run_paused_reason:
         `resume outcome unknown for run ${input.runId}: ${input.detail}. `
         + "Auto-run paused so the loop cannot spin silently; use Retry task after repairing the run record or route.",
+    };
+  }, input.namespaceId);
+  return result.ok;
+}
+
+/**
+ * Bounded unknown pause for repeated transport loss while the durable outcome
+ * stays preparing (issue #142 round 2, P2): the same attempt is retried each
+ * scan, so a permanently unreachable route would otherwise loop silently
+ * forever. The first stuck scan starts a clock (resume_pending_since) instead
+ * of pausing; once the clock exceeds the bound, dispatch pauses visibly —
+ * still no attempt outcome, still no retry debit. Guarded by run identity and
+ * the recorded series so a late unknown cannot pause a reset task, and never
+ * pauses a closed task.
+ */
+function pauseTaskIfResumePendingBeyondBound(input: {
+  orgId: string;
+  namespaceId: string;
+  taskId: string;
+  runId: string;
+  series?: number;
+  now?: Date;
+}): boolean {
+  const boundMs = 10 * 60_000;
+  const result = taskMutateMetadata(input.orgId, input.taskId, (metadata, task) => {
+    if (isTerminalTaskStatus(task.status)) return null;
+    if (!taskPointsAtRun(metadata, input.taskId, input.runId)) return null;
+    if (input.series !== undefined && currentResumeSeries(metadata) !== input.series) return null;
+    const now = input.now || new Date();
+    const sinceMs = typeof metadata.resume_pending_since === "string"
+      ? Date.parse(metadata.resume_pending_since)
+      : NaN;
+    if (!Number.isFinite(sinceMs)) {
+      // start the bounded clock; this scan does not pause
+      return { ...metadata, resume_pending_since: now.toISOString() };
+    }
+    if (now.getTime() - sinceMs < boundMs) return null;
+    return {
+      ...metadata,
+      resume_pending_since: null,
+      auto_run_paused: true,
+      auto_run_paused_reason:
+        `resume attempt for run ${input.runId} stayed preparing across repeated scans for over `
+        + `${Math.round(boundMs / 60_000)} minutes (transport loss against an unreachable or stuck resume route). `
+        + "Auto-run paused without consuming a retry; use Retry task after the route is reachable again.",
     };
   }, input.namespaceId);
   return result.ok;
@@ -894,7 +942,16 @@ async function resumeExistingRun(
   if (recorded.readable && recorded.outcome === "preparing") {
     // Transport loss while the attempt is (or was) in flight: unknown, not a
     // failure. The next scan retries the SAME route/recovery path, which
-    // finishes the same attempt under its claim; never a debit.
+    // finishes the same attempt under its claim; never a debit. Repeated loss
+    // is bounded (P2): after the clock exceeds the bound the task pauses
+    // visibly instead of looping silently forever.
+    pauseTaskIfResumePendingBeyondBound({
+      orgId,
+      namespaceId,
+      taskId,
+      runId,
+      series: recorded.series,
+    });
     return {
       triggered: false,
       taskId,
