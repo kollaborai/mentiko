@@ -35,6 +35,7 @@ jest.mock("@/lib/pty/pty-client", () => ({
 
 import { reconcileOrphanedRuns } from "@/lib/runs/run-reconciler";
 import { upsertRoutedLaunchJobRecord } from "@/lib/runner-v2/launch-job";
+import { closeAll, taskCreate, taskGet } from "@/lib/tasks/task-store";
 
 const TEST_ROOT = "/tmp/mentiko-reaper-142-test";
 const RUNS = join(TEST_ROOT, "runs");
@@ -88,6 +89,7 @@ beforeEach(() => {
 
 afterAll(() => {
   rmSync(TEST_ROOT, { recursive: true, force: true });
+  closeAll();
 });
 
 describe("reconcileOrphanedRuns vs route-owned resume work", () => {
@@ -212,4 +214,129 @@ describe("reconcileOrphanedRuns vs route-owned resume work", () => {
     expect(record.resumeAttempt.outcome).toBe("accepted");
     expect((Object.values(record.runnerV2.launchJobs) as Array<Record<string, any>>)[0].status).toBe("queued");
   });
+
+  // ---- dispatch-bound liveness (#142 round 3) ----
+
+  function seedTaskForRun(runId: string, metadata: Record<string, unknown> = {}): string {
+    return taskCreate("default", {
+      title: "dispatch bound",
+      issue_type: "task",
+      metadata: {
+        auto_run: true,
+        chain_id: "release-review",
+        last_run_id: runId,
+        last_run_status: "running",
+        ...metadata,
+      },
+    }, "default").id;
+  }
+
+  function neverClaimedJobRun(runId: string, runDir: string, taskId: string): Record<string, unknown> {
+    const base = orphanShape({
+      id: runId,
+      taskId,
+      resumeAttempt: { id: "a1", series: 3, outcome: "accepted", automatic: true, updatedAt: isoAgo(11 * 60_000) },
+      resumedAt: isoAgo(11 * 60_000), // past the 2-minute resume grace
+    });
+    const withJob = upsertRoutedLaunchJobRecord(base as never, {
+      occurrenceId: `resume:${runId}:1780000000000`,
+      runId,
+      runDir,
+      chainPath: join(runDir, "chain.json"),
+      targetAgentIds: ["reviewer"],
+      environment: { NAMESPACE_ID: "default", ORG_ID: "default" },
+    });
+    const record = withJob.run as unknown as Record<string, unknown>;
+    // the job has sat queued, never claimed, past the 10-minute dispatch bound
+    const jobId = Object.keys((record.runnerV2 as any).launchJobs)[0];
+    (record.runnerV2 as any).launchJobs[jobId].createdAt = isoAgo(11 * 60_000);
+    return record;
+  }
+
+  it("a never-claimed accepted job past the dispatch bound: run stopped with a reaper reason, job blocked, task paused without a debit", async () => {
+    const runDir = join(RUNS, "run-bound");
+    const taskId = seedTaskForRun("run-bound", { resume_series: 3 });
+    writeRun("run-bound", neverClaimedJobRun("run-bound", runDir, taskId));
+
+    const result = await reconcileOrphanedRuns({ runsDir: RUNS, eventsDir: join(TEST_ROOT, "events") });
+
+    const record = readRun("run-bound");
+    expect(record.status).toBe("stopped");
+    expect(record.statusReason).toEqual({
+      actor: "reaper",
+      reason: "accepted resume launch job exceeded its dispatch bound",
+    });
+    const job = (Object.values(record.runnerV2.launchJobs) as Array<Record<string, any>>)[0];
+    expect(job.status).toBe("blocked");
+    expect(job.lastError).toContain("dispatch bound");
+    expect(cleanedOrStopped(result, "run-bound")).toBe(true);
+
+    // the owner sees WHY: guarded operational pause, series/run fenced, no debit
+    const task = taskGet("default", taskId, "default")!;
+    const metadata = task.metadata as Record<string, unknown>;
+    expect(metadata.auto_run_paused).toBe(true);
+    expect(metadata.auto_run_paused_reason).toContain("dispatch bound");
+    expect(metadata.auto_run_retries).toBeUndefined();
+
+    // idempotent pause: a second scan may fix stale agent statuses, but the
+    // pause itself never rewrites (reason identical, still paused)
+    await reconcileOrphanedRuns({ runsDir: RUNS, eventsDir: join(TEST_ROOT, "events") });
+    expect(readRun("run-bound").status).toBe("stopped");
+    const taskAfter = taskGet("default", taskId, "default")!;
+    const metadataAfter = taskAfter.metadata as Record<string, unknown>;
+    expect(metadataAfter.auto_run_paused).toBe(true);
+    expect(metadataAfter.auto_run_paused_reason).toBe(metadata.auto_run_paused_reason);
+  });
+
+  it("a never-claimed accepted job INSIDE the bound is left alone", async () => {
+    const runDir = join(RUNS, "run-young");
+    const taskId = seedTaskForRun("run-young", {});
+    const record = neverClaimedJobRun("run-young", runDir, taskId);
+    const jobId = Object.keys((record.runnerV2 as any).launchJobs)[0];
+    (record.runnerV2 as any).launchJobs[jobId].createdAt = isoAgo(60_000); // young
+    writeRun("run-young", record);
+
+    await reconcileOrphanedRuns({ runsDir: RUNS, eventsDir: join(TEST_ROOT, "events") });
+
+    const after = readRun("run-young");
+    expect(after.status).toBe("running");
+    expect((Object.values(after.runnerV2.launchJobs) as Array<Record<string, any>>)[0].status).toBe("queued");
+    const task = taskGet("default", taskId, "default")!;
+    expect((task.metadata as Record<string, unknown>).auto_run_paused).toBeUndefined();
+  });
+
+  it("a run the WORKER already stopped for the bound still gets its guarded task pause on the next scan", async () => {
+    const runDir = join(RUNS, "run-worker-stopped");
+    const taskId = seedTaskForRun("run-worker-stopped", { resume_series: 3 });
+    const record = neverClaimedJobRun("run-worker-stopped", runDir, taskId);
+    record.status = "stopped";
+    record.statusReason = { actor: "reaper", reason: "accepted resume launch job exceeded its dispatch bound" };
+    const jobId = Object.keys((record.runnerV2 as any).launchJobs)[0];
+    (record.runnerV2 as any).launchJobs[jobId].status = "blocked";
+    writeRun("run-worker-stopped", record);
+
+    await reconcileOrphanedRuns({ runsDir: RUNS, eventsDir: join(TEST_ROOT, "events") });
+
+    const task = taskGet("default", taskId, "default")!;
+    const metadata = task.metadata as Record<string, unknown>;
+    expect(metadata.auto_run_paused).toBe(true);
+    expect(metadata.auto_run_paused_reason).toContain("dispatch bound");
+  });
+
+  it("a dispatch-bound pause never lands on a task that moved on (series fence)", async () => {
+    const runDir = join(RUNS, "run-bound-reset");
+    // task was RESET after the accepted attempt: series moved to 9
+    const taskId = seedTaskForRun("run-bound-reset", { resume_series: 9 });
+    writeRun("run-bound-reset", neverClaimedJobRun("run-bound-reset", runDir, taskId));
+
+    await reconcileOrphanedRuns({ runsDir: RUNS, eventsDir: join(TEST_ROOT, "events") });
+
+    expect(readRun("run-bound-reset").status).toBe("stopped"); // the run still ends
+    const task = taskGet("default", taskId, "default")!;
+    expect((task.metadata as Record<string, unknown>).auto_run_paused).toBeUndefined();
+  });
 });
+
+function cleanedOrStopped(result: { cleaned: string[] }, runId: string): boolean {
+  return result.cleaned.includes(runId);
+}

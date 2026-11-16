@@ -14,13 +14,21 @@ import { isAbsolute, join } from "path";
 import config from "../config";
 import { writeLog } from "../system/system-logger";
 import { getLiveSessions } from "../pty/pty-client";
-import { taskGet, taskMergeMeta, taskUpdate } from "../tasks/task-store";
+import { taskGet, taskMergeMeta, taskMutateMetadata, taskUpdate } from "../tasks/task-store";
 import { normalizeRunId } from "../auth/run-acl";
 import { cleanTaskExecutionRunMetadata, isNonExecutionRun } from "./run-provenance";
 import { hasLivePendingHandoff, pendingHandoffs } from "../runner-v2/handoff-liveness";
 import { parseRunnerEvent } from "../runner-v2/events";
 import { runnerEventIdentityMatches } from "../runner-v2/event-identity";
 import { updateRunJsonRecord } from "../runner-v2/run-state";
+import {
+  expireAcceptedResumeLaunchJobs,
+  routedLaunchJobPastDispatchBound,
+  RESUME_LAUNCH_DISPATCH_BOUND_REASON,
+  type RoutedLaunchJob,
+} from "../runner-v2/launch-job";
+import { currentResumeSeries, taskPointsAtRun } from "./resume-attempt";
+import { isTerminalTaskStatus } from "../tasks/task-status";
 import type { RunStatusReason } from "./run-record";
 
 interface ReconcilerContext {
@@ -102,6 +110,8 @@ interface EventRecord {
  * unexpired lease, still has the background worker as its durable dispatch
  * path (#142 round 2). Narrow gate by design: the broader typed-work
  * protection lives in reconciler-protected-work.ts for the watchdog.
+ * A job past the resume dispatch bound (#142 round 3) no longer protects the
+ * run — the reaper expires it instead of skipping forever.
  */
 function hasActiveResumeLaunchWork(run: RunJson): boolean {
   const resumeAttempt = run.resumeAttempt as { outcome?: unknown } | undefined;
@@ -120,7 +130,8 @@ function hasActiveResumeLaunchWork(run: RunJson): boolean {
     && (job.status === "queued"
       || (job.status === "leased"
         && typeof job.lease?.expiresAt === "string"
-        && Date.parse(job.lease.expiresAt) > nowMs)));
+        && Date.parse(job.lease.expiresAt) > nowMs))
+    && !routedLaunchJobPastDispatchBound(job as unknown as RoutedLaunchJob, new Date(nowMs)));
 }
 
 function asTimeMs(value?: string): number | undefined {
@@ -129,10 +140,62 @@ function asTimeMs(value?: string): number | undefined {
   return Number.isFinite(time) ? time : undefined;
 }
 
+/**
+ * Operational pause for a run stopped by the resume dispatch bound (issue
+ * #142 round 3): the owner sees WHY the loop ended instead of an in-progress
+ * task that never moves. No attempt outcome, no retry debit. Guarded by the
+ * task's CURRENT row: closed tasks, resets (series moved) and replacements
+ * (task no longer points at this run) are never paused.
+ */
+function pauseTaskForResumeDispatchBound(
+  context: ReconcilerContext,
+  bound: { taskId: string; series: number; runId: string },
+): void {
+  try {
+    const landed = taskMutateMetadata(context.orgId, bound.taskId, (metadata, task) => {
+      if (isTerminalTaskStatus(task.status)) return null;
+      if (currentResumeSeries(metadata) !== bound.series) return null;
+      if (!taskPointsAtRun(metadata, bound.taskId, bound.runId)) return null;
+      // already paused for this bound: idempotent no-op, never a repeated write
+      if (metadata.auto_run_paused === true
+        && typeof metadata.auto_run_paused_reason === "string"
+        && metadata.auto_run_paused_reason.startsWith(RESUME_LAUNCH_DISPATCH_BOUND_REASON)) {
+        return null;
+      }
+      return {
+        ...metadata,
+        resume_pending_since: null,
+        auto_run_paused: true,
+        auto_run_paused_reason:
+          `${RESUME_LAUNCH_DISPATCH_BOUND_REASON} for run ${bound.runId}: the accepted launch job was never `
+          + "claimed (or kept requeueing) past its time/attempt ceiling, so the run was stopped. "
+          + "Auto-run paused without consuming a retry; use Retry task once the worker is dispatching again.",
+      };
+    }, context.namespaceId);
+    if (!landed.ok) {
+      reconcilerLog(
+        context,
+        `could not pause task ${bound.taskId} for the dispatch-bound stop of ${bound.runId} (retrying next scan)`,
+        "warn",
+      );
+    }
+  } catch (error) {
+    reconcilerLog(
+      context,
+      `failed to pause task ${bound.taskId} for the dispatch-bound stop of ${bound.runId}: ${errorMessage(error)}`,
+      "warn",
+    );
+  }
+}
+
 function objectValue(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : undefined;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function readChainEmits(runDir: string): Map<string, string[]> {
@@ -535,14 +598,29 @@ export async function reconcileOrphanedRuns(options: ReconcileOptions = {}): Pro
     // preparing (a resume in flight under its claim) is left entirely alone.
     let mutated = false;
     let finalRun: Record<string, unknown> | undefined;
+    let resumeDispatchBoundTask: { taskId: string; series: number; runId: string } | undefined;
     try {
       finalRun = updateRunJsonRecord(runFile, (currentRecord) => {
         if (!currentRecord) throw new Error(`run.json vanished before reconciliation: ${runFile}`);
         const run = { ...currentRecord } as RunJson;
-        const resumeAttempt = run.resumeAttempt as { outcome?: unknown } | undefined;
+        const resumeAttempt = run.resumeAttempt as { outcome?: unknown; series?: unknown } | undefined;
         if (resumeAttempt && typeof resumeAttempt === "object" && !Array.isArray(resumeAttempt)
           && resumeAttempt.outcome === "preparing") {
           return currentRecord;
+        }
+
+        // A run the WORKER already stopped for the dispatch bound (#142 r3)
+        // still owes its task the guarded visible pause — this scan delivers
+        // it (idempotent; the pause write itself no-ops once landed).
+        if (run.status !== "running" && run.status !== "pending"
+          && resumeAttempt?.outcome === "accepted"
+          && typeof run.taskId === "string" && run.taskId
+          && (run.statusReason as RunStatusReason | undefined)?.reason === RESUME_LAUNCH_DISPATCH_BOUND_REASON) {
+          resumeDispatchBoundTask = {
+            taskId: run.taskId,
+            series: typeof resumeAttempt.series === "number" ? resumeAttempt.series : 0,
+            runId,
+          };
         }
 
         const agents = run.agents || [];
@@ -582,6 +660,27 @@ export async function reconcileOrphanedRuns(options: ReconcileOptions = {}): Pro
 
           if (hasLiveSession) return currentRecord; // run is alive
           if (hasLivePendingHandoff(run)) return currentRecord; // detached chain-runner is starting the next PTY
+
+          // Liveness bound (#142 round 3): an accepted resume whose launch job
+          // is past its dispatch bound — never claimed for its whole life, or
+          // requeued past the attempt ceiling — is expired HERE under the lock
+          // (job blocked, run stopped with a reaper-style reason) instead of
+          // being skipped forever. Every bound decision is re-derived against
+          // this record, so a job claimed or completed while this was deciding
+          // is left alone.
+          const expired = expireAcceptedResumeLaunchJobs(currentRecord as never, { now: new Date(now) });
+          if (expired) {
+            if (typeof run.taskId === "string" && run.taskId && resumeAttempt?.outcome === "accepted") {
+              resumeDispatchBoundTask = {
+                taskId: run.taskId,
+                series: typeof resumeAttempt.series === "number" ? resumeAttempt.series : 0,
+                runId,
+              };
+            }
+            reconcilerLog(context, `stopped ${runId}: ${RESUME_LAUNCH_DISPATCH_BOUND_REASON}`, "warn");
+            mutated = true;
+            return expired as unknown as Record<string, unknown>;
+          }
 
           // Honor accepted resume work (#142 round 2): a queued or live-leased
           // routed launch job under an accepted resumeAttempt is durable
@@ -683,6 +782,14 @@ export async function reconcileOrphanedRuns(options: ReconcileOptions = {}): Pro
           }, context.namespaceId);
         } catch { /* non-fatal */ }
       }
+
+      // Guarded visible reason on the task for a dispatch-bound expiry
+      // (#142 round 3): operational pause, NO retry debit, fenced by the same
+      // series/run/status rules as every other guarded task write — a reset,
+      // replacement or close is never paused for a stale bound.
+    }
+    if (resumeDispatchBoundTask) {
+      pauseTaskForResumeDispatchBound(context, resumeDispatchBoundTask);
     }
   }
 

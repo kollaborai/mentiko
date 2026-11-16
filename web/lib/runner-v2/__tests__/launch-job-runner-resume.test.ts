@@ -164,4 +164,57 @@ describe("runRoutedLaunchJob credential reconstruction (accepted resume jobs)", 
     expect(capturedEnv!.MENTIKO_SESSION_TOKEN).toBeUndefined();
     expect(capturedEnv!.MENTIKO_CAP_POLL_SECS).toBe("7");
   });
+
+  // ---- dispatch-bound liveness (#142 round 3) ----
+
+  it("a requeued job past its attempt ceiling ENDS: job blocked, run stopped, never requeued again", async () => {
+    const { runJsonPath, jobId } = setupRun({ resumeAttempt: acceptedAttempt });
+    // the job already burned its attempts on nonterminal launch errors
+    const record = JSON.parse(readFileSync(runJsonPath, "utf8")) as {
+      runnerV2: { launchJobs: Record<string, { attemptCount: number }> };
+    };
+    record.runnerV2.launchJobs[jobId].attemptCount = 4;
+    writeFileSync(runJsonPath, JSON.stringify(record, null, 2));
+
+    const bootstrap = jest.fn(async () => {
+      throw new Error("nonterminal launch error");
+    });
+    const result = await runRoutedLaunchJob({
+      runJsonPath,
+      jobId,
+      ownerId: "worker:test:ceiling",
+      dependencies: {
+        bootstrap,
+        reconstructResumeEnvironment: async () => ({ MENTIKO_SESSION_TOKEN: "t" }),
+      },
+    });
+
+    expect(result.status).toBe("blocked");
+    expect(result.error).toContain("dispatch bound");
+    const after = JSON.parse(readFileSync(runJsonPath, "utf8"));
+    expect(after.runnerV2.launchJobs[jobId].status).toBe("blocked");
+    expect(after.status).toBe("stopped");
+    expect(after.statusReason).toEqual({
+      actor: "reaper",
+      reason: "accepted resume launch job exceeded its dispatch bound",
+    });
+  });
+
+  it("a job INSIDE the bound still requeues on a nonterminal launch error", async () => {
+    const { runJsonPath, jobId } = setupRun({ resumeAttempt: acceptedAttempt });
+    const result = await runRoutedLaunchJob({
+      runJsonPath,
+      jobId,
+      ownerId: "worker:test:young",
+      dependencies: {
+        bootstrap: async () => { throw new Error("transient"); },
+        reconstructResumeEnvironment: async () => ({ MENTIKO_SESSION_TOKEN: "t" }),
+      },
+    });
+
+    expect(result.status).toBe("requeued");
+    const after = JSON.parse(readFileSync(runJsonPath, "utf8"));
+    expect(after.runnerV2.launchJobs[jobId].status).toBe("queued");
+    expect(after.status).toBe("running");
+  });
 });

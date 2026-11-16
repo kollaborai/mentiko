@@ -14,17 +14,20 @@ import {
   blockRoutedLaunchJob,
   claimRoutedLaunchJob,
   completeRoutedLaunchJob,
+  expireAcceptedResumeLaunchJobs,
   readRoutedLaunchJob,
   readRoutedLaunchJobs,
   releaseRoutedLaunchJob,
   routedLaunchJobIsReclaimable,
   routedLaunchJobLeaseOwned,
+  routedLaunchJobPastDispatchBound,
+  RESUME_LAUNCH_DISPATCH_BOUND_REASON,
   startRoutedLaunchJobHeartbeat,
   type RoutedLaunchJob,
 } from "@/lib/runner-v2/launch-job";
 import { startLaunchCoordinatorHeartbeat } from "@/lib/runner-v2/launch-coordinator-state";
 import { discoverScopedRunJsonPaths } from "@/lib/runner-v2/run-scope";
-import { readRunJson } from "@/lib/runner-v2/run-state";
+import { readRunJson, updateRunJson } from "@/lib/runner-v2/run-state";
 import { buildChildEnv } from "@/lib/runs/child-env";
 import type { RunnerV2LaunchContext, RunnerV2LaunchResult } from "@/lib/runner-v2/types";
 
@@ -207,6 +210,15 @@ export async function runRoutedLaunchJob(input: {
       ownerId: input.ownerId,
       error: message,
     });
+    // Liveness bound (#142 r3): a job whose requeue loop has aged past the
+    // dispatch bound (or blown its attempt ceiling) must END here — block the
+    // job and stop the run under the lock — instead of requeueing forever.
+    const released = readRoutedLaunchJob(input.runJsonPath, input.jobId);
+    if (released && routedLaunchJobPastDispatchBound(released)) {
+      expirePastBoundResumeLaunchJobs(input.runJsonPath);
+      const reason = `${RESUME_LAUNCH_DISPATCH_BOUND_REASON} (last error: ${message})`;
+      return { status: "blocked", jobId: input.jobId, error: reason };
+    }
     return { status: "requeued", jobId: input.jobId, error: message };
   } finally {
     stopJobHeartbeat();
@@ -374,6 +386,25 @@ function latestJobAttempt(
 
 const activeJobs = new Map<string, Promise<RoutedLaunchJobRunResult>>();
 
+/**
+ * Expire a run's past-bound accepted resume launch jobs under the run.json
+ * lock (idempotent; every bound decision is re-derived against the current
+ * record). Failure to expire is logged, never thrown: the job simply stays
+ * reclaimable and the next pass retries the expiry.
+ */
+function expirePastBoundResumeLaunchJobs(runJsonPath: string): void {
+  try {
+    updateRunJson(runJsonPath, (run) => {
+      if (!run) throw new Error(`run.json not found: ${runJsonPath}`);
+      return expireAcceptedResumeLaunchJobs(run) || run;
+    });
+  } catch (error) {
+    console.error(
+      `[runner-v2] resume dispatch-bound expiry failed for ${runJsonPath}: ${errorMessage(error)}`,
+    );
+  }
+}
+
 export function reconcileRoutedLaunchJobs(input: {
   scopeRoot?: string;
   explicitRunJsonPath?: string;
@@ -396,6 +427,13 @@ export function reconcileRoutedLaunchJobs(input: {
     for (const job of jobs) {
       examined += 1;
       if (!routedLaunchJobIsReclaimable(job)) continue;
+      // Liveness bound (#142 r3): a reclaimable accepted-resume job past the
+      // dispatch bound (never claimed for its whole life, or requeued past the
+      // attempt ceiling) is expired under the lock, never scheduled again.
+      if (routedLaunchJobPastDispatchBound(job)) {
+        expirePastBoundResumeLaunchJobs(runJsonPath);
+        continue;
+      }
       const key = `${runJsonPath}\0${job.id}`;
       if (activeJobs.has(key)) continue;
       const ownerId = `worker:${process.pid}:${randomUUID()}`;

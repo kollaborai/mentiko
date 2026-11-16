@@ -354,6 +354,69 @@ export function routedLaunchJobIsReclaimable(job: RoutedLaunchJob, now = new Dat
     || (job.status === "leased" && Date.parse(job.lease?.expiresAt || "") <= now.getTime());
 }
 
+/**
+ * Liveness bound for accepted resume dispatch (issue #142 round 3): a queued
+ * job nobody claims, or one that keeps requeueing on nonterminal launch
+ * errors, must END instead of pinning the run in progress forever. Same order
+ * as the scanner's preparing bound (10 minutes) and the reaper's handoff
+ * windows; the attempt ceiling covers fast requeue loops that never age.
+ */
+export const RESUME_LAUNCH_DISPATCH_BOUND_MS = 10 * 60_000;
+export const RESUME_LAUNCH_ATTEMPT_CEILING = 5;
+export const RESUME_LAUNCH_DISPATCH_BOUND_REASON = "accepted resume launch job exceeded its dispatch bound";
+
+export function routedLaunchJobPastDispatchBound(job: RoutedLaunchJob, now = new Date()): boolean {
+  if (job.status === "completed" || job.status === "blocked") return false;
+  if (job.status === "leased" && Date.parse(job.lease?.expiresAt || "") > now.getTime()) return false;
+  return (now.getTime() - Date.parse(job.createdAt) >= RESUME_LAUNCH_DISPATCH_BOUND_MS)
+    || job.attemptCount >= RESUME_LAUNCH_ATTEMPT_CEILING;
+}
+
+/**
+ * Expire the accepted resume launch jobs of a run that are past the dispatch
+ * bound, and stop a still-active run with a reaper-style reason. Pure fold
+ * for the caller's run.json lock (the worker's dispatch scan, the worker's
+ * requeue path, and the web reaper all call it under their own lock): every
+ * decision is re-derived against the record passed in, so a job that was
+ * claimed or completed while this was deciding is left alone. Returns the
+ * updated record, or undefined when nothing was past the bound.
+ */
+export function expireAcceptedResumeLaunchJobs(
+  run: RunRecord,
+  input: { now?: Date } = {},
+): RunRecord | undefined {
+  const now = input.now || new Date();
+  const resumeAttempt = objectValue(run.resumeAttempt);
+  if (!resumeAttempt || resumeAttempt.outcome !== "accepted") return undefined;
+  const jobs = launchJobMap(run);
+  const at = now.toISOString();
+  let changed = false;
+  const nextJobs = { ...jobs };
+  for (const [id, job] of Object.entries(jobs)) {
+    if (!routedLaunchJobPastDispatchBound(job, now)) continue;
+    nextJobs[id] = {
+      ...job,
+      status: "blocked",
+      lease: undefined,
+      blockedAt: at,
+      updatedAt: at,
+      lastError: RESUME_LAUNCH_DISPATCH_BOUND_REASON,
+    };
+    changed = true;
+  }
+  if (!changed) return undefined;
+  let next: RunRecord = withLaunchJobs(run, nextJobs);
+  if (run.status === "running" || run.status === "pending") {
+    next = {
+      ...next,
+      status: "stopped",
+      completed: next.completed || at,
+      statusReason: { actor: "reaper", reason: RESUME_LAUNCH_DISPATCH_BOUND_REASON },
+    };
+  }
+  return next;
+}
+
 export function startRoutedLaunchJobHeartbeat(input: {
   runJsonPath: string;
   jobId: string;
