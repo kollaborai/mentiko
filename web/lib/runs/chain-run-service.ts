@@ -674,71 +674,81 @@ export async function startChainRun({
     env: childEnv,
   };
 
-  if (decisionRunMetadata) {
-    // Decision phase launches (guided options/questions/plan) must not block this
-    // HTTP request on slot admission or PTY bootstrap readiness: for local
-    // workspaces, executeLocalBootstrap's acquireChainAdmission polls up to
-    // MENTIKO_CAP_MAX_WAIT_SECS (default 300s) INSIDE the awaited launch chain,
-    // while decision-auto-advance's internal caller times out at 30s (observed
-    // as a 302,861ms POST). run.json above is already the durable pointer the
-    // caller needs; let admission/bootstrap continue in the background and
-    // return now. Launch failures still land in run.json (status "failed") so
-    // the next request's dead-run recovery (decision-auto-advance's
-    // isDecisionGenerationPointerDead) can relaunch instead of wedging forever.
-    void startRunnerV2Launch(runnerV2LaunchContext)
-      .then((launch) => {
-        closeSync(logFd);
-        if (launch.support === "unsupported") {
-          markChainLaunchFailed(runDir, validChainName, namespaceId, runObject, runId, launch.reason);
-          return;
-        }
-        attachChildFailureHandling(launch.child, runDir, validChainName, namespaceId, runObject, runId);
-      })
-      .catch((error) => {
+  // Run replacement serialization (#142 round 4, review P1-2): a task-linked
+  // replacement takes the OLD run's .resume-claim FIRST (async wait, never
+  // blocking the event loop) and holds it across BOTH the launch and the task
+  // re-point. A resume holding the claim keeps this waiting; a claim still
+  // busy past the budget FAILS VISIBLY with a retryable error and STARTS
+  // NOTHING — the task keeps pointing at the old run (which stays admissible
+  // for its own resume), and no unlinked replacement run is left running.
+  // There is no log-and-continue path.
+  const launchAndRepoint = async (): Promise<void> => {
+    if (decisionRunMetadata) {
+      // Decision phase launches (guided options/questions/plan) must not block this
+      // HTTP request on slot admission or PTY bootstrap readiness: for local
+      // workspaces, executeLocalBootstrap's acquireChainAdmission polls up to
+      // MENTIKO_CAP_MAX_WAIT_SECS (default 300s) INSIDE the awaited launch chain,
+      // while decision-auto-advance's internal caller times out at 30s (observed
+      // as a 302,861ms POST). run.json above is already the durable pointer the
+      // caller needs; let admission/bootstrap continue in the background and
+      // return now. Launch failures still land in run.json (status "failed") so
+      // the next request's dead-run recovery (decision-auto-advance's
+      // isDecisionGenerationPointerDead) can relaunch instead of wedging forever.
+      void startRunnerV2Launch(runnerV2LaunchContext)
+        .then((launch) => {
+          closeSync(logFd);
+          if (launch.support === "unsupported") {
+            markChainLaunchFailed(runDir, validChainName, namespaceId, runObject, runId, launch.reason);
+            return;
+          }
+          attachChildFailureHandling(launch.child, runDir, validChainName, namespaceId, runObject, runId);
+        })
+        .catch((error) => {
+          try { closeSync(logFd); } catch { /* already closed */ }
+          markChainLaunchFailed(runDir, validChainName, namespaceId, runObject, runId, error instanceof Error ? error.message : String(error));
+        });
+    } else {
+      // C2: the background branch above already records launch failures in
+      // run.json. This one used to throw straight out to the caller, leaving a
+      // run.json stamped `running` with no session, no reason, and nothing to
+      // reap it — the caller saw a 500 and the run read as an unexplained
+      // silence forever (reproduced live with a spawn ENOENT). Same treatment
+      // both sides: the record explains itself, then the error propagates.
+      let runnerV2Launch: Awaited<ReturnType<typeof startRunnerV2Launch>>;
+      try {
+        runnerV2Launch = await startRunnerV2Launch(runnerV2LaunchContext);
+      } catch (error) {
         try { closeSync(logFd); } catch { /* already closed */ }
-        markChainLaunchFailed(runDir, validChainName, namespaceId, runObject, runId, error instanceof Error ? error.message : String(error));
-      });
-  } else {
-    // C2: the background branch above already records launch failures in
-    // run.json. This one used to throw straight out to the caller, leaving a
-    // run.json stamped `running` with no session, no reason, and nothing to
-    // reap it — the caller saw a 500 and the run read as an unexplained
-    // silence forever (reproduced live with a spawn ENOENT). Same treatment
-    // both sides: the record explains itself, then the error propagates.
-    let runnerV2Launch: Awaited<ReturnType<typeof startRunnerV2Launch>>;
-    try {
-      runnerV2Launch = await startRunnerV2Launch(runnerV2LaunchContext);
-    } catch (error) {
-      try { closeSync(logFd); } catch { /* already closed */ }
-      markChainLaunchFailed(
-        runDir, validChainName, namespaceId, runObject, runId,
-        error instanceof Error ? error.message : String(error),
-      );
-      throw error;
-    }
+        markChainLaunchFailed(
+          runDir, validChainName, namespaceId, runObject, runId,
+          error instanceof Error ? error.message : String(error),
+        );
+        throw error;
+      }
 
-    if (runnerV2Launch.support === "unsupported") {
+      if (runnerV2Launch.support === "unsupported") {
+        closeSync(logFd);
+        markChainLaunchFailed(runDir, validChainName, namespaceId, runObject, runId, runnerV2Launch.reason);
+        throw new Error(runnerV2Launch.reason);
+      }
+
+      attachChildFailureHandling(runnerV2Launch.child, runDir, validChainName, namespaceId, runObject, runId);
       closeSync(logFd);
-      markChainLaunchFailed(runDir, validChainName, namespaceId, runObject, runId, runnerV2Launch.reason);
-      throw new Error(runnerV2Launch.reason);
     }
 
-    attachChildFailureHandling(runnerV2Launch.child, runDir, validChainName, namespaceId, runObject, runId);
-    closeSync(logFd);
-  }
+    logAuditEvent("chain_complete", `Chain launched from web: ${validChainName}`, {
+      chain_name: validChainName,
+      run_id: runId,
+      status: "running",
+      namespace_id: namespaceId,
+      user_id: actor.id,
+      ...(actor.sessionId ? { session_id: actor.sessionId } : {}),
+      ...(actor.role ? { org_role: actor.role } : {}),
+    }, ip, actor).catch(() => {});
 
-  logAuditEvent("chain_complete", `Chain launched from web: ${validChainName}`, {
-    chain_name: validChainName,
-    run_id: runId,
-    status: "running",
-    namespace_id: namespaceId,
-    user_id: actor.id,
-    ...(actor.sessionId ? { session_id: actor.sessionId } : {}),
-    ...(actor.role ? { org_role: actor.role } : {}),
-  }, ip, actor).catch(() => {});
-
-  if (executionTaskId && shouldRecordTaskExecutionRun({ taskId: executionTaskId, chainId: runObject.chainId as string, metadata: runMetadata })) {
-    const recordExecutionRun = (): void => {
+    if (executionTaskId && shouldRecordTaskExecutionRun({ taskId: executionTaskId, chainId: runObject.chainId as string, metadata: runMetadata })) {
+      // Inside the claim (#142 round 4): the re-point of the task at the NEW
+      // run cannot interleave with a resume acceptance of the OLD run.
       const task = taskGet(orgId, executionTaskId, namespaceId);
       const metadata = task?.metadata && typeof task.metadata === "object" && !Array.isArray(task.metadata)
         ? task.metadata as Record<string, unknown>
@@ -752,31 +762,28 @@ export async function startChainRun({
           chainId: runObject.chainId as string,
         }),
       }, namespaceId);
-    };
+    }
+  };
+
+  if (executionTaskId) {
     try {
-      // Run replacement (#142 round 3): this write re-points the task at the
-      // NEW run, so it must not interleave with a resume acceptance of the
-      // OLD run. It runs under the old run's .resume-claim — never an
-      // unserialized fallback: a resume holding the claim keeps this waiting
-      // (async, never blocking the event loop), and a claim still busy past
-      // the budget FAILS VISIBLY instead of writing around the fence.
       await withTaskResumeClaimAsync(
         { orgId, namespaceId, taskId: executionTaskId },
-        recordExecutionRun,
+        launchAndRepoint,
         { waitTimeoutMs: 15_000 },
       );
     } catch (error) {
       if (error instanceof ResumeResetConflictError) {
-        // The re-point did NOT land: the task still names the previous run.
-        // Loud and actionable — silent here would strand the task pointing at
-        // a superseded run with nothing in the logs explaining it.
-        console.error(
-          `[chain-run] task ${executionTaskId} re-point to run ${runId} could not be serialized against a live resume of the previous run `
-          + `(${error.message}); retry the re-point once the resume finishes`,
-        );
+        // The replacement never started and the re-point never landed: the
+        // task still names the old run. Fail VISIBLY with the retryable
+        // conflict — the caller retries once the resume finishes.
+        markChainLaunchFailed(runDir, validChainName, namespaceId, runObject, runId, error.message);
+        throw new Conflict(error.message);
       }
-      // non-critical for the launched run itself: don't fail the run start
+      throw error;
     }
+  } else {
+    await launchAndRepoint();
   }
 
   return {
