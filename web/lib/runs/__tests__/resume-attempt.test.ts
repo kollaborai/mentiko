@@ -193,7 +193,10 @@ describe("pauseTaskForUnwrittenResumeProjection (unwritten failure accounting, #
     const taskId = seedTask({ auto_run: true, last_run_id: "run-1" });
     const attempt = failedAttempt({ taskId });
 
-    pauseTaskForUnwrittenResumeProjection({ orgId: ORG, namespaceId: NS, taskId, runId: "run-1", attempt });
+    const paused = pauseTaskForUnwrittenResumeProjection({ orgId: ORG, namespaceId: NS, taskId, runId: "run-1", attempt });
+    // the write result is RETURNED (#142 r3): the caller can surface an
+    // unwritten pause instead of assuming the owner was notified
+    expect(paused).toBe(true);
 
     const metadata = metadataOf(taskId);
     expect(metadata.auto_run_paused).toBe(true);
@@ -201,6 +204,23 @@ describe("pauseTaskForUnwrittenResumeProjection (unwritten failure accounting, #
     expect(metadata.auto_run_paused_reason).toContain("without consuming a retry");
     // no debit: the replay on the next route entry still charges exactly once
     expect(metadata.auto_run_retries).toBeUndefined();
+  });
+
+  it("returns false when there is nothing to pause (not a failed attempt); a fence-held no-op is true (no gap)", () => {
+    const notFailed = seedTask({ auto_run: true, last_run_id: "run-1" });
+    expect(pauseTaskForUnwrittenResumeProjection({
+      orgId: ORG, namespaceId: NS, taskId: notFailed, runId: "run-1",
+      attempt: { ...failedAttempt({ taskId: notFailed }), outcome: "accepted" },
+    })).toBe(false);
+    expect(metadataOf(notFailed).auto_run_paused).toBeUndefined();
+
+    // a fence-held no-op (series moved) writes nothing and owes nothing: ok
+    const fenced = seedTask({ auto_run: true, last_run_id: "run-1", resume_series: 9 });
+    expect(pauseTaskForUnwrittenResumeProjection({
+      orgId: ORG, namespaceId: NS, taskId: fenced, runId: "run-1",
+      attempt: failedAttempt({ taskId: fenced, series: 1 }),
+    })).toBe(true);
+    expect(metadataOf(fenced).auto_run_paused).toBeUndefined();
   });
 
   it("never pauses a task the projection already accounted, a reset task, or a closed task", () => {

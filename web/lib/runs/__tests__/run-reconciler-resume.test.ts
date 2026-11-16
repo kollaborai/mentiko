@@ -33,6 +33,21 @@ jest.mock("@/lib/pty/pty-client", () => ({
   },
 }));
 
+// Injection seam for the acceptance race: fires between the reaper's tolerant
+// per-run read and its LOCKED fold (updateRunJsonRecord), which is the window
+// the round-2 fix exists for — an acceptance landing in that gap must survive.
+let onBeforeLockedFold: ((runJsonPath: string) => void) | undefined;
+jest.mock("@/lib/runner-v2/run-state", () => {
+  const actual = jest.requireActual("@/lib/runner-v2/run-state");
+  return {
+    ...actual,
+    updateRunJsonRecord: (runJsonPath: string, update: (record: unknown) => unknown) => {
+      onBeforeLockedFold?.(runJsonPath);
+      return actual.updateRunJsonRecord(runJsonPath, update);
+    },
+  };
+});
+
 import { reconcileOrphanedRuns } from "@/lib/runs/run-reconciler";
 import { upsertRoutedLaunchJobRecord } from "@/lib/runner-v2/launch-job";
 import { closeAll, taskCreate, taskGet } from "@/lib/tasks/task-store";
@@ -85,6 +100,7 @@ beforeEach(() => {
   mkdirSync(RUNS, { recursive: true });
   mockLiveSessions = new Set();
   onLiveSessionsCall = undefined;
+  onBeforeLockedFold = undefined;
 });
 
 afterAll(() => {
@@ -190,14 +206,17 @@ describe("reconcileOrphanedRuns vs route-owned resume work", () => {
     expect(record.resumeAttempt.outcome).toBe("preparing");
   });
 
-  it("an acceptance that lands while the reaper scans cannot be erased or stopped from the pre-acceptance read", async () => {
-    // The reaper reads its session snapshot BEFORE the per-run loop. Acceptance
-    // lands right then (between that read and the run's locked mutation) —
-    // with the old whole-snapshot write the reaper would have stopped the run
-    // and dropped the accepted attempt and queued job it never saw.
+  it("an acceptance that lands between the reaper's STALE READ and its LOCKED FOLD cannot be erased or stopped", async () => {
+    // The round-2 race window: the reaper has already done its tolerant
+    // per-run read (a session-less orphan), and the resume acceptance lands
+    // right before the run's locked mutation. Deciding from the pre-read
+    // snapshot (the old whole-snapshot write) would stop the run and drop the
+    // accepted attempt and queued job the reaper never saw; the locked fold
+    // must re-read and leave the accepted work alone.
     writeRun("run-race", orphanShape({ id: "run-race" }));
-    onLiveSessionsCall = () => {
-      onLiveSessionsCall = undefined;
+    onBeforeLockedFold = (runJsonPath) => {
+      if (!runJsonPath.includes("run-race")) return;
+      onBeforeLockedFold = undefined; // fire exactly once, for this run's fold
       const runDir = join(RUNS, "run-race");
       const accepted = orphanShape({
         id: "run-race",

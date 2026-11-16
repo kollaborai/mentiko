@@ -139,6 +139,10 @@ export type ResumeProjectionResult =
  * operational pause — no attempt outcome, no debit — fenced by the same
  * series/run/status rules as the projection itself, so a reset, replacement
  * or close is never paused for a stale gap.
+ *
+ * Returns whether the pause write LANDED (#142 round 3): a writable store
+ * with repeated CAS contention can still leave it unwritten, and the caller
+ * must surface that visibly instead of assuming the owner was notified.
  */
 export function pauseTaskForUnwrittenResumeProjection(input: {
   orgId: string;
@@ -146,9 +150,9 @@ export function pauseTaskForUnwrittenResumeProjection(input: {
   taskId: string;
   runId: string;
   attempt: ResumeAttemptRecord;
-}): void {
-  if (input.attempt.outcome !== "failed") return;
-  taskMutateMetadata(input.orgId, input.taskId, (metadata, task) => {
+}): boolean {
+  if (input.attempt.outcome !== "failed") return false;
+  const landed = taskMutateMetadata(input.orgId, input.taskId, (metadata, task) => {
     if (isTerminalTaskStatus(task.status)) return null;
     if (currentResumeSeries(metadata) !== input.attempt.series) return null;
     if (!taskPointsAtRun(metadata, input.taskId, input.runId)) return null;
@@ -162,6 +166,7 @@ export function pauseTaskForUnwrittenResumeProjection(input: {
         + "Auto-run paused without consuming a retry; use Retry task once the task store is writable again.",
     };
   }, input.namespaceId);
+  return landed.ok;
 }
 
 export function projectConfirmedResumeFailure(input: {

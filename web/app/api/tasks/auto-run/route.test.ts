@@ -2763,6 +2763,29 @@ describe("POST /api/tasks/auto-run", () => {
     expect(mutate({ last_run_id: "run-outcome", resume_series: 2 }, { status: "open" })).toBeNull();
   });
 
+  it("a late unknown never pauses a task whose AUTHORITATIVE scope points elsewhere (stale last_run_id no longer admits it)", async () => {
+    // the UNKNOWN-outcome pause path (unreadable record), not the bounded one
+    mockTaskGet.mockReturnValue(resumableTaskFixture({}));
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(resumableRunRecord());
+    (global.fetch as jest.Mock).mockImplementation(async () => {
+      mockReadFileSync.mockReturnValue("{ not json");
+      return jsonResponse({ error: { message: "boom" } }, 500);
+    });
+    await POST(makeRequest({ taskId: "TASK-RESUME" }) as never);
+
+    expect(mockTaskMutateMetadata).toHaveBeenCalledTimes(1);
+    const mutate = mockTaskMutateMetadata.mock.calls[0][2] as (
+      metadata: Record<string, unknown>, task: { status: string }
+    ) => Record<string, unknown> | null;
+    // last_run_id still names this run, but the persisted task_run_scope — the
+    // authoritative claim — points at the replacement run
+    expect(mutate({
+      last_run_id: "run-outcome",
+      task_run_scope: { taskId: "TASK-RESUME", runId: "run-replacement" },
+    }, { status: "open" })).toBeNull();
+  });
+
   it("an out-of-order accepted response for an OLDER attempt on the same run and series changes nothing", async () => {
     // The response belongs to attempt-1; by the time the projection runs, the
     // durable run record holds a LATER accepted attempt (same run, same

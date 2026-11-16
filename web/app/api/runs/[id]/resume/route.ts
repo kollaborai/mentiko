@@ -289,6 +289,22 @@ export const POST = withErrorHandling(async (
       };
     });
 
+    // P2-2 (#142 r3): the unwritten-projection pause result is CHECKED. When
+    // even the pause write cannot land (a writable store with repeated CAS
+    // contention), the gap is logged with its retry path instead of assumed
+    // delivered: the durably recorded failure replays on the next route entry.
+    const pauseForUnwrittenProjection = (failed: ResumeAttemptRecord): void => {
+      const paused = pauseTaskForUnwrittenResumeProjection({
+        orgId, namespaceId: nsId, taskId: taskId as string, runId, attempt: failed,
+      });
+      if (!paused) {
+        console.error(
+          `[resume] task ${taskId} pause for unprojected failure (attempt ${failed.id}, run ${runId}) `
+          + "could not be written; the recorded failure replays on the next resume entry and retries the pause",
+        );
+      }
+    };
+
     // find the chain file: the run's own snapshot first, the chains-dir copy
     // second. A record without chainId must resolve through its own snapshot,
     // never throw on join(chainsDir, undefined) (issue #142, TASK-010).
@@ -310,9 +326,7 @@ export const POST = withErrorHandling(async (
         // replays on the next route entry, but the owner sees a guarded
         // operational pause in the meantime (no debit, fenced by series/run).
         if (projection.status === "unwritten") {
-          pauseTaskForUnwrittenResumeProjection({
-            orgId, namespaceId: nsId, taskId: taskId as string, runId, attempt: failed,
-          });
+          pauseForUnwrittenProjection(failed);
         }
       }
       throw new NotFound(
@@ -335,9 +349,7 @@ export const POST = withErrorHandling(async (
           orgId, namespaceId: nsId, taskId: taskId as string, runId, attempt: failed,
         });
         if (projection.status === "unwritten") {
-          pauseTaskForUnwrittenResumeProjection({
-            orgId, namespaceId: nsId, taskId: taskId as string, runId, attempt: failed,
-          });
+          pauseForUnwrittenProjection(failed);
         }
       }
       throw new NotFound("Chain", chainPath);
@@ -360,9 +372,7 @@ export const POST = withErrorHandling(async (
             orgId, namespaceId: nsId, taskId: taskId as string, runId, attempt: failed,
           });
           if (projection.status === "unwritten") {
-            pauseTaskForUnwrittenResumeProjection({
-              orgId, namespaceId: nsId, taskId: taskId as string, runId, attempt: failed,
-            });
+            pauseForUnwrittenProjection(failed);
           }
         }
       };

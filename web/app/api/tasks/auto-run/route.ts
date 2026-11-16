@@ -725,8 +725,10 @@ function readRecordedResumeOutcome(runsDir: string, runId: string): RecordedResu
  * determined (unreadable run record, unreachable route, no recorded attempt on
  * a failed response). This is NOT an attempt outcome and NOT a debit — it
  * pauses dispatch using the existing auto_run_paused fields so the gap is
- * visible instead of spinning silently. Guarded: a task that moved on to a
- * different run is never paused for this one.
+ * visible instead of spinning silently. Guarded: a task that closed, was reset
+ * (series moved past the observed one), or moved on to a different run
+ * (authoritative task_run_scope wins over a stale last_run_id) is never
+ * paused for this one.
  */
 function pauseTaskForUnknownResumeOutcome(input: {
   orgId: string;
@@ -734,15 +736,13 @@ function pauseTaskForUnknownResumeOutcome(input: {
   taskId: string;
   runId: string;
   detail: string;
+  series?: number;
 }): boolean {
   const result = taskMutateMetadata(input.orgId, input.taskId, (metadata, task) => {
     // A late unknown must never pause a task that closed or moved on.
     if (isTerminalTaskStatus(task.status)) return null;
-    const scope = metadata.task_run_scope;
-    const scopeRunId = scope && typeof scope === "object" && !Array.isArray(scope)
-      ? (scope as { runId?: unknown }).runId
-      : undefined;
-    if (metadata.last_run_id !== input.runId && scopeRunId !== input.runId) {
+    if (input.series !== undefined && currentResumeSeries(metadata) !== input.series) return null;
+    if (!taskPointsAtRun(metadata, input.taskId, input.runId)) {
       return null;
     }
     return {
@@ -938,6 +938,7 @@ async function resumeExistingRun(
       taskId,
       runId,
       detail: `resume route returned ${resumeRes.status} with the attempt still preparing`,
+      series: recorded.series,
     });
     return {
       triggered: false,
@@ -977,7 +978,15 @@ async function resumeExistingRun(
     : resumeRes
       ? `resume route returned ${resumeRes.status} without recording an attempt`
       : "resume request failed before a response";
-  const paused = pauseTaskForUnknownResumeOutcome({ orgId, namespaceId, taskId, runId, detail });
+  const paused = pauseTaskForUnknownResumeOutcome({
+    orgId,
+    namespaceId,
+    taskId,
+    runId,
+    detail,
+    // fence on the observed series whenever the record yielded one
+    series: recorded.readable ? recorded.series : undefined,
+  });
   return {
     triggered: false,
     taskId,

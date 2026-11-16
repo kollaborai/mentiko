@@ -98,6 +98,23 @@ jest.mock("@/lib/auth/session-token", () => ({
   mintSessionToken: (input: unknown) => mockMintSessionToken(input),
 }));
 
+// P2-2 seams (#142 r3): force an unwritten projection + a lost pause write so
+// the route's CHECK of the pause result is observable. Default: passthrough.
+let mockProjectionResult: { status: "projected"; retries: number } | { status: "unwritten" } | undefined;
+let mockPauseResult: boolean | undefined;
+jest.mock("@/lib/runs/resume-attempt", () => {
+  const actual = jest.requireActual("@/lib/runs/resume-attempt");
+  return {
+    ...actual,
+    projectConfirmedResumeFailure: (...args: unknown[]) => (mockProjectionResult
+      ? mockProjectionResult
+      : (actual.projectConfirmedResumeFailure as (...a: unknown[]) => unknown)(...args)),
+    pauseTaskForUnwrittenResumeProjection: (...args: unknown[]) => (mockPauseResult !== undefined
+      ? mockPauseResult
+      : (actual.pauseTaskForUnwrittenResumeProjection as (...a: unknown[]) => boolean)(...args)),
+  };
+});
+
 jest.mock("@/lib/runner-v2/routing", () => ({
   hasCompletedTrigger: () => true,
   routingContextForEvents: () => ({ completed: new Set() }),
@@ -203,6 +220,8 @@ beforeEach(() => {
   mockGetSecretsEnvVars = () => ({});
   mockResolveProfileEnvVars = (_ns, _org, env) => ({ ...env });
   mockGetProfile = () => null;
+  mockProjectionResult = undefined;
+  mockPauseResult = undefined;
 });
 
 afterAll(() => {
@@ -682,6 +701,32 @@ describe("POST /api/runs/[id]/resume (route-owned attempts)", () => {
     });
     expect(repersisted.id).toBe(job.id);
     expect(JSON.stringify(readRecord(runsDir))).not.toContain("vault-only-debug-value");
+  });
+
+  it("an unwritten pause for an unprojected failure is CHECKED and logged, never silently assumed", async () => {
+    const taskId = seedTask010("run-resume-1");
+    const runsDir = writeRun(validRun({ chainId: undefined, taskId })); // no chain snapshot
+    mockProjectionResult = { status: "unwritten" };
+    mockPauseResult = false;
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      const res = await POST(
+        makeRequest("run-resume-1", { [RESUME_SOURCE_HEADER]: "auto-run" }) as never,
+        { params: Promise.resolve({ id: "run-resume-1" }) } as never,
+      );
+      expect(res.status).toBe(404);
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("could not be written"),
+      );
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("replays on the next resume entry"),
+      );
+    } finally {
+      mockProjectionResult = undefined;
+      mockPauseResult = undefined;
+      errorSpy.mockRestore();
+    }
   });
 
   // ---- acceptance fence for every task-linked attempt (#142 round 3) ----
