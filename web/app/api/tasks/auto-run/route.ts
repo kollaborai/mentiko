@@ -825,12 +825,15 @@ async function resumeExistingRun(
   }
 
   /**
-   * Guarded accepted projection (issue #142 round 2): ONE compare-and-set
+   * Guarded accepted projection (issue #142 round 3): ONE compare-and-set
    * write marks the task in_progress with execution-start metadata, fenced by
    * the CURRENT task row — a reset (series moved), a run replacement or
    * reassignment (scope/last_run_id no longer names this run), or a close
-   * means the late acceptance is stale and changes NOTHING. Lost CAS races
-   * retry against a fresh row; a fenced projection is a silent no-op.
+   * means the late acceptance is stale and changes NOTHING — AND by the
+   * DURABLE accepted attempt id: the run record's current resumeAttempt is
+   * re-read inside the CAS loop, and an out-of-order response for an OLDER
+   * attempt on the same run and series changes nothing. Lost CAS races retry
+   * against a fresh row; a fenced projection is a silent no-op.
    */
   const applyAcceptedResumeMetadata = async (attempt: {
     attemptId?: string;
@@ -846,6 +849,11 @@ async function resumeExistingRun(
         if (isTerminalTaskStatus(currentTask.status)) return;
         if (attempt.series !== undefined && currentResumeSeries(existingMeta) !== attempt.series) return;
         if (!taskPointsAtRun(existingMeta, taskId, runId)) return;
+        // Durable-attempt fence: project only when the run's CURRENT
+        // resumeAttempt is the accepted attempt this response belongs to.
+        const durable = readRecordedResumeOutcome(runsDir, runId);
+        if (!durable.readable || durable.outcome !== "accepted") return;
+        if (attempt.attemptId === undefined || durable.attemptId !== attempt.attemptId) return;
         const landed = taskUpdateIfUnchanged(orgId, taskId, currentTask.revision, {
           status: "in_progress",
           metadata: executionStartedLifecycleMetadata({
@@ -861,6 +869,8 @@ async function resumeExistingRun(
       /* non-fatal */
     }
   };
+
+  const runsDir = resumeOutcomeRunsDir(taskId, runId, namespaceId, orgId, metadata);
 
   if (resumeRes?.ok) {
     const accepted = await resumeRes.json().catch(() => ({})) as {
@@ -886,7 +896,6 @@ async function resumeExistingRun(
 
   // Any other non-2xx, or a transport loss: the ROUTE owns the outcome. Read
   // the authoritative record it wrote; never guess from the response.
-  const runsDir = resumeOutcomeRunsDir(taskId, runId, namespaceId, orgId, metadata);
   const recorded = readRecordedResumeOutcome(runsDir, runId);
 
   if (recorded.readable && recorded.outcome === "accepted") {

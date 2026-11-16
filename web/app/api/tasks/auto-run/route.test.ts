@@ -2763,6 +2763,36 @@ describe("POST /api/tasks/auto-run", () => {
     expect(mutate({ last_run_id: "run-outcome", resume_series: 2 }, { status: "open" })).toBeNull();
   });
 
+  it("an out-of-order accepted response for an OLDER attempt on the same run and series changes nothing", async () => {
+    // The response belongs to attempt-1; by the time the projection runs, the
+    // durable run record holds a LATER accepted attempt (same run, same
+    // series) — a delayed response for the superseded attempt must not
+    // project over it.
+    const taskRow = { ...resumableTaskFixture({}), revision: 7 };
+    mockTaskGet.mockReturnValue(taskRow);
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(resumableRunRecord());
+    (global.fetch as jest.Mock).mockImplementation(async () => {
+      // while the response was in flight, a LATER attempt on the same run and
+      // series became the durable accepted one
+      mockReadFileSync.mockReturnValue(resumableRunRecord({
+        status: "running",
+        resumeAttempt: { id: "attempt-2-newer", series: 0, taskId: "TASK-RESUME", outcome: "accepted", automatic: true },
+      }));
+      return jsonResponse({
+        data: { success: true, runId: "run-outcome", resumeAttemptId: "attempt-1-older", resumeSeries: 0, resumeOutcome: "accepted" },
+      }, 200);
+    });
+
+    const res = await POST(makeRequest({ taskId: "TASK-RESUME" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({ triggered: true, action: "chain_resume" });
+    expect(mockTaskUpdateIfUnchanged).not.toHaveBeenCalled();
+    expect(mockTaskUpdate).not.toHaveBeenCalled();
+  });
+
   it("an unfenced accepted projection lands as ONE guarded status-and-metadata write", async () => {
     const taskRow = { ...resumableTaskFixture({}), revision: 7 };
     mockTaskGet.mockReturnValue(taskRow);
@@ -2774,9 +2804,13 @@ describe("POST /api/tasks/auto-run", () => {
       taskRow.revision += 1;
       return true;
     });
-    (global.fetch as jest.Mock).mockResolvedValue(jsonResponse({
-      data: { success: true, runId: "run-outcome", resumeAttemptId: "attempt-late", resumeSeries: 0, resumeOutcome: "accepted" },
-    }, 200));
+    (global.fetch as jest.Mock).mockImplementation(async () => {
+      // the route accepted durably before answering
+      mockReadFileSync.mockReturnValue(acceptedRunRecord(0));
+      return jsonResponse({
+        data: { success: true, runId: "run-outcome", resumeAttemptId: "attempt-late", resumeSeries: 0, resumeOutcome: "accepted" },
+      }, 200);
+    });
 
     const res = await POST(makeRequest({ taskId: "TASK-RESUME" }) as never);
     const body = await res.json();
