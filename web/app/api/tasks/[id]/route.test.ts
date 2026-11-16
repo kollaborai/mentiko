@@ -111,8 +111,25 @@ describe("PATCH /api/tasks/[id] resume-series reset fence", () => {
     expect(metadata.auto_run).toBeUndefined();
   });
 
+  it("TRULY CONCURRENT resets from the same stale snapshot serialize into distinct series (real sqlite store)", async () => {
+    const taskId = seedTask({ auto_run: true, last_run_id: "run-1", resume_series: 0, auto_run_retries: 2 });
+
+    // Five resets in flight together, every one carrying the SAME stale client
+    // snapshot (resume_series 1). The claim serializes them; each series is
+    // computed from the row the previous reset just wrote.
+    const inFlight = Array.from({ length: 5 }, () =>
+      PATCH(
+        patchRequest(taskId, { metadata: JSON.stringify({ resume_series: 1, auto_run: true }) }) as never,
+        { params: Promise.resolve({ id: taskId }) } as never,
+      ));
+    const results = await Promise.all(inFlight);
+    for (const res of results) expect(res.status).toBe(200);
+
+    // five landed resets = five distinct increments, zero lost updates
+    expect(metadataOf(taskId).resume_series).toBe(5);
+  });
+
   it("returns a visible retryable conflict when a resume holds the run's claim, and writes nothing", async () => {
-    jest.setTimeout(20_000);
     const taskId = seedTask({ auto_run: true, last_run_id: "run-1", resume_series: 2 });
     // Hold the resume claim exactly as an in-flight resume route would.
     const release = acquireExclusiveFileClaim(
@@ -133,5 +150,5 @@ describe("PATCH /api/tasks/[id] resume-series reset fence", () => {
     } finally {
       release();
     }
-  });
+  }, 20_000);
 });

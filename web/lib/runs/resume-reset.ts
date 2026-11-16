@@ -49,32 +49,86 @@ export function taskResumeRunId(
  * Run `fn` while holding the .resume-claim of the run the task currently
  * points at. No current run -> nothing to serialize against, run directly.
  * Busy claim -> ResumeResetConflictError (never an optimistic write).
+ *
+ * Synchronous variant: the claim wait blocks the event loop (bounded
+ * Atomics.wait inside acquireExclusiveFileClaim). Prefer
+ * withTaskResumeClaimAsync on every async request path (#142 round 3).
  */
 export function withTaskResumeClaim<T>(
   input: { orgId: string; namespaceId?: string; taskId: string },
   fn: () => T,
 ): T {
+  const release = acquireTaskResumeClaimSync(input);
+  try {
+    return fn();
+  } finally {
+    release?.();
+  }
+}
+
+/**
+ * Async variant (#142 round 3): the guarded task write runs INSIDE the claim,
+ * and the claim WAIT never blocks the Node event loop — each retry defers to
+ * the event loop (setTimeout) instead of a synchronous Atomics.wait, so a
+ * same-process resume awaiting cleanup keeps making progress while a reset
+ * waits out its budget. Busy past waitTimeoutMs -> ResumeResetConflictError,
+ * a visible retryable conflict; never an optimistic unserialized write.
+ */
+export async function withTaskResumeClaimAsync<T>(
+  input: { orgId: string; namespaceId?: string; taskId: string },
+  fn: () => T | Promise<T>,
+  options: { waitTimeoutMs?: number; retryDelayMs?: number } = {},
+): Promise<T> {
+  const waitTimeoutMs = options.waitTimeoutMs ?? 5_000;
+  const retryDelayMs = options.retryDelayMs ?? 25;
+  const runId = taskResumeClaimRunId(input);
+  if (!runId) return fn();
+  const claimDir = join(resolveLinkRunsDir(input.namespaceId || "default", input.orgId), runId, ".resume-claim");
+  const deadline = Date.now() + waitTimeoutMs;
+  let release: (() => void) | undefined;
+  while (true) {
+    try {
+      // waitTimeoutMs 0: one non-blocking attempt per loop; the waiting
+      // happens in the awaited setTimeout below.
+      release = acquireExclusiveFileClaim(claimDir, { waitTimeoutMs: 0 });
+      break;
+    } catch (error) {
+      if (!(error instanceof ExclusiveFileClaimBusyError)) throw error;
+      if (Date.now() >= deadline) throw new ResumeResetConflictError(runId);
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+    }
+  }
+  try {
+    return await fn();
+  } finally {
+    release();
+  }
+}
+
+function taskResumeClaimRunId(
+  input: { orgId: string; namespaceId?: string; taskId: string },
+): string | undefined {
   const task = taskGet(input.orgId, input.taskId, input.namespaceId);
   const metadata =
     task?.metadata && typeof task.metadata === "object" && !Array.isArray(task.metadata)
       ? task.metadata as Record<string, unknown>
       : undefined;
-  const runId = taskResumeRunId(metadata);
-  if (!runId) return fn();
+  return taskResumeRunId(metadata);
+}
+
+function acquireTaskResumeClaimSync(
+  input: { orgId: string; namespaceId?: string; taskId: string },
+): (() => void) | undefined {
+  const runId = taskResumeClaimRunId(input);
+  if (!runId) return undefined;
   const claimDir = join(resolveLinkRunsDir(input.namespaceId || "default", input.orgId), runId, ".resume-claim");
-  let release: () => void;
   try {
-    release = acquireExclusiveFileClaim(claimDir, { waitTimeoutMs: 5_000, retryDelayMs: 25 });
+    return acquireExclusiveFileClaim(claimDir, { waitTimeoutMs: 5_000, retryDelayMs: 25 });
   } catch (error) {
     if (error instanceof ExclusiveFileClaimBusyError) {
       throw new ResumeResetConflictError(runId);
     }
     throw error;
-  }
-  try {
-    return fn();
-  } finally {
-    release();
   }
 }
 

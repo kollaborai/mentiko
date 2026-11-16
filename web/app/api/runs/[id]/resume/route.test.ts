@@ -28,6 +28,16 @@ jest.mock("@/lib/auth/rbac-auth", () => ({
   requirePermission: async () => null,
 }));
 
+// For the reset-vs-resume ordering test: the tasks PATCH route must run under
+// THIS file's config/link mocks so both routes contend for the same claim dir.
+jest.mock("@/lib/auth/api-auth", () => ({
+  requirePermission: () => (handler: unknown) => handler,
+}));
+
+jest.mock("@/lib/middleware", () => ({
+  enforceGuestWrites: async () => undefined,
+}));
+
 const mockPtyRemove = jest.fn(async (..._args: unknown[]) => undefined);
 jest.mock("@/lib/pty/pty-client", () => ({
   pty: { remove: (...args: unknown[]) => mockPtyRemove(...args) },
@@ -105,6 +115,7 @@ jest.mock("@/lib/runs/run-process", () => ({
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { POST } from "./route";
+import { PATCH as patchTask } from "@/app/api/tasks/[id]/route";
 import { RESUME_SOURCE_HEADER } from "@/lib/runs/resume-attempt";
 // REAL sqlite task store, isolated under the mocked config globalRoot.
 import { closeAll, taskCreate, taskGet } from "@/lib/tasks/task-store";
@@ -671,5 +682,89 @@ describe("POST /api/runs/[id]/resume (route-owned attempts)", () => {
     });
     expect(repersisted.id).toBe(job.id);
     expect(JSON.stringify(readRecord(runsDir))).not.toContain("vault-only-debug-value");
+  });
+
+  // ---- acceptance fence for every task-linked attempt (#142 round 3) ----
+
+  it("a MANUAL resume of a replaced run (task re-pointed elsewhere) is refused, never accepted", async () => {
+    const taskId = seedTask010("run-replacement-2");
+    const runsDir = writeRun(validRun({ chainId: undefined, taskId }));
+    writeChainSnapshot(runsDir);
+
+    const res = await POST(makeRequest("run-resume-1") as never, { params: Promise.resolve({ id: "run-resume-1" }) } as never);
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.error.message).toContain("no longer points at run run-resume-1");
+
+    const record = readRecord(runsDir);
+    expect(record.status).toBe("failed");
+    expect(record.resumeAttempt.outcome).toBe("preparing");
+    expect(mockSpawn).not.toHaveBeenCalled();
+  });
+
+  it("a MANUAL resume is fenced by the AUTHORITATIVE task_run_scope, not just last_run_id", async () => {
+    // The scope is the authoritative claim: when one exists and names another
+    // run, a manual resume of the old run is refused even though a stale
+    // last_run_id still matches it.
+    const taskId = seedTask010("run-resume-1", {
+      task_run_scope: { taskId: "TASK-OTHER", runId: "run-replacement-3" },
+    });
+    const runsDir = writeRun(validRun({ chainId: undefined, taskId }));
+    writeChainSnapshot(runsDir);
+
+    const res = await POST(makeRequest("run-resume-1") as never, { params: Promise.resolve({ id: "run-resume-1" }) } as never);
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.error.message).toContain("no longer points at run run-resume-1");
+    expect(readRecord(runsDir).resumeAttempt.outcome).toBe("preparing");
+    expect(mockSpawn).not.toHaveBeenCalled();
+  });
+
+  it("a reset racing a LIVE resume waits for the claim and lands after acceptance — the resume is never fenced out", async () => {
+    const taskId = seedTask010("run-resume-1");
+    const runsDir = writeRun(validRun({ chainId: undefined, taskId }));
+    writeChainSnapshot(runsDir);
+
+    // Hold the resume between its acceptance write and its dispatch by
+    // deferring the session-token mint; the .resume-claim stays held.
+    let releaseMint: (token: string) => void = () => {};
+    const mintGate = new Promise<string>((resolve) => { releaseMint = resolve; });
+    mockMintSessionToken = () => mintGate;
+
+    const resume = POST(
+      makeRequest("run-resume-1", { [RESUME_SOURCE_HEADER]: "auto-run" }) as never,
+      { params: Promise.resolve({ id: "run-resume-1" }) } as never,
+    );
+    // Wait until acceptance has LANDED while the claim is still held (the
+    // mint gate keeps the route inside its try block past the acceptance).
+    for (let i = 0; i < 400; i += 1) {
+      const attempt = readRecord(runsDir).resumeAttempt as { outcome?: string } | undefined;
+      if (attempt?.outcome === "accepted") break;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(readRecord(runsDir).resumeAttempt.outcome).toBe("accepted");
+
+    // Fire the reset while the resume still holds the claim.
+    const reset = patchTask(
+      new Request(`http://localhost:3200/api/tasks/${taskId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ metadata: JSON.stringify({ resume_series: 99 }) }),
+      }) as never,
+      { params: Promise.resolve({ id: taskId }) } as never,
+    );
+
+    // Let the resume finish: the reset must WAIT (async), not 409 and not
+    // interleave its write between the resume's read and its acceptance.
+    releaseMint("test-session-token");
+    const [resumeRes, resetRes] = await Promise.all([resume, reset]);
+    expect(resumeRes.status).toBe(200);
+    expect(resetRes.status).toBe(200);
+
+    // Acceptance recorded at the pre-reset series; the reset then landed its
+    // own increment — two distinct series, strictly ordered.
+    expect(readRecord(runsDir).resumeAttempt).toMatchObject({ outcome: "accepted", series: 0 });
+    const task = taskGet("default", taskId, "default")!;
+    expect((task.metadata as Record<string, unknown>).resume_series).toBe(1);
   });
 });

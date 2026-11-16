@@ -486,13 +486,13 @@ export const POST = withErrorHandling(async (
       const currentIncomplete = current.agents.filter((agent) => agent.status !== "complete");
       if (currentIncomplete.length === 0) throw new Conflict("All agents already completed");
 
-      // Acceptance revalidation (issue #142 round 2): the task row is re-read
+      // Acceptance revalidation (issue #142 round 3): the task row is re-read
       // HERE, inside the acceptance transition, so a reset, reassignment, run
       // replacement or close that landed while this request was preparing can
-      // never have OLD work accepted onto it. Automatic attempts (the scanner
-      // loop) carry the full fence; a manual user-initiated resume of a closed
-      // task is still refused, but scope/series are not enforced so the Run
-      // page can resume a historical run the task has moved past.
+      // never have OLD work accepted onto it. The full fence — ownership,
+      // scope and series — applies to EVERY task-linked attempt, manual ones
+      // too: a manual resume of a replaced or reset task is refused exactly
+      // like an automatic one.
       if (taskId) {
         const currentTask = taskGet(orgId, taskId, nsId);
         if (!currentTask) {
@@ -501,17 +501,15 @@ export const POST = withErrorHandling(async (
         if (isTerminalTaskStatus(currentTask.status)) {
           throw new Conflict(`Task ${taskId} is closed; resume not accepted`);
         }
-        if (automatic) {
-          const currentTaskMetadata =
-            currentTask.metadata && typeof currentTask.metadata === "object" && !Array.isArray(currentTask.metadata)
-              ? currentTask.metadata as Record<string, unknown>
-              : {};
-          if (currentResumeSeries(currentTaskMetadata) !== series) {
-            throw new Conflict(`Task ${taskId} was reset while this resume was in flight; retry`);
-          }
-          if (!taskPointsAtRun(currentTaskMetadata, taskId, runId)) {
-            throw new Conflict(`Task ${taskId} no longer points at run ${runId}; resume not accepted`);
-          }
+        const currentTaskMetadata =
+          currentTask.metadata && typeof currentTask.metadata === "object" && !Array.isArray(currentTask.metadata)
+            ? currentTask.metadata as Record<string, unknown>
+            : {};
+        if (currentResumeSeries(currentTaskMetadata) !== series) {
+          throw new Conflict(`Task ${taskId} was reset while this resume was in flight; retry`);
+        }
+        if (!taskPointsAtRun(currentTaskMetadata, taskId, runId)) {
+          throw new Conflict(`Task ${taskId} no longer points at run ${runId}; resume not accepted`);
         }
       }
 

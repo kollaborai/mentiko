@@ -53,7 +53,7 @@ import { mintSessionToken } from "@/lib/auth/session-token";
 import { resolveRunAgentProfile } from "@/lib/agents/run-agent-profile";
 import { shouldRecordTaskExecutionMetadata } from "@/lib/runs/run-provenance";
 import { executionStartedLifecycleMetadata } from "@/lib/orchestration/task-lifecycle-metadata";
-import { ResumeResetConflictError, withTaskResumeClaim } from "@/lib/runs/resume-reset";
+import { ResumeResetConflictError, withTaskResumeClaimAsync } from "@/lib/runs/resume-reset";
 import { mintAdHocGenerationJobIdentity } from "@/lib/generation/generation-job-identity";
 
 const SAFE_RUN_ID_RE = /^run-[A-Za-z0-9_-]{1,120}$/;
@@ -754,23 +754,28 @@ export async function startChainRun({
       }, namespaceId);
     };
     try {
-      // Run replacement (#142 round 2): this write re-points the task at the
+      // Run replacement (#142 round 3): this write re-points the task at the
       // NEW run, so it must not interleave with a resume acceptance of the
-      // OLD run. It runs under the old run's .resume-claim when one is in
-      // flight. A still-busy claim after the wait falls through to the plain
-      // write — the launch already happened, and the resume route revalidates
-      // task scope at its own acceptance, so neither side lands half-serialized.
-      try {
-        withTaskResumeClaim({ orgId, namespaceId, taskId: executionTaskId }, recordExecutionRun);
-      } catch (error) {
-        if (!(error instanceof ResumeResetConflictError)) throw error;
-        console.warn(
-          `[chain-run] task ${executionTaskId} re-point raced a live resume of the previous run; writing unserialized: ${error.message}`,
+      // OLD run. It runs under the old run's .resume-claim — never an
+      // unserialized fallback: a resume holding the claim keeps this waiting
+      // (async, never blocking the event loop), and a claim still busy past
+      // the budget FAILS VISIBLY instead of writing around the fence.
+      await withTaskResumeClaimAsync(
+        { orgId, namespaceId, taskId: executionTaskId },
+        recordExecutionRun,
+        { waitTimeoutMs: 15_000 },
+      );
+    } catch (error) {
+      if (error instanceof ResumeResetConflictError) {
+        // The re-point did NOT land: the task still names the previous run.
+        // Loud and actionable — silent here would strand the task pointing at
+        // a superseded run with nothing in the logs explaining it.
+        console.error(
+          `[chain-run] task ${executionTaskId} re-point to run ${runId} could not be serialized against a live resume of the previous run `
+          + `(${error.message}); retry the re-point once the resume finishes`,
         );
-        recordExecutionRun();
       }
-    } catch {
-      // non-critical: don't fail the run if task update fails
+      // non-critical for the launched run itself: don't fail the run start
     }
   }
 

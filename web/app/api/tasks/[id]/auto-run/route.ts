@@ -6,7 +6,7 @@ import { validateTaskId } from "@/lib/tasks/task-store";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { NotFound, BadRequest, Conflict } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { ResumeResetConflictError, withTaskResumeClaim } from "@/lib/runs/resume-reset";
+import { ResumeResetConflictError, withTaskResumeClaimAsync } from "@/lib/runs/resume-reset";
 
 export const dynamic = "force-dynamic";
 
@@ -74,7 +74,7 @@ export const POST = requirePermission("manage_tasks")(
       // enabling auto-run is a reset, and a reset never optimistically
       // succeeds while a resume holds the claim.
       try {
-        withTaskResumeClaim({ orgId, namespaceId, taskId: safeId }, () =>
+        await withTaskResumeClaimAsync({ orgId, namespaceId, taskId: safeId }, () =>
           taskMutateMetadata(orgId, safeId, (metadata) =>
             resetAutoRunMetadata(metadata, body.auto_run), namespaceId));
       } catch (error) {
@@ -90,7 +90,7 @@ export const POST = requirePermission("manage_tasks")(
 
       for (const child of children) {
         try {
-          withTaskResumeClaim({ orgId, namespaceId, taskId: child.id }, () =>
+          await withTaskResumeClaimAsync({ orgId, namespaceId, taskId: child.id }, () =>
             taskMutateMetadata(orgId, child.id, (metadata) =>
               resetAutoRunMetadata(metadata, body.auto_run), namespaceId));
         } catch (error) {
