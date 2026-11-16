@@ -286,7 +286,7 @@ jobs:
       #     .github/workflows/config/gitleaks-blobs.toml suppresses
       #     exactly those literals (default rules otherwise unchanged).
       #     A blob that cannot be extracted fails the job.
-      - name: Run Gitleaks (history + binary blobs, vs merge base)
+      - name: Run Gitleaks (history + all added blobs, vs merge base)
         env:
           EVENT_NAME: ${{ github.event_name }}
           PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
