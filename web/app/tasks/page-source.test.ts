@@ -39,4 +39,14 @@ describe("tasks page source contract", () => {
     const occurrences = source.split("onToggleAutoRunPause={handleToggleAutoRunPause}").length - 1;
     expect(occurrences).toBe(3);
   });
+
+  it("clears resume_last_error at every retry reset (nulls so the server merge cannot keep the stale error, #142)", () => {
+    // every server PATCH that resets auto_run_retries must also null the
+    // resume error; undefined would be dropped by JSON.stringify and the
+    // metadata merge would preserve the stale value.
+    const resets = source.split("auto_run_retries: 0").length - 1;
+    const cleared = source.split("resume_last_error: null").length - 1;
+    expect(resets).toBeGreaterThanOrEqual(4);
+    expect(cleared).toBeGreaterThanOrEqual(3); // assign-chain, toggle fallback, retry-task reset
+  });
 });

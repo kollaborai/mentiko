@@ -109,4 +109,24 @@ describe("TaskDetailHeader auto-run failure banner", () => {
     const banner = screen.getByTestId("auto-run-failure-banner");
     expect(banner).toHaveTextContent("chain runner exited nonzero");
   });
+
+  it("a cleared resume error (reset via Retry task) no longer masks a newer run error", () => {
+    // After the retry reset nulls resume_last_error, the next failure --
+    // even one recorded before any execution starts -- is the shown reason,
+    // not the stale resume error from the previous loop (#142 review P2).
+    renderHeader(makeTask({
+      chainBinding: {
+        chain_id: "release-review",
+        auto_run: true,
+        auto_run_retries: 1,
+        last_run_error: "newer failure after reset",
+      },
+      metadata: {
+        resume_last_error: null,
+      },
+    }));
+
+    const banner = screen.getByTestId("auto-run-failure-banner");
+    expect(banner).toHaveTextContent("newer failure after reset");
+  });
 });

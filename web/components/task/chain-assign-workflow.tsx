@@ -1085,6 +1085,10 @@ export function ChainAssignWorkflow({
                 generation_rejection_job_id: null,
                 generation_rejection_fingerprints: null,
                 generation_last_error: null,
+                // a fresh attempt must not wear the previous run's or the
+                // previous resume loop's error as its current reason (#142)
+                last_run_error: null,
+                resume_last_error: null,
                 auto_run_retries: 0,
               };
               await fetchWithNamespace(`/api/tasks/${encodeURIComponent(task.id)}${wsParam}`, {

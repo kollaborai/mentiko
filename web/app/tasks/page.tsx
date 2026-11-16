@@ -553,7 +553,11 @@ function TasksPageContent() {
         chain_name: chainName,
         auto_run: true,
         auto_run_retries: 0,
-        last_run_error: undefined,
+        // nulls, not undefined: the server PATCH merges metadata, and
+        // JSON.stringify drops undefined keys, so undefined would keep the
+        // stale errors alive (#142 review P2).
+        last_run_error: null,
+        resume_last_error: null,
       };
       await fetchWithNamespace(`/api/tasks/${id}${wsParam}`, {
         method: "PATCH",
@@ -625,6 +629,7 @@ function TasksPageContent() {
               last_run_id: runId,
               last_run_status: "running",
               last_run_error: undefined,
+              resume_last_error: undefined,
               auto_run_retries: 0,
             }
           : binding
@@ -653,7 +658,7 @@ function TasksPageContent() {
         const metadata = {
           ...selected.chainBinding,
           auto_run: autoRun,
-          ...(autoRun ? { auto_run_retries: 0, last_run_error: undefined } : {}),
+          ...(autoRun ? { auto_run_retries: 0, last_run_error: null, resume_last_error: null } : {}),
         };
         await fetchWithNamespace(`/api/tasks/${id}${wsParam}`, {
           method: "PATCH",
@@ -667,7 +672,7 @@ function TasksPageContent() {
           ? {
               ...binding,
               auto_run: autoRun,
-              ...(autoRun ? { auto_run_retries: 0, last_run_error: undefined } : {}),
+              ...(autoRun ? { auto_run_retries: 0, last_run_error: undefined, resume_last_error: undefined } : {}),
             }
           : binding
       );
@@ -692,7 +697,10 @@ function TasksPageContent() {
       ...selected.chainBinding,
       auto_run: true,
       auto_run_retries: 0,
-      last_run_error: undefined,
+      // nulls survive the server-side metadata merge (undefined keys are
+      // dropped by JSON.stringify and the stale chainBinding copy would win)
+      last_run_error: null,
+      resume_last_error: null,
     };
 
     await fetchWithNamespace(`/api/tasks/${id}${wsParam}`, {
@@ -708,6 +716,7 @@ function TasksPageContent() {
             auto_run: true,
             auto_run_retries: 0,
             last_run_error: undefined,
+            resume_last_error: undefined,
           }
         : binding
     );
