@@ -33,7 +33,7 @@ describe("typed job worker AI gateway source contract", () => {
     const successBoundary = source.indexOf("// Task-generation completion has a server-side import step.");
     const completionSource = source.slice(successBoundary);
 
-    expect(completionSource).toContain('const callbackStatus = job.type === "task" ? "complete" : job.status;');
+    expect(completionSource).toContain('const callbackStatus = "complete";');
     expect(completionSource).toContain('job.status = job.type === "task" ? "running" : "complete";');
     expect(completionSource).toContain("await notifyCompletion(callbackStatus);");
   });

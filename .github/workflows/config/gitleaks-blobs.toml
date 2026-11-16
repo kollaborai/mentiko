@@ -1,0 +1,27 @@
+# Gitleaks config for the CI blob scan (ci.yml security-scan, scan b only).
+#
+# The blob scan stages every blob the PR range introduces under its object
+# sha with no extension and dir-scans the staging directory, so gitleaks'
+# default path ignores (package-lock.json, yarn.lock, *.png, *.svg, *.bin,
+# ...) and extension skips cannot hide anything. Whole-blob scanning also
+# re-reads unchanged lines of modified files, which resurfaces main's
+# triaged pre-existing findings. This config keeps the full default ruleset
+# and suppresses exactly those triaged literals — nothing broader:
+#
+# - mentiko-vault-crypto-v1 / mentiko-vault-encryption-v1: key-derivation
+#   domain-separation labels (HMAC info strings) hardcoded by design in
+#   web/lib/runner-v2/job-worker.ts and the generated
+#   lib/runner-job-worker.js. Public constants, not credentials; no real
+#   secret equals either literal, so allowing them can mask nothing.
+#
+# When a new triaged finding trips this scan, add its exact literal here
+# with a one-line justification. Never add a shape, a path, or a prefix.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "triaged non-secret literals reintroduced by whole-blob scanning"
+regexes = [
+  'mentiko-vault-crypto-v1',
+  'mentiko-vault-encryption-v1',
+]

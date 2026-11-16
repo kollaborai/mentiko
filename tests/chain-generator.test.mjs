@@ -22,6 +22,9 @@ const TMP = `/tmp/test-chain-gen-${process.pid}`;
 const REPO_ROOT = join(import.meta.dirname, "..");
 const REAL_LIB = join(REPO_ROOT, "lib");
 const BIN_DIR = dirname(execFileSync("which", ["bash"], { encoding: "utf-8" }).trim());
+// the generator execs plain `node`; the runner's node lives outside
+// /usr/bin (setup-node toolcache), so pin the running node's bin dir too.
+const NODE_BIN_DIR = dirname(process.execPath);
 
 // test copies of the script + its dependencies live here
 const TEST_LIB = join(TMP, "lib");
@@ -274,7 +277,7 @@ function runGen(args, extraEnv = {}) {
     env: {
       ...process.env,
       HOME: process.env.HOME || "/tmp",
-      PATH: `${MOCK_BIN}:${BIN_DIR}:/usr/bin:/bin`,
+      PATH: `${MOCK_BIN}:${BIN_DIR}:${NODE_BIN_DIR}:/usr/bin:/bin`,
       MENTIKO_GLOBAL_ROOT: TMP,
       DEFAULT_CLI: "glm",
       ...extraEnv,
