@@ -26,7 +26,7 @@ import {
   removeRunFromSnapshot,
   type RunsSnapshot,
 } from "@/lib/runs/auto-run";
-import { taskAddDep, taskClaimMetadataKeyIfUnset, taskGet, taskMutateMetadata, taskUpdate } from "@/lib/tasks/task-store";
+import { taskAddDep, taskClaimMetadataKeyIfUnset, taskGet, taskMutateMetadata, taskUpdate, taskUpdateIfUnchanged } from "@/lib/tasks/task-store";
 import { isTaskWorkMode, resolveTaskWorkMode } from "@/lib/tasks/work-mode";
 import { chainHasDeliveryAgent } from "@/lib/tasks/completion-audit-delivery-gate";
 import { normalizeTaskChainBindingMetadata } from "@/lib/tasks/task-chain-binding";
@@ -57,8 +57,10 @@ import {
   TASK_RUN_SCOPE_METADATA_KEY,
 } from "@/lib/tasks/task-run-locator";
 import {
+  currentResumeSeries,
   RESUME_SOURCE_AUTO_RUN,
   RESUME_SOURCE_HEADER,
+  taskPointsAtRun,
   type ResumeAttemptOutcome,
 } from "@/lib/runs/resume-attempt";
 import { unwrapAgentJsonOutput } from "@/lib/tasks/agent-json-output";
@@ -673,7 +675,7 @@ function resumeOutcomeRunsDir(
 
 type RecordedResumeOutcome =
   | { readable: false; error: string }
-  | { readable: true; outcome?: ResumeAttemptOutcome; reason?: string; attemptId?: string };
+  | { readable: true; outcome?: ResumeAttemptOutcome; reason?: string; attemptId?: string; series?: number };
 
 /**
  * Read the AUTHORITATIVE resume outcome the route recorded on run.json. The
@@ -701,7 +703,7 @@ function readRecordedResumeOutcome(runsDir: string, runId: string): RecordedResu
   if (!attempt || typeof attempt !== "object" || Array.isArray(attempt)) {
     return { readable: true };
   }
-  const candidate = attempt as { id?: unknown; outcome?: unknown; reason?: unknown };
+  const candidate = attempt as { id?: unknown; outcome?: unknown; reason?: unknown; series?: unknown };
   if (
     (candidate.outcome === "preparing" || candidate.outcome === "failed" || candidate.outcome === "accepted")
     && typeof candidate.id === "string"
@@ -711,6 +713,7 @@ function readRecordedResumeOutcome(runsDir: string, runId: string): RecordedResu
       outcome: candidate.outcome,
       ...(typeof candidate.reason === "string" ? { reason: candidate.reason } : {}),
       attemptId: candidate.id,
+      ...(typeof candidate.series === "number" ? { series: candidate.series } : {}),
     };
   }
   // A malformed attempt record cannot prove any outcome.
@@ -773,30 +776,52 @@ async function resumeExistingRun(
     transportError = error instanceof Error ? error.message : String(error);
   }
 
-  const applyAcceptedResumeMetadata = async (): Promise<void> => {
+  /**
+   * Guarded accepted projection (issue #142 round 2): ONE compare-and-set
+   * write marks the task in_progress with execution-start metadata, fenced by
+   * the CURRENT task row — a reset (series moved), a run replacement or
+   * reassignment (scope/last_run_id no longer names this run), or a close
+   * means the late acceptance is stale and changes NOTHING. Lost CAS races
+   * retry against a fresh row; a fenced projection is a silent no-op.
+   */
+  const applyAcceptedResumeMetadata = async (attempt: {
+    attemptId?: string;
+    series?: number;
+  }): Promise<void> => {
     try {
-      const currentTask = taskGet(orgId, taskId, namespaceId);
-      const existingMeta = currentTask?.metadata && typeof currentTask.metadata === "object"
-        ? currentTask.metadata as Record<string, unknown>
-        : metadata;
-      taskUpdate(orgId, taskId, {
-        status: "in_progress",
-        metadata: {
-          ...executionStartedLifecycleMetadata({
+      for (let casAttempt = 0; casAttempt < 3; casAttempt += 1) {
+        const currentTask = taskGet(orgId, taskId, namespaceId);
+        if (!currentTask || currentTask.revision === undefined) return;
+        const existingMeta = currentTask.metadata && typeof currentTask.metadata === "object"
+          ? currentTask.metadata as Record<string, unknown>
+          : {};
+        if (isTerminalTaskStatus(currentTask.status)) return;
+        if (attempt.series !== undefined && currentResumeSeries(existingMeta) !== attempt.series) return;
+        if (!taskPointsAtRun(existingMeta, taskId, runId)) return;
+        const landed = taskUpdateIfUnchanged(orgId, taskId, currentTask.revision, {
+          status: "in_progress",
+          metadata: executionStartedLifecycleMetadata({
             taskId,
             metadata: existingMeta,
             runId,
             chainId: typeof existingMeta.chain_id === "string" ? existingMeta.chain_id : undefined,
           }),
-        },
-      }, namespaceId);
+        }, namespaceId);
+        if (landed) return;
+      }
     } catch {
       /* non-fatal */
     }
   };
 
   if (resumeRes?.ok) {
-    await applyAcceptedResumeMetadata();
+    const accepted = await resumeRes.json().catch(() => ({})) as {
+      data?: { resumeAttemptId?: string; resumeSeries?: number };
+    };
+    await applyAcceptedResumeMetadata({
+      attemptId: accepted.data?.resumeAttemptId,
+      series: accepted.data?.resumeSeries,
+    });
     return { triggered: true, taskId, runId, action: "chain_resume" };
   }
 
@@ -818,8 +843,12 @@ async function resumeExistingRun(
 
   if (recorded.readable && recorded.outcome === "accepted") {
     // The resume took effect even though the response was lost or rejected.
-    // A late accepted outcome is never relabeled failed by this scanner.
-    await applyAcceptedResumeMetadata();
+    // A late accepted outcome is never relabeled failed by this scanner, and
+    // its projection is fenced against whatever moved on since acceptance.
+    await applyAcceptedResumeMetadata({
+      attemptId: recorded.attemptId,
+      series: recorded.series,
+    });
     return {
       triggered: true,
       taskId,

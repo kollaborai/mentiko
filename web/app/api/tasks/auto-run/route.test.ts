@@ -84,12 +84,14 @@ const mockTaskUpdate = jest.fn();
 const mockTaskClaimMetadataKeyIfUnset = jest.fn();
 const mockTaskAddDep = jest.fn();
 const mockTaskMutateMetadata = jest.fn();
+const mockTaskUpdateIfUnchanged = jest.fn();
 jest.mock("@/lib/tasks/task-store", () => ({
   taskGet: (...args: unknown[]) => mockTaskGet(...args),
   taskUpdate: (...args: unknown[]) => mockTaskUpdate(...args),
   taskClaimMetadataKeyIfUnset: (...args: unknown[]) => mockTaskClaimMetadataKeyIfUnset(...args),
   taskAddDep: (...args: unknown[]) => mockTaskAddDep(...args),
   taskMutateMetadata: (...args: unknown[]) => mockTaskMutateMetadata(...args),
+  taskUpdateIfUnchanged: (...args: unknown[]) => mockTaskUpdateIfUnchanged(...args),
 }));
 
 const mockLocateTaskRun = jest.fn();
@@ -2612,5 +2614,109 @@ describe("POST /api/tasks/auto-run", () => {
       reason: "max auto-run retries reached",
     });
     expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  // ---- fenced accepted projection (issue #142 round 2) ----
+  // The scanner's accepted projection is ONE guarded write tied to the
+  // accepted attempt's series, the task's run scope, and its status: a late
+  // success or lost response arriving after a reset, a run replacement, or a
+  // task close changes NOTHING.
+
+  function acceptedRunRecord(series: number) {
+    return resumableRunRecord({
+      status: "running",
+      resumeAttempt: { id: "attempt-late", series, taskId: "TASK-RESUME", outcome: "accepted", automatic: true },
+    });
+  }
+
+  function lostResponseWithAcceptedOutcome(series: number, duringFlight?: () => void) {
+    return async () => {
+      // The route accepted durably; while the response was in flight, another
+      // writer moved the task on (reset / replacement / close).
+      duringFlight?.();
+      mockReadFileSync.mockReturnValue(acceptedRunRecord(series));
+      return jsonResponse({ error: { message: "response lost" } }, 502);
+    };
+  }
+
+  it("a lost accepted response after a reset (series moved) never writes the projection", async () => {
+    const taskRow = resumableTaskFixture({ resume_series: 2 });
+    mockTaskGet.mockReturnValue(taskRow);
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(resumableRunRecord());
+    (global.fetch as jest.Mock).mockImplementation(lostResponseWithAcceptedOutcome(1));
+
+    const res = await POST(makeRequest({ taskId: "TASK-RESUME" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({ triggered: true, action: "chain_resume" });
+    expect(mockTaskUpdate).not.toHaveBeenCalled();
+    expect(mockTaskUpdateIfUnchanged).not.toHaveBeenCalled();
+  });
+
+  it("a lost accepted response after a run replacement (task re-pointed at a new run) never writes the projection", async () => {
+    const taskRow = resumableTaskFixture({});
+    mockTaskGet.mockReturnValue(taskRow);
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(resumableRunRecord());
+    (global.fetch as jest.Mock).mockImplementation(lostResponseWithAcceptedOutcome(0, () => {
+      // chain-run-service re-pointed the task at the NEW run while this
+      // response was in flight
+      taskRow.metadata = { ...taskRow.metadata, last_run_id: "run-replacement", last_run_status: "running" };
+    }));
+
+    const res = await POST(makeRequest({ taskId: "TASK-RESUME" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({ triggered: true, action: "chain_resume" });
+    expect(mockTaskUpdate).not.toHaveBeenCalled();
+    expect(mockTaskUpdateIfUnchanged).not.toHaveBeenCalled();
+  });
+
+  it("a lost accepted response on a task that closed mid-flight never reopens it", async () => {
+    const taskRow = resumableTaskFixture({});
+    mockTaskGet.mockReturnValue(taskRow);
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(resumableRunRecord());
+    (global.fetch as jest.Mock).mockImplementation(lostResponseWithAcceptedOutcome(0, () => {
+      taskRow.status = "closed";
+    }));
+
+    const res = await POST(makeRequest({ taskId: "TASK-RESUME" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({ triggered: true, action: "chain_resume" });
+    expect(mockTaskUpdate).not.toHaveBeenCalled();
+    expect(mockTaskUpdateIfUnchanged).not.toHaveBeenCalled();
+  });
+
+  it("an unfenced accepted projection lands as ONE guarded status-and-metadata write", async () => {
+    const taskRow = { ...resumableTaskFixture({}), revision: 7 };
+    mockTaskGet.mockReturnValue(taskRow);
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(resumableRunRecord());
+    mockTaskUpdateIfUnchanged.mockImplementation((_org, _id, expectedRevision, fields) => {
+      if (taskRow.revision !== expectedRevision) return false;
+      Object.assign(taskRow, fields);
+      taskRow.revision += 1;
+      return true;
+    });
+    (global.fetch as jest.Mock).mockResolvedValue(jsonResponse({
+      data: { success: true, runId: "run-outcome", resumeAttemptId: "attempt-late", resumeSeries: 0, resumeOutcome: "accepted" },
+    }, 200));
+
+    const res = await POST(makeRequest({ taskId: "TASK-RESUME" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({ triggered: true, action: "chain_resume" });
+    expect(mockTaskUpdateIfUnchanged).toHaveBeenCalledTimes(1);
+    expect(taskRow.status).toBe("in_progress");
+    const written = (taskRow.metadata as Record<string, unknown>);
+    expect(written.last_run_id).toBe("run-outcome");
+    expect(written.last_run_status).toBe("running");
   });
 });
