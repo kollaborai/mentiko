@@ -1085,6 +1085,14 @@ export function ChainAssignWorkflow({
                 generation_rejection_job_id: null,
                 generation_rejection_fingerprints: null,
                 generation_last_error: null,
+                // a fresh attempt must not wear the previous run's or the
+                // previous resume loop's error as its current reason (#142);
+                // the stamped resume-attempt identity retires too, so an
+                // in-flight failure response cannot charge the fresh series
+                last_run_error: null,
+                resume_last_error: null,
+                resume_attempt_id: null,
+                resume_attempt_run_id: null,
                 auto_run_retries: 0,
               };
               await fetchWithNamespace(`/api/tasks/${encodeURIComponent(task.id)}${wsParam}`, {
@@ -1724,7 +1732,14 @@ export function ChainAssignWorkflow({
             key={chain.id}
             className="w-full text-left px-2.5 py-2 rounded-md hover:bg-accent/30 transition-colors"
             onClick={async () => {
-              await onAssignChain(chain.id, chain.name);
+              // a rejected PATCH now throws from the page handler (#142
+              // review round 5 P2): surface it with the same failure path
+              // the generated-chain assignment uses, not an unhandled rejection.
+              try {
+                await onAssignChain(chain.id, chain.name);
+              } catch (error) {
+                handleChainAssignmentFailure(error);
+              }
             }}
           >
             <div className="text-xs font-medium">{chain.name}</div>
