@@ -82,6 +82,12 @@ export function TaskDetailHeader({
   const autoRunPaused = autoRun.retriesExhausted;
   const autoRunUserPauseReason = autoRun.pausedReason;
   const autoRunUserPaused = autoRun.userPaused;
+  // Not every pause is the user's action (#142): the scanner and the resume
+  // route also pause dispatch operationally (unknown outcome, stuck preparing,
+  // unwritable accounting). Only the literal user pause reads as one; an
+  // operational pause is labeled as automatic, never as the user's doing.
+  const autoRunPauseIsUserAction = !autoRunUserPauseReason || autoRunUserPauseReason === "Paused by user";
+  const autoRunPauseTitle = autoRunPauseIsUserAction ? "paused by user" : "auto-run paused automatically by the system";
   const autoRunFromWorkspace = autoRun.source === "workspace";
   const generationFailure = !hasAssignedChain && Boolean(
     task.chainBinding?.generation_status
@@ -314,7 +320,7 @@ export function TaskDetailHeader({
                     {autoRunUserPaused ? (
                       <span
                         className="inline-flex h-7 max-w-[220px] items-center gap-1 rounded-md bg-zinc-500/15 px-2 text-[10px] font-mono text-zinc-300"
-                        title={autoRunUserPauseReason || "paused by user"}
+                        title={autoRunPauseTitle}
                       >
                         <Pause className="h-3 w-3 shrink-0" />
                         <span className="truncate">

@@ -74,6 +74,8 @@ function renderHeader(task: Task) {
       onRunChain={jest.fn()}
       onEdit={jest.fn()}
       onResetAutoRunAttempts={jest.fn()}
+      onToggleAutoRun={jest.fn()}
+      onToggleAutoRunPause={jest.fn()}
       isRunning={false}
     />
   );
@@ -128,5 +130,39 @@ describe("TaskDetailHeader auto-run failure banner", () => {
 
     const banner = screen.getByTestId("auto-run-failure-banner");
     expect(banner).toHaveTextContent("newer failure after reset");
+  });
+
+  it("an operational pause is labeled as automatic, never as the user's action", () => {
+    // The scanner/route pause (#142) carries an operational reason; the header
+    // must not present it as a user pause.
+    renderHeader(makeTask({
+      chainBinding: {
+        chain_id: "release-review",
+        auto_run: true,
+        auto_run_retries: 0,
+        auto_run_paused: true,
+        auto_run_paused_reason: "resume outcome unknown for run run-1: unreadable run record",
+      },
+      metadata: {},
+    }));
+
+    const pauseLabel = screen.getByTitle("auto-run paused automatically by the system");
+    expect(pauseLabel).toHaveTextContent("resume outcome unknown for run run-1: unreadable run record");
+    expect(pauseLabel).not.toHaveTextContent("paused by user");
+  });
+
+  it("a literal user pause keeps the user wording", () => {
+    renderHeader(makeTask({
+      chainBinding: {
+        chain_id: "release-review",
+        auto_run: true,
+        auto_run_retries: 0,
+        auto_run_paused: true,
+        auto_run_paused_reason: "Paused by user",
+      },
+      metadata: {},
+    }));
+
+    expect(screen.getByTitle("paused by user")).toHaveTextContent("Paused by user");
   });
 });
