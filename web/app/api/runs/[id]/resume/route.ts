@@ -449,17 +449,17 @@ export const POST = withErrorHandling(async (
         const { started: _started, completed: _completed, blockedReason: _blockedReason, lastMessage: _lastMessage, ...rest } = agent;
         return { ...rest, status: "pending" as const, session: "" };
       });
-      let next: RunRecord = { ...current, agents };
+      let run: RunRecord = { ...current, agents };
       // Preserve the prior terminal cause as history instead of erasing it.
-      next = appendResumeHistory(next, {
+      run = appendResumeHistory(run, {
         ...(priorAttempt ? { attempt: priorAttempt } : {}),
         status: current.status,
         ...(current.statusReason ? { statusReason: current.statusReason } : {}),
         ...(typeof current.status_message === "string" ? { statusMessage: current.status_message } : {}),
         at: new Date().toISOString(),
       });
-      next = {
-        ...next,
+      run = {
+        ...run,
         status: "running",
         resumedAt: new Date().toISOString(),
         resumeAttempt: {
@@ -469,12 +469,12 @@ export const POST = withErrorHandling(async (
           updatedAt: new Date().toISOString(),
         },
       };
-      delete next.completed;
-      delete (next as RunJson).blockedReason;
-      delete (next as RunJson).blockedAt;
-      delete (next as RunJson).status_message;
-      delete next.statusReason;
-      const upsert = upsertRoutedLaunchJobRecord(next, {
+      delete run.completed;
+      delete run.blockedReason;
+      delete run.blockedAt;
+      delete run.status_message;
+      delete run.statusReason;
+      const upsert = upsertRoutedLaunchJobRecord(run, {
         occurrenceId,
         runId,
         runDir,
