@@ -4,8 +4,9 @@ import { enforceGuestWrites } from "@/lib/middleware";
 import { taskGet, taskMutateMetadata, taskList } from "@/lib/tasks/task-store";
 import { validateTaskId } from "@/lib/tasks/task-store";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { NotFound, BadRequest } from "@/lib/api-errors";
+import { NotFound, BadRequest, Conflict } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
+import { ResumeResetConflictError, withTaskResumeClaim } from "@/lib/runs/resume-reset";
 
 export const dynamic = "force-dynamic";
 
@@ -68,9 +69,18 @@ export const POST = requirePermission("manage_tasks")(
         throw new NotFound("Task", id);
       }
 
-      // guarded merge on the epic itself (issue #141 CAS loop)
-      taskMutateMetadata(orgId, safeId, (metadata) =>
-        resetAutoRunMetadata(metadata, body.auto_run), namespaceId);
+      // Guarded merge on the epic itself (issue #141 CAS loop), serialized
+      // against a resume acceptance by the run's .resume-claim (#142 round 2):
+      // enabling auto-run is a reset, and a reset never optimistically
+      // succeeds while a resume holds the claim.
+      try {
+        withTaskResumeClaim({ orgId, namespaceId, taskId: safeId }, () =>
+          taskMutateMetadata(orgId, safeId, (metadata) =>
+            resetAutoRunMetadata(metadata, body.auto_run), namespaceId));
+      } catch (error) {
+        if (error instanceof ResumeResetConflictError) throw new Conflict(error.message);
+        throw error;
+      }
 
       // find all subtasks (children with parent_id = this epic)
       const allTasks = taskList(orgId, { status: "all" }, undefined, namespaceId);
@@ -79,8 +89,14 @@ export const POST = requirePermission("manage_tasks")(
       const updated: string[] = [safeId];
 
       for (const child of children) {
-        taskMutateMetadata(orgId, child.id, (metadata) =>
-          resetAutoRunMetadata(metadata, body.auto_run), namespaceId);
+        try {
+          withTaskResumeClaim({ orgId, namespaceId, taskId: child.id }, () =>
+            taskMutateMetadata(orgId, child.id, (metadata) =>
+              resetAutoRunMetadata(metadata, body.auto_run), namespaceId));
+        } catch (error) {
+          if (error instanceof ResumeResetConflictError) throw new Conflict(error.message);
+          throw error;
+        }
         updated.push(child.id);
       }
 

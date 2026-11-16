@@ -53,6 +53,7 @@ import { mintSessionToken } from "@/lib/auth/session-token";
 import { resolveRunAgentProfile } from "@/lib/agents/run-agent-profile";
 import { shouldRecordTaskExecutionMetadata } from "@/lib/runs/run-provenance";
 import { executionStartedLifecycleMetadata } from "@/lib/orchestration/task-lifecycle-metadata";
+import { ResumeResetConflictError, withTaskResumeClaim } from "@/lib/runs/resume-reset";
 import { mintAdHocGenerationJobIdentity } from "@/lib/generation/generation-job-identity";
 
 const SAFE_RUN_ID_RE = /^run-[A-Za-z0-9_-]{1,120}$/;
@@ -737,7 +738,7 @@ export async function startChainRun({
   }, ip, actor).catch(() => {});
 
   if (executionTaskId && shouldRecordTaskExecutionRun({ taskId: executionTaskId, chainId: runObject.chainId as string, metadata: runMetadata })) {
-    try {
+    const recordExecutionRun = (): void => {
       const task = taskGet(orgId, executionTaskId, namespaceId);
       const metadata = task?.metadata && typeof task.metadata === "object" && !Array.isArray(task.metadata)
         ? task.metadata as Record<string, unknown>
@@ -751,6 +752,23 @@ export async function startChainRun({
           chainId: runObject.chainId as string,
         }),
       }, namespaceId);
+    };
+    try {
+      // Run replacement (#142 round 2): this write re-points the task at the
+      // NEW run, so it must not interleave with a resume acceptance of the
+      // OLD run. It runs under the old run's .resume-claim when one is in
+      // flight. A still-busy claim after the wait falls through to the plain
+      // write — the launch already happened, and the resume route revalidates
+      // task scope at its own acceptance, so neither side lands half-serialized.
+      try {
+        withTaskResumeClaim({ orgId, namespaceId, taskId: executionTaskId }, recordExecutionRun);
+      } catch (error) {
+        if (!(error instanceof ResumeResetConflictError)) throw error;
+        console.warn(
+          `[chain-run] task ${executionTaskId} re-point raced a live resume of the previous run; writing unserialized: ${error.message}`,
+        );
+        recordExecutionRun();
+      }
     } catch {
       // non-critical: don't fail the run if task update fails
     }

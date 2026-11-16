@@ -143,6 +143,33 @@ describe("projectConfirmedResumeFailure", () => {
     expect(result).toEqual({ status: "projected", retries: 1 });
   });
 
+  it("an authoritative scope naming a DIFFERENT run fences the projection even when last_run_id still matches", () => {
+    const taskId = seedTask({ auto_run: true, last_run_id: "run-1" });
+    taskUpdate(ORG, taskId, {
+      metadata: {
+        ...metadataOf(taskId),
+        task_run_scope: { taskId, runId: "run-2", namespaceId: NS, orgId: ORG, version: 1 },
+      },
+    }, NS);
+    const attempt = failedAttempt({ taskId });
+
+    const result = projectConfirmedResumeFailure({ orgId: ORG, namespaceId: NS, taskId, runId: "run-1", attempt });
+
+    expect(result).toEqual({ status: "no-op", cause: "task no longer points at this run" });
+    expect(metadataOf(taskId).auto_run_retries).toBeUndefined();
+  });
+
+  it("a closed task is never charged for a resume failure", async () => {
+    const taskId = seedTask({ auto_run: true, last_run_id: "run-1" });
+    taskUpdate(ORG, taskId, { status: "closed" }, NS);
+    const attempt = failedAttempt({ taskId });
+
+    const result = projectConfirmedResumeFailure({ orgId: ORG, namespaceId: NS, taskId, runId: "run-1", attempt });
+
+    expect(result).toEqual({ status: "no-op", cause: "task is closed" });
+    expect(metadataOf(taskId).auto_run_retries).toBeUndefined();
+  });
+
   it("reports unwritten when the task vanished", () => {
     const attempt = failedAttempt({ taskId: "TASK-gone" });
     const result = projectConfirmedResumeFailure({ orgId: ORG, namespaceId: NS, taskId: "TASK-gone", runId: "run-1", attempt });

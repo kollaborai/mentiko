@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { MAX_AUTO_RUN_RETRIES } from "@/lib/tasks/auto-run-state";
 import { taskMutateMetadata } from "@/lib/tasks/task-store";
+import { isTerminalTaskStatus } from "@/lib/tasks/task-status";
 
 /**
  * Route-owned resume attempts (issue #142).
@@ -142,13 +143,17 @@ export function projectConfirmedResumeFailure(input: {
     return { status: "no-op", cause: "attempt is not a confirmed failure" };
   }
   let result: ResumeProjectionResult = { status: "no-op", cause: "attempt is not automatic" };
-  const landed = taskMutateMetadata(input.orgId, input.taskId, (metadata) => {
+  const landed = taskMutateMetadata(input.orgId, input.taskId, (metadata, task) => {
     if (metadata.resume_accounted_attempt_id === input.attempt.id) {
       result = { status: "no-op", cause: "attempt already accounted" };
       return null;
     }
     if (input.attempt.automatic !== true) {
       result = { status: "no-op", cause: "attempt is not automatic" };
+      return null;
+    }
+    if (isTerminalTaskStatus(task.status)) {
+      result = { status: "no-op", cause: "task is closed" };
       return null;
     }
     if (currentResumeSeries(metadata) !== input.attempt.series) {
@@ -176,20 +181,22 @@ export function projectConfirmedResumeFailure(input: {
 }
 
 /**
- * The task must still own THIS run: either its last_run_id names the run, or
- * its persisted task_run_scope (authoritative claim) names task + run. A task
- * that moved on (new run, replacement) must never be charged for this one.
+ * The task must still own THIS run. A persisted task_run_scope is the
+ * AUTHORITATIVE claim: when one exists it must name exactly this task + run,
+ * and a merely matching last_run_id can no longer admit the charge (the run
+ * pointer drifts on replacements). Only when no scope exists does last_run_id
+ * carry the claim. A task that moved on (new run, replacement, reassignment)
+ * must never be charged for the old run's attempts.
  */
-function taskPointsAtRun(
+export function taskPointsAtRun(
   metadata: Record<string, unknown>,
   taskId: string,
   runId: string,
 ): boolean {
-  if (metadata.last_run_id === runId) return true;
   const scope = metadata.task_run_scope;
   if (scope && typeof scope === "object" && !Array.isArray(scope)) {
     const record = scope as { taskId?: unknown; runId?: unknown };
     return record.taskId === taskId && record.runId === runId;
   }
-  return false;
+  return metadata.last_run_id === runId;
 }

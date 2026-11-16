@@ -6,9 +6,11 @@ import { validateTaskId } from "@/lib/tasks/task-store";
 import { filterVisibleTaskRecords } from "@/lib/tasks/task-visibility";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { validateChainId, buildChainMetadata } from "@/lib/chains/chain-validation";
-import { NotFound, BadRequest } from "@/lib/api-errors";
+import { NotFound, BadRequest, Conflict } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { resolveTaskAutoRunDefault } from "@/lib/tasks/task-auto-run-default";
+import { currentResumeSeries } from "@/lib/runs/resume-attempt";
+import { ResumeResetConflictError, withTaskResumeClaim } from "@/lib/runs/resume-reset";
 
 export const dynamic = "force-dynamic";
 
@@ -119,7 +121,46 @@ export const PATCH = requirePermission("manage_tasks")(
             Object.keys(incomingMeta).length === 0 &&
             !chainMetadata);
 
-        if (isExplicitClear) {
+        // A resume-series reset (issue #142 round 2): a client-sent
+        // resume_series key marks reset intent (its VALUE is a stale snapshot
+        // and is always ignored), and any chain assignment/clear is a reset
+        // too. The series is incremented ON THE SERVER inside the run's
+        // .resume-claim so it can never interleave with a resume acceptance;
+        // a busy claim is a visible retryable conflict, never optimistic.
+        const requestsResumeReset =
+          chainMetadata !== null ||
+          isExplicitClear ||
+          (body.metadata !== undefined && typeof incomingMeta === "object" && "resume_series" in incomingMeta);
+
+        if (requestsResumeReset) {
+          if (incomingMeta && typeof incomingMeta === "object") {
+            delete (incomingMeta as Record<string, unknown>).resume_series;
+          }
+          try {
+            updateFields.metadata = withTaskResumeClaim(
+              { orgId, namespaceId, taskId: safeId },
+              () => {
+                const current = taskGet(orgId, safeId, namespaceId);
+                const existingMeta =
+                  current?.metadata && typeof current.metadata === "object"
+                    ? (current.metadata as Record<string, unknown>)
+                    : {};
+                const next: Record<string, unknown> = isExplicitClear
+                  ? {}
+                  : {
+                      ...existingMeta,
+                      ...(incomingMeta as Record<string, unknown>),
+                      ...(chainMetadata || {}),
+                    };
+                next.resume_series = currentResumeSeries(existingMeta) + 1;
+                return next;
+              },
+            );
+          } catch (error) {
+            if (error instanceof ResumeResetConflictError) throw new Conflict(error.message);
+            throw error;
+          }
+        } else if (isExplicitClear) {
           updateFields.metadata = {};
         } else {
           const current = taskGet(orgId, safeId, namespaceId);

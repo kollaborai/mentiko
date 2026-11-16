@@ -146,7 +146,7 @@ function readRecord(runsDir: string): Record<string, any> {
 }
 
 /** Real task row shaped like TASK-010: assigned chain, retained accepted analysis pointer, failed run. */
-function seedTask010(runId: string): string {
+function seedTask010(runId: string, metadataOverrides: Record<string, unknown> = {}): string {
   const task = taskCreate("default", {
     title: "Resume loop",
     issue_type: "task",
@@ -159,6 +159,7 @@ function seedTask010(runId: string): string {
       last_run_id: runId,
       last_run_status: "failed",
       auto_run_retries: 0,
+      ...metadataOverrides,
     },
   });
   return task.id;
@@ -488,5 +489,76 @@ describe("POST /api/runs/[id]/resume (route-owned attempts)", () => {
       delete process.env.MENTIKO_CAP_POLL_SECS;
       delete process.env.CLAUDECODE;
     }
+  });
+
+  it("refuses to accept an automatic resume when the task no longer points at this run", async () => {
+    // A run replacement/reassignment re-pointed the task elsewhere: old work
+    // must not be accepted onto it. The refusal is visible (409) and leaves
+    // the run unaccepted.
+    const taskId = seedTask010("run-other");
+    const runsDir = writeRun(validRun({ chainId: undefined, taskId }));
+    writeChainSnapshot(runsDir);
+
+    const res = await POST(
+      makeRequest("run-resume-1", { [RESUME_SOURCE_HEADER]: "auto-run" }) as never,
+      { params: Promise.resolve({ id: "run-resume-1" }) } as never,
+    );
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.error.message).toContain("no longer points at run run-resume-1");
+
+    const record = readRecord(runsDir);
+    expect(record.status).toBe("failed");
+    expect(record.resumeAttempt.outcome).toBe("preparing");
+    expect(mockSpawn).not.toHaveBeenCalled();
+    const task = taskGet("default", taskId, "default")!;
+    expect((task.metadata as Record<string, unknown>).auto_run_retries).toBe(0);
+  });
+
+  it("refuses to accept an automatic resume onto a closed task", async () => {
+    const taskId = seedTask010("run-resume-1");
+    const { taskUpdate } = await import("@/lib/tasks/task-store");
+    taskUpdate("default", taskId, { status: "closed" }, "default");
+    const runsDir = writeRun(validRun({ chainId: undefined, taskId }));
+    writeChainSnapshot(runsDir);
+
+    const res = await POST(
+      makeRequest("run-resume-1", { [RESUME_SOURCE_HEADER]: "auto-run" }) as never,
+      { params: Promise.resolve({ id: "run-resume-1" }) } as never,
+    );
+    expect(res.status).toBe(409);
+    expect(readRecord(runsDir).status).toBe("failed");
+  });
+
+  it("a reset that landed before entry starts a fresh-series attempt; the old attempt's work is never accepted", async () => {
+    // The stale preparing attempt belongs to series 0; a Retry-task reset moved
+    // the task to series 1. The route must supersede the old attempt with a
+    // NEW one bound to the current series, not finish the old one.
+    const taskId = seedTask010("run-resume-1", { resume_series: 1 });
+    const runsDir = writeRun(validRun({
+      chainId: undefined,
+      taskId,
+      resumeAttempt: {
+        id: "attempt-stale-series-0",
+        series: 0,
+        taskId,
+        outcome: "preparing",
+        automatic: true,
+        updatedAt: "2026-11-16T01:00:00.000Z",
+      },
+    }));
+    writeChainSnapshot(runsDir);
+
+    const res = await POST(
+      makeRequest("run-resume-1", { [RESUME_SOURCE_HEADER]: "auto-run" }) as never,
+      { params: Promise.resolve({ id: "run-resume-1" }) } as never,
+    );
+    expect(res.status).toBe(200);
+    const record = readRecord(runsDir);
+    expect(record.resumeAttempt).toMatchObject({
+      id: expect.not.stringMatching(/^attempt-stale-series-0$/),
+      series: 1,
+      outcome: "accepted",
+    });
   });
 });
