@@ -761,6 +761,217 @@ describe("POST /api/tasks/auto-run", () => {
     );
   });
 
+  it("stops resuming at the retry ceiling even with a retained accepted analysis pointer (TASK-010 shape)", async () => {
+    // Real TASK-010 shape: assigned chain, analysis_job_id retained with
+    // analysis_status "accepted" (the use_existing acceptance keeps the
+    // pointer), and a failing resumable run. The gate must stop admitting the
+    // task once auto_run_retries reaches the ceiling -- no fourth resume.
+    let meta: Record<string, unknown> = {
+      auto_run: true,
+      chain_id: "release-review",
+      analysis_job_id: "job-1794746071590-ekcfgc3",
+      analysis_status: "accepted",
+      last_run_id: "run-loop",
+      last_run_status: "failed",
+      auto_run_retries: 0,
+    };
+    mockTaskGet.mockImplementation(() => ({
+      id: "TASK-010",
+      title: "Resume loop",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      metadata: meta,
+    }));
+    mockTaskUpdate.mockImplementation((_org: string, _id: string, patch: { metadata?: Record<string, unknown> }) => {
+      meta = { ...meta, ...(patch.metadata || {}) };
+    });
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      taskId: "TASK-010",
+      chainId: "release-review",
+      status: "failed",
+      agents: [
+        { id: "planner", status: "complete" },
+        { id: "reviewer", status: "failed" },
+      ],
+    }));
+    (global.fetch as jest.Mock).mockResolvedValue(jsonResponse({
+      error: { message: "Resume rejected by the runner" },
+    }, 500));
+
+    const scans: Array<{ action?: string; retries: number }> = [];
+    for (let scan = 1; scan <= 4; scan++) {
+      const res = await POST(makeRequest({ taskId: "TASK-010" }) as never);
+      const body = await res.json();
+      scans.push({ action: body.data.action, retries: meta.auto_run_retries as number });
+    }
+
+    expect(scans.slice(0, 3)).toEqual([
+      { action: "resume_failed", retries: 1 },
+      { action: "resume_failed", retries: 2 },
+      { action: "resume_failed", retries: 3 },
+    ]);
+    expect(scans[3]).toEqual({ action: "max_retries", retries: 3 });
+    expect((global.fetch as jest.Mock)).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not consume a retry when a 409 conflict means another scan resumed the run", async () => {
+    mockTaskGet.mockReturnValue({
+      id: "TASK-RACE",
+      title: "Concurrent resume",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      metadata: {
+        auto_run: true,
+        chain_id: "release-review",
+        last_run_id: "run-race",
+        last_run_status: "stopped",
+        auto_run_retries: 1,
+      },
+    });
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      taskId: "TASK-RACE",
+      chainId: "release-review",
+      status: "stopped",
+      agents: [
+        { id: "planner", status: "complete" },
+        { id: "reviewer", status: "stopped" },
+      ],
+    }));
+    (global.fetch as jest.Mock).mockImplementation(async () => {
+      // The competing scan resumed the run while our fetch was in flight:
+      // the run record flips to running before the 409 comes back.
+      mockReadFileSync.mockReturnValue(JSON.stringify({
+        taskId: "TASK-RACE",
+        chainId: "release-review",
+        status: "running",
+        agents: [
+          { id: "planner", status: "complete" },
+          { id: "reviewer", status: "running" },
+        ],
+      }));
+      return jsonResponse({ error: { message: "Run is already running" } }, 409);
+    });
+
+    const res = await POST(makeRequest({ taskId: "TASK-RACE" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      triggered: false,
+      taskId: "TASK-RACE",
+      runId: "run-race",
+      action: "resume_in_progress",
+      reason: "Run is already running",
+    });
+    expect(mockTaskUpdate).not.toHaveBeenCalled();
+  });
+
+  it("consumes a retry when a 409 conflict leaves the run still resumable (stale conflict)", async () => {
+    mockTaskGet.mockReturnValue({
+      id: "TASK-STALE-409",
+      title: "Stale conflict",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      metadata: {
+        auto_run: true,
+        chain_id: "release-review",
+        last_run_id: "run-stale-409",
+        last_run_status: "stopped",
+        auto_run_retries: 1,
+      },
+    });
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      taskId: "TASK-STALE-409",
+      chainId: "release-review",
+      status: "stopped",
+      agents: [
+        { id: "planner", status: "complete" },
+        { id: "reviewer", status: "stopped" },
+      ],
+    }));
+    (global.fetch as jest.Mock).mockResolvedValue(jsonResponse({
+      error: { message: "Run is already running" },
+    }, 409));
+
+    const res = await POST(makeRequest({ taskId: "TASK-STALE-409" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      triggered: false,
+      taskId: "TASK-STALE-409",
+      action: "resume_failed",
+      error: "Run is already running",
+    });
+    expect(mockTaskUpdate).toHaveBeenCalledWith(
+      "default",
+      "TASK-STALE-409",
+      {
+        metadata: expect.objectContaining({
+          auto_run_retries: 2,
+          resume_last_error: "Run is already running",
+        }),
+      },
+      "default",
+    );
+  });
+
+  it("counts a rejected resume fetch (transport error) against auto_run_retries", async () => {
+    mockTaskGet.mockReturnValue({
+      id: "TASK-TRANSPORT",
+      title: "Unreachable resume route",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      metadata: {
+        auto_run: true,
+        chain_id: "release-review",
+        last_run_id: "run-transport",
+        last_run_status: "stopped",
+        auto_run_retries: 1,
+      },
+    });
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      taskId: "TASK-TRANSPORT",
+      chainId: "release-review",
+      status: "stopped",
+      agents: [
+        { id: "planner", status: "complete" },
+        { id: "reviewer", status: "stopped" },
+      ],
+    }));
+    (global.fetch as jest.Mock).mockRejectedValue(new Error("connect ECONNREFUSED"));
+
+    const res = await POST(makeRequest({ taskId: "TASK-TRANSPORT" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      triggered: false,
+      taskId: "TASK-TRANSPORT",
+      action: "resume_failed",
+      error: expect.stringContaining("ECONNREFUSED"),
+    });
+    expect(mockTaskUpdate).toHaveBeenCalledWith(
+      "default",
+      "TASK-TRANSPORT",
+      {
+        metadata: expect.objectContaining({
+          auto_run_retries: 2,
+          resume_last_error: expect.stringContaining("Failed to reach the resume route for run run-transport"),
+        }),
+      },
+      "default",
+    );
+  });
+
   it("resumes a terminal run from its persisted nondefault scope without reading the request root", async () => {
     const task = {
       id: "TASK-SCOPED-RESUME",

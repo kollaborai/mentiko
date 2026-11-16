@@ -91,6 +91,9 @@ export function TaskDetailHeader({
     || task.metadata?.generation_error
   );
   const reportedFailure = [
+    // The auto-run resume failure is the most current reason: it supersedes
+    // older generation/last-run errors recorded before the resume attempts.
+    task.metadata?.resume_last_error,
     task.metadata?.generation_last_error,
     task.metadata?.generation_error,
     task.chainBinding?.last_run_blocked_reason,

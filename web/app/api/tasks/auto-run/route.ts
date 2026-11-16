@@ -648,17 +648,54 @@ async function resumeExistingRun(
   request: NextRequest,
   metadata: Record<string, unknown>
 ): Promise<TriggerResult> {
-  const resumeRes = await fetch(internalApiUrl(`/api/runs/${encodeURIComponent(runId)}/resume`, request.url), {
-    method: "POST",
-    headers: forwardedHeaders(request, namespaceId, orgId),
-  });
+  let resumeFailure: { message: string; status?: number } | null = null;
+  try {
+    const resumeRes = await fetch(internalApiUrl(`/api/runs/${encodeURIComponent(runId)}/resume`, request.url), {
+      method: "POST",
+      headers: forwardedHeaders(request, namespaceId, orgId),
+    });
 
-  const resumeData = await resumeRes.json().catch(() => ({}));
-  if (!resumeRes.ok) {
-    const message =
-      (resumeData as { error?: { message?: string } }).error?.message ||
-      (resumeData as { error?: string }).error ||
-      `Failed to resume run ${runId}`;
+    if (!resumeRes.ok) {
+      const resumeData = await resumeRes.json().catch(() => ({}));
+      resumeFailure = {
+        message:
+          (resumeData as { error?: { message?: string } }).error?.message ||
+          (resumeData as { error?: string }).error ||
+          `Failed to resume run ${runId}`,
+        status: resumeRes.status,
+      };
+    }
+  } catch (error) {
+    // A transport failure (rejected fetch) is still a failed resume attempt:
+    // without counting it, repeated connection errors leave auto_run_retries
+    // unchanged and the every-minute loop runs unbounded (#142).
+    resumeFailure = {
+      message: `Failed to reach the resume route for run ${runId}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    };
+  }
+
+  if (resumeFailure) {
+    // A 409 means the resume route refused because the run is already running
+    // or already complete -- typically another scan won the race. Re-read the
+    // run record: when it is no longer resumable, the conflict IS progress and
+    // must not consume a retry (overlapping scans could otherwise exhaust the
+    // budget for a task that is executing fine). Only a conflict that left the
+    // run exactly as resumable as before is a genuine failed attempt.
+    if (resumeFailure.status === 409) {
+      const currentChainId = typeof metadata.chain_id === "string" ? metadata.chain_id : "";
+      if (!readResumableRunId(taskId, currentChainId, namespaceId, metadata)) {
+        return {
+          triggered: false,
+          taskId,
+          runId,
+          action: "resume_in_progress",
+          reason: resumeFailure.message,
+        };
+      }
+    }
+
     // A failed resume is a transient auto-run failure like the others here:
     // consume one auto_run_retries so the shared MAX_AUTO_RUN_RETRIES ceiling
     // ends the every-minute resume loop instead of parking the task in
@@ -672,7 +709,7 @@ async function resumeExistingRun(
             MAX_AUTO_RUN_RETRIES,
             ((currentMeta.auto_run_retries as number) || 0) + 1,
           ),
-          resume_last_error: message,
+          resume_last_error: resumeFailure.message,
         },
       }, namespaceId);
     } catch { /* non-fatal: the next scan consumes the retry instead */ }
@@ -681,7 +718,7 @@ async function resumeExistingRun(
       taskId,
       runId,
       action: "resume_failed",
-      error: message,
+      error: resumeFailure.message,
     };
   }
 
