@@ -20,6 +20,7 @@ const TEST_ROOT = (jest.requireMock("@/lib/config") as { default: { globalRoot: 
 import { closeAll, taskCreate, taskGet, taskUpdate } from "@/lib/tasks/task-store";
 import {
   currentResumeSeries,
+  pauseTaskForUnwrittenResumeProjection,
   projectConfirmedResumeFailure,
   type ResumeAttemptRecord,
 } from "@/lib/runs/resume-attempt";
@@ -184,5 +185,45 @@ describe("currentResumeSeries", () => {
     expect(currentResumeSeries({ resume_series: "2" })).toBe(0);
     expect(currentResumeSeries({ resume_series: -1 })).toBe(0);
     expect(currentResumeSeries({ resume_series: 4 })).toBe(4);
+  });
+});
+
+describe("pauseTaskForUnwrittenResumeProjection (unwritten failure accounting, #142 r2)", () => {
+  it("pauses visibly without a debit when the failure projection could not land", () => {
+    const taskId = seedTask({ auto_run: true, last_run_id: "run-1" });
+    const attempt = failedAttempt({ taskId });
+
+    pauseTaskForUnwrittenResumeProjection({ orgId: ORG, namespaceId: NS, taskId, runId: "run-1", attempt });
+
+    const metadata = metadataOf(taskId);
+    expect(metadata.auto_run_paused).toBe(true);
+    expect(metadata.auto_run_paused_reason).toContain("could not be recorded on the task");
+    expect(metadata.auto_run_paused_reason).toContain("without consuming a retry");
+    // no debit: the replay on the next route entry still charges exactly once
+    expect(metadata.auto_run_retries).toBeUndefined();
+  });
+
+  it("never pauses a task the projection already accounted, a reset task, or a closed task", () => {
+    const accounted = seedTask({ auto_run: true, last_run_id: "run-1", resume_accounted_attempt_id: "attempt-x" });
+    pauseTaskForUnwrittenResumeProjection({
+      orgId: ORG, namespaceId: NS, taskId: accounted, runId: "run-1",
+      attempt: failedAttempt({ taskId: accounted, id: "attempt-x" }),
+    });
+    expect(metadataOf(accounted).auto_run_paused).toBeUndefined();
+
+    const reset = seedTask({ auto_run: true, last_run_id: "run-1", resume_series: 5 });
+    pauseTaskForUnwrittenResumeProjection({
+      orgId: ORG, namespaceId: NS, taskId: reset, runId: "run-1",
+      attempt: failedAttempt({ taskId: reset, series: 4 }),
+    });
+    expect(metadataOf(reset).auto_run_paused).toBeUndefined();
+
+    const closed = seedTask({ auto_run: true, last_run_id: "run-1" });
+    taskUpdate(ORG, closed, { status: "closed" }, NS);
+    pauseTaskForUnwrittenResumeProjection({
+      orgId: ORG, namespaceId: NS, taskId: closed, runId: "run-1",
+      attempt: failedAttempt({ taskId: closed }),
+    });
+    expect(metadataOf(closed).auto_run_paused).toBeUndefined();
   });
 });

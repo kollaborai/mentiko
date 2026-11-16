@@ -54,6 +54,7 @@ import {
   RESUME_SOURCE_HEADER,
   currentResumeSeries,
   newResumeAttempt,
+  pauseTaskForUnwrittenResumeProjection,
   projectConfirmedResumeFailure,
   readResumeAttempt,
   taskPointsAtRun,
@@ -302,9 +303,17 @@ export const POST = withErrorHandling(async (
         : "no chain definition found: the run has no chainId and no chain.json in its run directory";
       const failed = recordResumeFailure(runJsonPath, runId, attempt, reason);
       if (taskMetadata && automatic) {
-        projectConfirmedResumeFailure({
+        const projection = projectConfirmedResumeFailure({
           orgId, namespaceId: nsId, taskId: taskId as string, runId, attempt: failed,
         });
+        // P2: an unwritten projection must not stay invisible — the failure
+        // replays on the next route entry, but the owner sees a guarded
+        // operational pause in the meantime (no debit, fenced by series/run).
+        if (projection.status === "unwritten") {
+          pauseTaskForUnwrittenResumeProjection({
+            orgId, namespaceId: nsId, taskId: taskId as string, runId, attempt: failed,
+          });
+        }
       }
       throw new NotFound(
         "Chain",
@@ -322,9 +331,14 @@ export const POST = withErrorHandling(async (
       const reason = `chain definition at ${chainPath} is unreadable (invalid JSON)`;
       const failed = recordResumeFailure(runJsonPath, runId, attempt, reason);
       if (taskMetadata && automatic) {
-        projectConfirmedResumeFailure({
+        const projection = projectConfirmedResumeFailure({
           orgId, namespaceId: nsId, taskId: taskId as string, runId, attempt: failed,
         });
+        if (projection.status === "unwritten") {
+          pauseTaskForUnwrittenResumeProjection({
+            orgId, namespaceId: nsId, taskId: taskId as string, runId, attempt: failed,
+          });
+        }
       }
       throw new NotFound("Chain", chainPath);
     }

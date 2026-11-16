@@ -132,6 +132,38 @@ export type ResumeProjectionResult =
   | { status: "no-op"; cause: string }
   | { status: "unwritten" };
 
+/**
+ * A confirmed failure whose task CAS could not land (issue #142 round 2, P2):
+ * the outcome IS durably recorded on the run and replays on the next route
+ * entry, but the owner would see nothing meanwhile. This writes a guarded
+ * operational pause — no attempt outcome, no debit — fenced by the same
+ * series/run/status rules as the projection itself, so a reset, replacement
+ * or close is never paused for a stale gap.
+ */
+export function pauseTaskForUnwrittenResumeProjection(input: {
+  orgId: string;
+  namespaceId?: string;
+  taskId: string;
+  runId: string;
+  attempt: ResumeAttemptRecord;
+}): void {
+  if (input.attempt.outcome !== "failed") return;
+  taskMutateMetadata(input.orgId, input.taskId, (metadata, task) => {
+    if (isTerminalTaskStatus(task.status)) return null;
+    if (currentResumeSeries(metadata) !== input.attempt.series) return null;
+    if (!taskPointsAtRun(metadata, input.taskId, input.runId)) return null;
+    if (metadata.resume_accounted_attempt_id === input.attempt.id) return null;
+    return {
+      ...metadata,
+      auto_run_paused: true,
+      auto_run_paused_reason:
+        `resume failure for run ${input.runId} (attempt ${input.attempt.id}) could not be recorded on the task: `
+        + `${input.attempt.reason || "resume failed"}. `
+        + "Auto-run paused without consuming a retry; use Retry task once the task store is writable again.",
+    };
+  }, input.namespaceId);
+}
+
 export function projectConfirmedResumeFailure(input: {
   orgId: string;
   namespaceId?: string;
