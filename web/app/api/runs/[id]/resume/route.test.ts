@@ -467,6 +467,12 @@ describe("POST /api/runs/[id]/resume (route-owned attempts)", () => {
     expect(jobs[0].occurrenceId).toMatch(/^resume:run-resume-1:\d+$/);
     expect(jobs[0].targets).toEqual([{ agentId: "reviewer" }]);
     expect(jobs[0].chainPath).toBe(join(runsDir, "chain.json"));
+    // round 4: the acceptance binds its launch job by id in the SAME write, so
+    // the dispatch-bound expiry can target exactly this job
+    expect(record.resumeAttempt).toMatchObject({
+      outcome: "accepted",
+      launchJobId: body.data.launchJobId,
+    });
     // the old terminal cause survived as history, not erased
     expect(record.resumeHistory).toHaveLength(1);
     expect(record.resumeHistory[0].statusReason).toEqual({ actor: "system", reason: "agent exited nonzero" });
