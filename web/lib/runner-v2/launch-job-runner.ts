@@ -15,6 +15,7 @@ import {
   claimRoutedLaunchJob,
   completeRoutedLaunchJob,
   expireAcceptedResumeLaunchJobs,
+  readAcceptedResumeLaunchJobId,
   readRoutedLaunchJob,
   readRoutedLaunchJobs,
   releaseRoutedLaunchJob,
@@ -210,11 +211,18 @@ export async function runRoutedLaunchJob(input: {
       ownerId: input.ownerId,
       error: message,
     });
-    // Liveness bound (#142 r3): a job whose requeue loop has aged past the
-    // dispatch bound (or blown its attempt ceiling) must END here — block the
-    // job and stop the run under the lock — instead of requeueing forever.
+    // Liveness bound (#142 r3, scoped #142 round 4): a job whose requeue loop
+    // has aged past the dispatch bound (or blown its attempt ceiling) must END
+    // here — block the job and stop the run under the lock — instead of
+    // requeueing forever. ONLY the job bound to the run's accepted resume
+    // attempt ends this way; an unrelated job past the bound keeps its
+    // ordinary worker treatment (requeue), exactly as before the bound existed.
     const released = readRoutedLaunchJob(input.runJsonPath, input.jobId);
-    if (released && routedLaunchJobPastDispatchBound(released)) {
+    if (
+      released
+      && routedLaunchJobPastDispatchBound(released)
+      && readAcceptedResumeLaunchJobId(input.runJsonPath) === input.jobId
+    ) {
       expirePastBoundResumeLaunchJobs(input.runJsonPath);
       const reason = `${RESUME_LAUNCH_DISPATCH_BOUND_REASON} (last error: ${message})`;
       return { status: "blocked", jobId: input.jobId, error: reason };
@@ -427,10 +435,16 @@ export function reconcileRoutedLaunchJobs(input: {
     for (const job of jobs) {
       examined += 1;
       if (!routedLaunchJobIsReclaimable(job)) continue;
-      // Liveness bound (#142 r3): a reclaimable accepted-resume job past the
-      // dispatch bound (never claimed for its whole life, or requeued past the
-      // attempt ceiling) is expired under the lock, never scheduled again.
-      if (routedLaunchJobPastDispatchBound(job)) {
+      // Liveness bound (#142 r3, scoped #142 round 4): a reclaimable job past
+      // the dispatch bound (never claimed for its whole life, or requeued past
+      // the attempt ceiling) ends here ONLY when it is the job bound to the
+      // run's accepted resume attempt. An unrelated old queued job is NOT
+      // expired and NOT starved: the worker still dispatches it, exactly as
+      // before the resume bound existed.
+      if (
+        routedLaunchJobPastDispatchBound(job)
+        && readAcceptedResumeLaunchJobId(runJsonPath) === job.id
+      ) {
         expirePastBoundResumeLaunchJobs(runJsonPath);
         continue;
       }

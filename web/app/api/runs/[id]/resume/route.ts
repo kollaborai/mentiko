@@ -558,12 +558,6 @@ export const POST = withErrorHandling(async (
         ...run,
         status: "running",
         resumedAt: new Date().toISOString(),
-        resumeAttempt: {
-          ...attempt,
-          outcome: "accepted" as const,
-          reason: undefined,
-          updatedAt: new Date().toISOString(),
-        },
       };
       delete run.completed;
       delete run.blockedReason;
@@ -583,7 +577,19 @@ export const POST = withErrorHandling(async (
         excludeEnvKeys: [...secretEnvKeys],
       });
       launchJob = upsert.job;
-      return upsert.run;
+      // The acceptance record names its job (#142 round 4): written in THIS
+      // same atomic write, so the dispatch-bound expiry can target exactly the
+      // job this acceptance queued and never an unrelated launch job of the run.
+      return {
+        ...upsert.run,
+        resumeAttempt: {
+          ...attempt,
+          outcome: "accepted" as const,
+          reason: undefined,
+          launchJobId: upsert.job.id,
+          updatedAt: new Date().toISOString(),
+        },
+      };
     });
     const completed = resumedRun.agents.filter((agent) => agent.status === "complete");
     const incomplete = resumedRun.agents.filter((agent) => agent.status !== "complete");

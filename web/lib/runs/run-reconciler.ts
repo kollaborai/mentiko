@@ -661,14 +661,19 @@ export async function reconcileOrphanedRuns(options: ReconcileOptions = {}): Pro
           if (hasLiveSession) return currentRecord; // run is alive
           if (hasLivePendingHandoff(run)) return currentRecord; // detached chain-runner is starting the next PTY
 
-          // Liveness bound (#142 round 3): an accepted resume whose launch job
-          // is past its dispatch bound — never claimed for its whole life, or
-          // requeued past the attempt ceiling — is expired HERE under the lock
-          // (job blocked, run stopped with a reaper-style reason) instead of
-          // being skipped forever. Every bound decision is re-derived against
-          // this record, so a job claimed or completed while this was deciding
-          // is left alone.
-          const expired = expireAcceptedResumeLaunchJobs(currentRecord as never, { now: new Date(now) });
+          // Liveness bound (#142 round 3, scoped #142 round 4): an accepted
+          // resume whose BOUND launch job (the one named by
+          // resumeAttempt.launchJobId) is past its dispatch bound — never
+          // claimed for its whole life, or requeued past the attempt ceiling —
+          // is expired HERE under the lock (job blocked, run stopped with a
+          // reaper-style reason) instead of being skipped forever. Unrelated
+          // launch jobs of the run are never expired, and the run is not
+          // stopped while another job holds an unexpired lease or a session is
+          // still live. Every bound decision is re-derived against this record.
+          const expired = expireAcceptedResumeLaunchJobs(currentRecord as never, {
+            now: new Date(now),
+            liveSessionNames: liveSessions,
+          });
           if (expired) {
             if (typeof run.taskId === "string" && run.taskId && resumeAttempt?.outcome === "accepted") {
               resumeDispatchBoundTask = {

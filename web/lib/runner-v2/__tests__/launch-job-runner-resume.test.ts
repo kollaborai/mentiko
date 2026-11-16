@@ -29,6 +29,9 @@ function setupRun(overrides: { resumeAttempt?: unknown } = {}): SetupResult {
     name: "Release Review",
     agents: [{ id: "reviewer", name: "Reviewer" }],
   }));
+  const attempt = overrides.resumeAttempt && typeof overrides.resumeAttempt === "object"
+    ? { ...(overrides.resumeAttempt as Record<string, unknown>) }
+    : undefined;
   const withJob = upsertRoutedLaunchJobRecord({
     id: runId,
     chain: "Release Review",
@@ -36,7 +39,7 @@ function setupRun(overrides: { resumeAttempt?: unknown } = {}): SetupResult {
     started: "2026-11-16T00:00:00.000Z",
     status: "running",
     agents: [{ id: "reviewer", name: "Reviewer", status: "pending", session: "" }],
-    ...(overrides.resumeAttempt !== undefined ? { resumeAttempt: overrides.resumeAttempt } : {}),
+    ...(attempt !== undefined ? { resumeAttempt: attempt } : {}),
   } as never, {
     occurrenceId: `resume:${runId}:1780000000000`,
     runId,
@@ -50,8 +53,17 @@ function setupRun(overrides: { resumeAttempt?: unknown } = {}): SetupResult {
       MENTIKO_CAP_POLL_SECS: "7",
     },
   });
+  // Round 4 binding: an accepted attempt recorded with launchJobId "BOUND" is
+  // rewritten to the actual job id this setup created, the same binding the
+  // acceptance write now records atomically.
+  if (attempt && attempt.launchJobId === "BOUND") attempt.launchJobId = withJob.job.id;
   const runJsonPath = join(runDir, "run.json");
-  writeFileSync(runJsonPath, JSON.stringify(withJob.run, null, 2));
+  writeFileSync(runJsonPath, JSON.stringify(
+    attempt && attempt.launchJobId === withJob.job.id
+      ? { ...withJob.run, resumeAttempt: attempt }
+      : withJob.run,
+    null, 2,
+  ));
   return { runJsonPath, jobId: withJob.job.id };
 }
 
@@ -61,6 +73,7 @@ const acceptedAttempt = {
   taskId: "TASK-010",
   outcome: "accepted",
   automatic: true,
+  launchJobId: "BOUND",
   updatedAt: "2026-11-16T00:00:01.000Z",
 };
 

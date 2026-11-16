@@ -373,38 +373,61 @@ export function routedLaunchJobPastDispatchBound(job: RoutedLaunchJob, now = new
 }
 
 /**
- * Expire the accepted resume launch jobs of a run that are past the dispatch
- * bound, and stop a still-active run with a reaper-style reason. Pure fold
- * for the caller's run.json lock (the worker's dispatch scan, the worker's
+ * Expire ONLY the routed launch job bound to the run's accepted resume
+ * attempt (issue #142 round 4), and stop a still-active run with a
+ * reaper-style reason. The binding is the `launchJobId` the acceptance write
+ * records on resumeAttempt: an accepted record from an older head carries no
+ * bound job id and is left entirely alone — the expiry cannot know which job
+ * belongs to the attempt, and an unrelated old queued job must never end a
+ * resumed run. The run is also never stopped while ANOTHER launch job of the
+ * run holds an unexpired lease, or while a caller-provided live-session set
+ * still names an incomplete agent's session (the worker bundle has no
+ * PTY-daemon access, so only callers that know pass the set). Pure fold for
+ * the caller's run.json lock (the worker's dispatch scan, the worker's
  * requeue path, and the web reaper all call it under their own lock): every
  * decision is re-derived against the record passed in, so a job that was
  * claimed or completed while this was deciding is left alone. Returns the
- * updated record, or undefined when nothing was past the bound.
+ * updated record, or undefined when the bound job was not past its bound or
+ * the run still has live work.
  */
 export function expireAcceptedResumeLaunchJobs(
   run: RunRecord,
-  input: { now?: Date } = {},
+  input: { now?: Date; liveSessionNames?: ReadonlySet<string> } = {},
 ): RunRecord | undefined {
   const now = input.now || new Date();
   const resumeAttempt = objectValue(run.resumeAttempt);
   if (!resumeAttempt || resumeAttempt.outcome !== "accepted") return undefined;
+  const boundJobId = typeof resumeAttempt.launchJobId === "string" ? resumeAttempt.launchJobId : undefined;
+  if (!boundJobId) return undefined;
   const jobs = launchJobMap(run);
+  const boundJob = jobs[boundJobId];
+  if (!boundJob || !routedLaunchJobPastDispatchBound(boundJob, now)) return undefined;
+  const otherActiveLease = Object.entries(jobs).some(([id, job]) => (
+    id !== boundJobId
+    && job.status === "leased"
+    && Date.parse(job.lease?.expiresAt || "") > now.getTime()
+  ));
+  if (otherActiveLease) return undefined;
+  if (input.liveSessionNames) {
+    const liveSession = (run.agents || []).some((agent) =>
+      agent.status !== "complete"
+      && typeof agent.session === "string"
+      && agent.session.length > 0
+      && input.liveSessionNames!.has(agent.session));
+    if (liveSession) return undefined;
+  }
   const at = now.toISOString();
-  let changed = false;
-  const nextJobs = { ...jobs };
-  for (const [id, job] of Object.entries(jobs)) {
-    if (!routedLaunchJobPastDispatchBound(job, now)) continue;
-    nextJobs[id] = {
-      ...job,
-      status: "blocked",
+  const nextJobs = {
+    ...jobs,
+    [boundJobId]: {
+      ...boundJob,
+      status: "blocked" as const,
       lease: undefined,
       blockedAt: at,
       updatedAt: at,
       lastError: RESUME_LAUNCH_DISPATCH_BOUND_REASON,
-    };
-    changed = true;
-  }
-  if (!changed) return undefined;
+    },
+  };
   let next: RunRecord = withLaunchJobs(run, nextJobs);
   if (run.status === "running" || run.status === "pending") {
     next = {
@@ -415,6 +438,24 @@ export function expireAcceptedResumeLaunchJobs(
     };
   }
   return next;
+}
+
+/**
+ * The launch job id bound to the run's ACCEPTED resume attempt, if any.
+ * Dependency-light reader for the worker scan (#142 round 4): only the bound
+ * job's requeue loop ends at the dispatch bound; every other job keeps its
+ * ordinary worker treatment.
+ */
+export function readAcceptedResumeLaunchJobId(runJsonPath: string): string | undefined {
+  try {
+    const run = readRunJson(runJsonPath) as RunRecord;
+    const resumeAttempt = objectValue(run.resumeAttempt);
+    if (!resumeAttempt || resumeAttempt.outcome !== "accepted") return undefined;
+    const boundJobId = typeof resumeAttempt.launchJobId === "string" ? resumeAttempt.launchJobId : undefined;
+    return boundJobId || undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export function startRoutedLaunchJobHeartbeat(input: {

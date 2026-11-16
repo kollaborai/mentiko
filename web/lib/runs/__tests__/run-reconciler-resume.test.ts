@@ -269,6 +269,8 @@ describe("reconcileOrphanedRuns vs route-owned resume work", () => {
     // the job has sat queued, never claimed, past the 10-minute dispatch bound
     const jobId = Object.keys((record.runnerV2 as any).launchJobs)[0];
     (record.runnerV2 as any).launchJobs[jobId].createdAt = isoAgo(11 * 60_000);
+    // round 4: the acceptance binds its launch job by id
+    (record.resumeAttempt as Record<string, unknown>).launchJobId = jobId;
     return record;
   }
 
@@ -353,6 +355,115 @@ describe("reconcileOrphanedRuns vs route-owned resume work", () => {
     expect(readRun("run-bound-reset").status).toBe("stopped"); // the run still ends
     const task = taskGet("default", taskId, "default")!;
     expect((task.metadata as Record<string, unknown>).auto_run_paused).toBeUndefined();
+  });
+
+  // ---- expiry scope (#142 round 4): only the job the acceptance bound ----
+
+  it("an old UNRELATED queued job is not expired and the resumed run keeps running", async () => {
+    const runId = "run-scope-unrelated";
+    const runDir = join(RUNS, runId);
+    const base = orphanShape({
+      id: runId,
+      resumeAttempt: { id: "a1", series: 0, outcome: "accepted", automatic: true, updatedAt: isoAgo(3 * 60_000) },
+      resumedAt: isoAgo(3 * 60_000), // past the 2-minute resume grace: the fold IS consulted
+    });
+    // the BOUND resume job: young, inside its dispatch bound
+    const withResume = upsertRoutedLaunchJobRecord(base as never, {
+      occurrenceId: `resume:${runId}:1780000000000`,
+      runId,
+      runDir,
+      chainPath: join(runDir, "chain.json"),
+      targetAgentIds: ["reviewer"],
+      environment: { NAMESPACE_ID: "default", ORG_ID: "default" },
+    });
+    // an old routed-continuation job retained in the run: past the bound
+    const withOld = upsertRoutedLaunchJobRecord(withResume.run as never, {
+      occurrenceId: `completion:${runId}:1780000000001`,
+      runId,
+      runDir,
+      chainPath: join(runDir, "chain.json"),
+      targetAgentIds: ["reviewer"],
+      environment: { NAMESPACE_ID: "default", ORG_ID: "default" },
+      now: new Date(Date.now() - 11 * 60_000),
+    });
+    const record = withOld.run as unknown as Record<string, unknown>;
+    // bind the acceptance to the resume job (round 4 shape)
+    const jobs = (record.runnerV2 as any).launchJobs as Record<string, { occurrenceId: string }>;
+    (record.resumeAttempt as Record<string, unknown>).launchJobId
+      = Object.keys(jobs).find((id) => jobs[id].occurrenceId.startsWith("resume:"))!;
+    writeRun(runId, record);
+
+    await reconcileOrphanedRuns({ runsDir: RUNS, eventsDir: join(TEST_ROOT, "events") });
+
+    const after = readRun(runId);
+    expect(after.status).toBe("running");
+    const jobValues = Object.values(after.runnerV2.launchJobs) as Array<Record<string, any>>;
+    expect(jobValues.find((job) => job.occurrenceId.startsWith("resume:"))!.status).toBe("queued");
+    expect(jobValues.find((job) => !job.occurrenceId.startsWith("resume:"))!.status).toBe("queued");
+  });
+
+  it("an accepted record with NO bound job id (older head) is left alone by the expiry", async () => {
+    const runId = "run-scope-legacy";
+    const runDir = join(RUNS, runId);
+    // older head shape: accepted attempt recorded without launchJobId
+    const record = neverClaimedJobRun(runId, runDir, "TASK-LEGACY");
+    delete (record.resumeAttempt as Record<string, unknown>).launchJobId;
+    // keep the run inside the startup/handoff windows so only the expiry fold
+    // could touch it: the orphan path skips runs completed 5 minutes ago
+    record.started = isoAgo(3 * 60_000);
+    record.resumedAt = isoAgo(3 * 60_000);
+    (record.agents as Array<Record<string, unknown>>)[0].completed = isoAgo(60_000);
+    (record.agents as Array<Record<string, unknown>>)[0].status = "complete";
+    writeRun(runId, record);
+
+    await reconcileOrphanedRuns({ runsDir: RUNS, eventsDir: join(TEST_ROOT, "events") });
+
+    const after = readRun(runId);
+    // the expiry did not block the job and did not stop the run for the bound
+    const job = (Object.values(after.runnerV2.launchJobs) as Array<Record<string, any>>)[0];
+    expect(job.status).toBe("queued");
+    expect((after.statusReason as { reason?: string } | undefined)?.reason)
+      .not.toBe("accepted resume launch job exceeded its dispatch bound");
+  });
+
+  it("a past-bound resume job does not stop the run while another job is actively leased", async () => {
+    const runId = "run-scope-leased";
+    const runDir = join(RUNS, runId);
+    const record = neverClaimedJobRun(runId, runDir, "TASK-LEASED");
+    const jobs = (record.runnerV2 as any).launchJobs as Record<string, Record<string, any>>;
+    const boundJobId = (record.resumeAttempt as Record<string, unknown>).launchJobId as string;
+    const otherJobId = Object.keys(jobs).find((id) => id !== boundJobId);
+    if (!otherJobId) {
+      // add the unrelated leased job when the fixture only seeded one
+      const withOther = upsertRoutedLaunchJobRecord(record as never, {
+        occurrenceId: `completion:${runId}:1780000000009`,
+        runId,
+        runDir,
+        chainPath: join(runDir, "chain.json"),
+        targetAgentIds: ["reviewer"],
+        environment: { NAMESPACE_ID: "default", ORG_ID: "default" },
+      });
+      Object.assign(record, withOther.run);
+    }
+    const jobsAfter = (record.runnerV2 as any).launchJobs as Record<string, Record<string, any>>;
+    const leaseOtherId = Object.keys(jobsAfter).find((id) => id !== boundJobId)!;
+    jobsAfter[leaseOtherId] = {
+      ...jobsAfter[leaseOtherId],
+      status: "leased",
+      lease: {
+        ownerId: "worker:1:live",
+        acquiredAt: isoAgo(5_000),
+        heartbeatAt: isoAgo(1_000),
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      },
+    };
+    writeRun(runId, record);
+
+    await reconcileOrphanedRuns({ runsDir: RUNS, eventsDir: join(TEST_ROOT, "events") });
+
+    const after = readRun(runId);
+    expect(after.status).toBe("running");
+    expect((after.runnerV2.launchJobs as Record<string, any>)[boundJobId].status).toBe("queued");
   });
 });
 

@@ -34,6 +34,13 @@ export interface ResumeAttemptRecord {
   reason?: string;
   /** True when the auto-run scanner requested the attempt; only automatic attempts debit task retries. */
   automatic?: boolean;
+  /**
+   * The routed launch job this acceptance dispatched (issue #142 round 4).
+   * Written in the same atomic acceptance write that queues the job, so the
+   * dispatch-bound expiry can target exactly this job and never an unrelated
+   * launch job of the run. Absent on accepted records from older heads.
+   */
+  launchJobId?: string;
   updatedAt?: string;
 }
 
@@ -70,6 +77,7 @@ export function readResumeAttempt(
     outcome: record.outcome,
     ...(typeof record.reason === "string" && record.reason ? { reason: record.reason } : {}),
     ...(record.automatic === true ? { automatic: true } : {}),
+    ...(typeof record.launchJobId === "string" && record.launchJobId ? { launchJobId: record.launchJobId } : {}),
     ...(typeof record.updatedAt === "string" ? { updatedAt: record.updatedAt } : {}),
   };
 }
