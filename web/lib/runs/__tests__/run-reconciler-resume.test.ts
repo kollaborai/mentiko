@@ -51,6 +51,7 @@ jest.mock("@/lib/runner-v2/run-state", () => {
 import { reconcileOrphanedRuns } from "@/lib/runs/run-reconciler";
 import { upsertRoutedLaunchJobRecord } from "@/lib/runner-v2/launch-job";
 import { closeAll, taskCreate, taskGet } from "@/lib/tasks/task-store";
+import { resolveAutoRunState } from "@/lib/tasks/auto-run-state";
 
 const TEST_ROOT = "/tmp/mentiko-reaper-142-test";
 const RUNS = join(TEST_ROOT, "runs");
@@ -342,6 +343,48 @@ describe("reconcileOrphanedRuns vs route-owned resume work", () => {
     const metadata = task.metadata as Record<string, unknown>;
     expect(metadata.auto_run_paused).toBe(true);
     expect(metadata.auto_run_paused_reason).toContain("dispatch bound");
+  });
+
+  // ---- worker reconstruction failure joins the pause path (#142 round 4) ----
+
+  it("a worker reconstruction-blocked resume ends the loop visibly: task paused with the sanitized reason, no debit, scanner cannot relaunch", async () => {
+    const runId = "run-recon-blocked";
+    const runDir = join(RUNS, runId);
+    const taskId = seedTaskForRun(runId, { resume_series: 3 });
+    const record = neverClaimedJobRun(runId, runDir, taskId);
+    const reason = "resume launch blocked: credentials could not be reconstructed for routed-launch:x:v1: "
+      + "agent profile missing-profile referenced by chain.json is missing; recreate the profile before resuming "
+      + `run ${runId}`;
+    record.status = "stopped";
+    record.statusReason = { actor: "system", reason };
+    const jobId = Object.keys((record.runnerV2 as any).launchJobs)[0];
+    (record.runnerV2 as any).launchJobs[jobId].status = "blocked";
+    (record.runnerV2 as any).launchJobs[jobId].lastError = reason;
+    writeRun(runId, record);
+
+    await reconcileOrphanedRuns({ runsDir: RUNS, eventsDir: join(TEST_ROOT, "events") });
+
+    const task = taskGet("default", taskId, "default")!;
+    const metadata = task.metadata as Record<string, unknown>;
+    expect(metadata.auto_run_paused).toBe(true);
+    expect(metadata.auto_run_paused_reason).toContain("resume launch blocked: credentials could not be reconstructed");
+    expect(metadata.auto_run_paused_reason).toContain("recreate the profile");
+    // NO retry debit for an operational pause
+    expect(metadata.auto_run_retries).toBeUndefined();
+    // the reason carries the cause, never a credential value
+    expect(metadata.auto_run_paused_reason).not.toContain("sk-live-secret-value");
+    // the pause gates admission: a following scan cannot resume it again
+    expect(resolveAutoRunState({
+      explicitAutoRun: true,
+      userPaused: metadata.auto_run_paused as boolean,
+      pausedReason: metadata.auto_run_paused_reason as string,
+    }).willAdmit).toBe(false);
+
+    // idempotent: a second scan never rewrites the pause
+    await reconcileOrphanedRuns({ runsDir: RUNS, eventsDir: join(TEST_ROOT, "events") });
+    const taskAfter = taskGet("default", taskId, "default")!;
+    expect((taskAfter.metadata as Record<string, unknown>).auto_run_paused_reason)
+      .toBe(metadata.auto_run_paused_reason);
   });
 
   it("a dispatch-bound pause never lands on a task that moved on (series fence)", async () => {

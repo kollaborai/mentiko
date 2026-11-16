@@ -364,6 +364,58 @@ export function routedLaunchJobIsReclaimable(job: RoutedLaunchJob, now = new Dat
 export const RESUME_LAUNCH_DISPATCH_BOUND_MS = 10 * 60_000;
 export const RESUME_LAUNCH_ATTEMPT_CEILING = 5;
 export const RESUME_LAUNCH_DISPATCH_BOUND_REASON = "accepted resume launch job exceeded its dispatch bound";
+/**
+ * Prefix of the sanitized reason the worker records when credential
+ * reconstruction for an accepted resume launch job fails (issue #142 round 2
+ * P1-1, closed round 4). Together with the dispatch-bound reason this is the
+ * other terminal resume-dispatch outcome the reaper turns into a guarded
+ * operational task pause.
+ */
+export const RESUME_LAUNCH_RECONSTRUCTION_FAILURE_PREFIX =
+  "resume launch blocked: credentials could not be reconstructed";
+
+/** A run-level reason that must end in the guarded resume-dispatch task pause. */
+export function isResumeDispatchTerminalReason(reason: unknown): boolean {
+  return reason === RESUME_LAUNCH_DISPATCH_BOUND_REASON
+    || (typeof reason === "string" && reason.startsWith(RESUME_LAUNCH_RECONSTRUCTION_FAILURE_PREFIX));
+}
+
+/**
+ * Stop the accepted run of a resume launch job the worker blocked for a
+ * terminal cause (issue #142 round 4, review P1-1): a reconstruction failure
+ * must not leave the run `running` with an accepted attempt the scanner can
+ * relaunch forever. Under the run.json lock, and only for the job the
+ * acceptance bound (resumeAttempt.launchJobId) — an unrelated job can never
+ * stop the run this way. Returns whether the stop landed.
+ */
+export function stopAcceptedResumeRunForBlockedJob(input: {
+  runJsonPath: string;
+  jobId: string;
+  reason: string;
+  now?: Date;
+}): boolean {
+  const at = (input.now || new Date()).toISOString();
+  let stopped = false;
+  try {
+    updateRunJson(input.runJsonPath, (run) => {
+      if (!run) throw new Error(`run.json not found: ${input.runJsonPath}`);
+      const resumeAttempt = objectValue(run.resumeAttempt);
+      if (!resumeAttempt || resumeAttempt.outcome !== "accepted") return run;
+      if (resumeAttempt.launchJobId !== input.jobId) return run;
+      if (run.status !== "running" && run.status !== "pending") return run;
+      stopped = true;
+      return {
+        ...run,
+        status: "stopped",
+        completed: run.completed || at,
+        statusReason: { actor: "system", reason: input.reason },
+      };
+    });
+  } catch {
+    return false;
+  }
+  return stopped;
+}
 
 export function routedLaunchJobPastDispatchBound(job: RoutedLaunchJob, now = new Date()): boolean {
   if (job.status === "completed" || job.status === "blocked") return false;

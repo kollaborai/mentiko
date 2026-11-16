@@ -24,6 +24,7 @@ import {
   routedLaunchJobPastDispatchBound,
   RESUME_LAUNCH_DISPATCH_BOUND_REASON,
   startRoutedLaunchJobHeartbeat,
+  stopAcceptedResumeRunForBlockedJob,
   type RoutedLaunchJob,
 } from "@/lib/runner-v2/launch-job";
 import { startLaunchCoordinatorHeartbeat } from "@/lib/runner-v2/launch-coordinator-state";
@@ -112,7 +113,10 @@ export async function runRoutedLaunchJob(input: {
     // Accepted resume jobs (issue #142 round 2): reconstruct the scoped
     // session identity and profile/secrets at claim time, BEFORE any PTY
     // effect. A reconstruction failure blocks the job with a visible reason —
-    // never unauthenticated work, never a silent requeue.
+    // never unauthenticated work, never a silent requeue — and (round 4,
+    // review P1-1) STOPS the accepted run with that sanitized reason, so the
+    // reaper's dispatch-bound pause path can end the loop visibly instead of
+    // leaving a resumable run the scanner relaunches forever.
     let resumeEnvironment: Record<string, string> | undefined;
     if (dependencies.reconstructResumeEnvironment && runHasAcceptedResume(input.runJsonPath)) {
       try {
@@ -123,6 +127,11 @@ export async function runRoutedLaunchJob(input: {
           runJsonPath: input.runJsonPath,
           jobId: input.jobId,
           ownerId: input.ownerId,
+          reason,
+        });
+        stopAcceptedResumeRunForBlockedJob({
+          runJsonPath: input.runJsonPath,
+          jobId: input.jobId,
           reason,
         });
         return { status: "blocked", jobId: input.jobId, error: reason };

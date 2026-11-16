@@ -23,6 +23,7 @@ import { runnerEventIdentityMatches } from "../runner-v2/event-identity";
 import { updateRunJsonRecord } from "../runner-v2/run-state";
 import {
   expireAcceptedResumeLaunchJobs,
+  isResumeDispatchTerminalReason,
   routedLaunchJobPastDispatchBound,
   RESUME_LAUNCH_DISPATCH_BOUND_REASON,
   type RoutedLaunchJob,
@@ -141,35 +142,40 @@ function asTimeMs(value?: string): number | undefined {
 }
 
 /**
- * Operational pause for a run stopped by the resume dispatch bound (issue
- * #142 round 3): the owner sees WHY the loop ended instead of an in-progress
+ * Operational pause for a run stopped by a terminal resume-dispatch outcome
+ * (issue #142 round 3, extended round 4): the dispatch bound, or a resume
+ * launch job the worker blocked because its credentials could not be
+ * reconstructed. The owner sees WHY the loop ended instead of an in-progress
  * task that never moves. No attempt outcome, no retry debit. Guarded by the
  * task's CURRENT row: closed tasks, resets (series moved) and replacements
  * (task no longer points at this run) are never paused.
  */
 function pauseTaskForResumeDispatchBound(
   context: ReconcilerContext,
-  bound: { taskId: string; series: number; runId: string },
+  bound: { taskId: string; series: number; runId: string; reason: string },
 ): void {
   try {
     const landed = taskMutateMetadata(context.orgId, bound.taskId, (metadata, task) => {
       if (isTerminalTaskStatus(task.status)) return null;
       if (currentResumeSeries(metadata) !== bound.series) return null;
       if (!taskPointsAtRun(metadata, bound.taskId, bound.runId)) return null;
-      // already paused for this bound: idempotent no-op, never a repeated write
+      // already paused for this stop: idempotent no-op, never a repeated write
       if (metadata.auto_run_paused === true
         && typeof metadata.auto_run_paused_reason === "string"
-        && metadata.auto_run_paused_reason.startsWith(RESUME_LAUNCH_DISPATCH_BOUND_REASON)) {
+        && metadata.auto_run_paused_reason.startsWith(bound.reason)) {
         return null;
       }
+      const explanation = bound.reason === RESUME_LAUNCH_DISPATCH_BOUND_REASON
+        ? "the accepted launch job was never "
+          + "claimed (or kept requeueing) past its time/attempt ceiling, so the run was stopped. "
+          + "Auto-run paused without consuming a retry; use Retry task once the worker is dispatching again."
+        : "the accepted resume launch job was blocked and the run was stopped. "
+          + "Auto-run paused without consuming a retry; use Retry task once the reported cause is addressed.";
       return {
         ...metadata,
         resume_pending_since: null,
         auto_run_paused: true,
-        auto_run_paused_reason:
-          `${RESUME_LAUNCH_DISPATCH_BOUND_REASON} for run ${bound.runId}: the accepted launch job was never `
-          + "claimed (or kept requeueing) past its time/attempt ceiling, so the run was stopped. "
-          + "Auto-run paused without consuming a retry; use Retry task once the worker is dispatching again.",
+        auto_run_paused_reason: `${bound.reason} for run ${bound.runId}: ${explanation}`,
       };
     }, context.namespaceId);
     if (!landed.ok) {
@@ -598,7 +604,7 @@ export async function reconcileOrphanedRuns(options: ReconcileOptions = {}): Pro
     // preparing (a resume in flight under its claim) is left entirely alone.
     let mutated = false;
     let finalRun: Record<string, unknown> | undefined;
-    let resumeDispatchBoundTask: { taskId: string; series: number; runId: string } | undefined;
+    let resumeDispatchBoundTask: { taskId: string; series: number; runId: string; reason: string } | undefined;
     try {
       finalRun = updateRunJsonRecord(runFile, (currentRecord) => {
         if (!currentRecord) throw new Error(`run.json vanished before reconciliation: ${runFile}`);
@@ -609,17 +615,21 @@ export async function reconcileOrphanedRuns(options: ReconcileOptions = {}): Pro
           return currentRecord;
         }
 
-        // A run the WORKER already stopped for the dispatch bound (#142 r3)
-        // still owes its task the guarded visible pause — this scan delivers
-        // it (idempotent; the pause write itself no-ops once landed).
+        // A run the WORKER already stopped for a terminal resume-dispatch
+        // outcome (#142 r3; reconstruction-blocked jobs join this path in
+        // round 4) still owes its task the guarded visible pause — this scan
+        // delivers it (idempotent; the pause write itself no-ops once landed).
+        const stoppedDispatchReason = (run.statusReason as RunStatusReason | undefined)?.reason;
         if (run.status !== "running" && run.status !== "pending"
           && resumeAttempt?.outcome === "accepted"
           && typeof run.taskId === "string" && run.taskId
-          && (run.statusReason as RunStatusReason | undefined)?.reason === RESUME_LAUNCH_DISPATCH_BOUND_REASON) {
+          && typeof stoppedDispatchReason === "string"
+          && isResumeDispatchTerminalReason(stoppedDispatchReason)) {
           resumeDispatchBoundTask = {
             taskId: run.taskId,
             series: typeof resumeAttempt.series === "number" ? resumeAttempt.series : 0,
             runId,
+            reason: stoppedDispatchReason,
           };
         }
 
@@ -680,6 +690,7 @@ export async function reconcileOrphanedRuns(options: ReconcileOptions = {}): Pro
                 taskId: run.taskId,
                 series: typeof resumeAttempt.series === "number" ? resumeAttempt.series : 0,
                 runId,
+                reason: RESUME_LAUNCH_DISPATCH_BOUND_REASON,
               };
             }
             reconcilerLog(context, `stopped ${runId}: ${RESUME_LAUNCH_DISPATCH_BOUND_REASON}`, "warn");

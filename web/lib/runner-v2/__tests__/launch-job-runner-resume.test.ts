@@ -106,10 +106,18 @@ describe("runRoutedLaunchJob credential reconstruction (accepted resume jobs)", 
     expect(result.error).toContain("resume launch blocked");
     expect(result.error).toContain("no scoped session identity");
     expect(bootstrap).not.toHaveBeenCalled();
-    const job = JSON.parse(readFileSync(runJsonPath, "utf8")).runnerV2.launchJobs[jobId];
+    const after = JSON.parse(readFileSync(runJsonPath, "utf8"));
+    const job = after.runnerV2.launchJobs[jobId];
     expect(job.status).toBe("blocked");
     expect(job.lastError).toContain("resume launch blocked");
     expect(job.lease).toBeUndefined();
+    // round 4 (review P1-1): the failure is FINAL and visible — the accepted
+    // run stops under the lock with the same sanitized reason, so the reaper
+    // can deliver the guarded task pause instead of leaving a resumable loop
+    expect(after.status).toBe("stopped");
+    expect(after.statusReason).toEqual({ actor: "system", reason: result.error });
+    // sanitized: the reason names the CAUSE, never a credential value
+    expect(after.statusReason.reason).not.toContain("sk-live-secret-value");
   });
 
   it("reconstructs scoped credentials before bootstrap and merges them with the canonical persisted env", async () => {
