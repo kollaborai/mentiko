@@ -9,7 +9,7 @@
  * from crashes, killed processes, or race conditions.
  */
 
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "fs";
 import { isAbsolute, join } from "path";
 import config from "../config";
 import { writeLog } from "../system/system-logger";
@@ -20,6 +20,7 @@ import { cleanTaskExecutionRunMetadata, isNonExecutionRun } from "./run-provenan
 import { hasLivePendingHandoff, pendingHandoffs } from "../runner-v2/handoff-liveness";
 import { parseRunnerEvent } from "../runner-v2/events";
 import { runnerEventIdentityMatches } from "../runner-v2/event-identity";
+import { updateRunJsonRecord } from "../runner-v2/run-state";
 import type { RunStatusReason } from "./run-record";
 
 interface ReconcilerContext {
@@ -94,6 +95,32 @@ interface EventRecord {
   runId: string;
   processed: boolean;
   mtimeMs: number;
+}
+
+/**
+ * An accepted resume whose routed launch job is queued, or leased with an
+ * unexpired lease, still has the background worker as its durable dispatch
+ * path (#142 round 2). Narrow gate by design: the broader typed-work
+ * protection lives in reconciler-protected-work.ts for the watchdog.
+ */
+function hasActiveResumeLaunchWork(run: RunJson): boolean {
+  const resumeAttempt = run.resumeAttempt as { outcome?: unknown } | undefined;
+  if (!resumeAttempt || typeof resumeAttempt !== "object"
+    || Array.isArray(resumeAttempt) || resumeAttempt.outcome !== "accepted") {
+    return false;
+  }
+  const runnerV2 = run.runnerV2 as { launchJobs?: unknown } | undefined;
+  const jobs = runnerV2 && typeof runnerV2 === "object" && !Array.isArray(runnerV2)
+    && runnerV2.launchJobs && typeof runnerV2.launchJobs === "object" && !Array.isArray(runnerV2.launchJobs)
+    ? runnerV2.launchJobs as Record<string, { status?: unknown; lease?: { expiresAt?: unknown } }>
+    : undefined;
+  if (!jobs) return false;
+  const nowMs = Date.now();
+  return Object.values(jobs).some((job) => job && typeof job === "object"
+    && (job.status === "queued"
+      || (job.status === "leased"
+        && typeof job.lease?.expiresAt === "string"
+        && Date.parse(job.lease.expiresAt) > nowMs)));
 }
 
 function asTimeMs(value?: string): number | undefined {
@@ -484,142 +511,176 @@ export async function reconcileOrphanedRuns(options: ReconcileOptions = {}): Pro
     const runFile = join(runsDir, entry.name, "run.json");
     if (!existsSync(runFile)) continue;
 
-    let run: RunJson;
+    const runId = entry.name;
+    const runDir = join(runsDir, entry.name);
+
+    // The task-side repair reads only taskId/runId; a tolerant plain read is enough.
     try {
-      run = JSON.parse(readFileSync(runFile, "utf-8"));
+      const forTaskRepair = JSON.parse(readFileSync(runFile, "utf-8")) as RunJson;
+      if (repairMisclassifiedNonExecutionRunTask(context, forTaskRepair, runId)) {
+        if (!cleaned.includes(runId)) cleaned.push(runId);
+      }
     } catch {
+      // An unreadable record cannot be reconciled at all.
       continue;
     }
 
-    const agents = run.agents || [];
-    const runId = entry.name;
-    let changed = false;
-    const runDir = join(runsDir, entry.name);
+    // Locked conditional mutation (issue #142 round 2): every decision below is
+    // re-derived against the CURRENT run record under the run.json lock, never
+    // a snapshot read before another writer's resume acceptance — the reaper
+    // cannot erase a resumeAttempt or a queued/leased routed launch job that
+    // landed while it was deciding, and cannot mark a run the acceptance just
+    // moved to running as stopped from a pre-acceptance read. The fold always
+    // spreads the current record, and a run whose resumeAttempt is still
+    // preparing (a resume in flight under its claim) is left entirely alone.
+    let mutated = false;
+    let finalRun: Record<string, unknown> | undefined;
+    try {
+      finalRun = updateRunJsonRecord(runFile, (currentRecord) => {
+        const run = { ...currentRecord } as RunJson;
+        const resumeAttempt = run.resumeAttempt as { outcome?: unknown } | undefined;
+        if (resumeAttempt && typeof resumeAttempt === "object" && !Array.isArray(resumeAttempt)
+          && resumeAttempt.outcome === "preparing") {
+          return currentRecord;
+        }
 
-    if (repairMisclassifiedNonExecutionRunTask(context, run, runId)) {
+        const agents = run.agents || [];
+        let changed = false;
+
+        if (repairOutOfWindowCompletions(context, run)) {
+          changed = true;
+        }
+
+        if (recoverCompletedAgentsFromEvents(context, run, runDir, runId)) {
+          changed = true;
+        }
+
+        if (repairFalsePartialQualityGateFailure(context, run, runDir)) {
+          changed = true;
+        }
+
+        if (repairStoppedAllCompleteRun(context, run, runDir)) {
+          changed = true;
+        }
+
+        if (run.status === "running" || run.status === "pending") {
+          scanned++;
+
+          // grace period: don't touch recently resumed runs (2 min)
+          // chain-runner needs time to create sessions after resume
+          const resumedAt = run.resumedAt as string | undefined;
+          if (resumedAt) {
+            const resumeAge = now - new Date(resumedAt).getTime();
+            if (resumeAge < 120_000) return currentRecord; // skip, still starting up
+          }
+
+          // check if any agent session is alive
+          const hasLiveSession = agents.some(
+            (a) => a.session && liveSessions.has(a.session)
+          );
+
+          if (hasLiveSession) return currentRecord; // run is alive
+          if (hasLivePendingHandoff(run)) return currentRecord; // detached chain-runner is starting the next PTY
+
+          // Honor accepted resume work (#142 round 2): a queued or live-leased
+          // routed launch job under an accepted resumeAttempt is durable
+          // execution intent — the worker owns its dispatch, and stopping the
+          // run here would block the job out from under it.
+          if (hasActiveResumeLaunchWork(run)) {
+            reconcilerLog(context, `skipping ${runId}: accepted resume launch job still queued/leased`);
+            return currentRecord;
+          }
+
+          if (allDeclaredAgentsComplete(run, runDir) && !hasPendingCompletionWork(context, run, runDir, runId)) {
+            run.status = "completed";
+            run.completed = latestAgentCompletion(run) || run.completed || new Date().toISOString();
+            changed = true;
+            reconcilerLog(context, `completed ${runId}: all declared agents are complete`, "warn");
+          } else {
+            // grace period: if any agent completed recently, typed completion
+            // may be doing handoff (artifact capture + next agent launch).
+            // don't mark as orphaned until 5 min after last agent completion.
+            const lastCompletion = agents
+              .filter((a) => a.status === "complete" && a.completed)
+              .map((a) => new Date(a.completed!).getTime())
+              .sort((a, b) => b - a)[0];
+
+            if (lastCompletion && now - lastCompletion < 300_000) {
+              reconcilerLog(context, `skipping ${runId}: agent completed ${Math.round((now - lastCompletion) / 1000)}s ago (handoff window)`);
+              return currentRecord;
+            }
+
+            // grace period: don't kill young runs (2 min from start). Run IDs are
+            // intentionally collision-resistant (`run-<millis>-<random>`), so the
+            // ID is not a timestamp parser. Trust the durable run-start field or
+            // this watchdog can stop a freshly queued run before its first PTY is
+            // admitted.
+            const runStartedAt = asTimeMs(run.started);
+            if (!runStartedAt) {
+              reconcilerLog(context, `skipping ${runId}: run has no valid started timestamp (startup age unknown)`, "warn");
+              return currentRecord;
+            }
+            if (now - runStartedAt < 120_000) {
+              reconcilerLog(context, `skipping ${runId}: run is ${Math.round((now - runStartedAt) / 1000)}s old (startup window)`);
+              return currentRecord;
+            }
+
+            // no live sessions → orphaned run
+            orphaned++;
+            run.status = "stopped";
+            run.completed = run.completed || new Date().toISOString();
+            run.statusReason = { actor: "reaper", reason: "no live agent session found after startup/handoff grace windows" };
+            changed = true;
+          }
+        }
+
+        // fix stale agent statuses on ANY non-active run
+        // (catches stopped runs with running/pending agents from crashes)
+        if (run.status !== "running" && run.status !== "pending") {
+          for (const agent of agents) {
+            if (agent.status === "running") {
+              // check if session is actually alive before marking stopped
+              const sessionAlive = agent.session ? liveSessions.has(agent.session) : false;
+              if (sessionAlive) continue;
+              reconcilerLog(context, `fixing agent ${agent.id} in ${runId}: running -> stopped (session alive: ${sessionAlive}, session: ${agent.session || 'none'})`, "warn");
+              agent.status = "stopped";
+              agent.statusReason = { actor: "reaper", reason: "agent session was not alive when the run was reconciled" };
+              changed = true;
+            } else if (agent.status === "pending") {
+              agent.status = "cancelled";
+              agent.statusReason = { actor: "reaper", reason: "run reconciled as non-active while agent was still pending" };
+              changed = true;
+            }
+          }
+        }
+
+        if (!changed) return currentRecord;
+        mutated = true;
+        return run as unknown as Record<string, unknown>;
+      });
+    } catch (err) {
+      console.warn(`[reconciler] failed to clean ${runId}:`, err);
+      continue;
+    }
+
+    if (mutated && finalRun) {
+      const run = finalRun as unknown as RunJson;
       if (!cleaned.includes(runId)) cleaned.push(runId);
-    }
+      reconcilerLog(context, `cleaned: ${runId} (status=${run.status})`, "warn");
 
-    if (repairOutOfWindowCompletions(context, run)) {
-      changed = true;
-    }
-
-    if (recoverCompletedAgentsFromEvents(context, run, runDir, runId)) {
-      changed = true;
-    }
-
-    if (repairFalsePartialQualityGateFailure(context, run, runDir)) {
-      changed = true;
-    }
-
-    if (repairStoppedAllCompleteRun(context, run, runDir)) {
-      changed = true;
-    }
-
-    if (run.status === "running" || run.status === "pending") {
-      scanned++;
-
-      // grace period: don't touch recently resumed runs (2 min)
-      // chain-runner needs time to create sessions after resume
-      const resumedAt = run.resumedAt as string | undefined;
-      if (resumedAt) {
-        const resumeAge = now - new Date(resumedAt).getTime();
-        if (resumeAge < 120_000) continue; // skip, still starting up
-      }
-
-      // check if any agent session is alive
-      const hasLiveSession = agents.some(
-        (a) => a.session && liveSessions.has(a.session)
-      );
-
-      if (hasLiveSession) continue; // run is alive
-      if (hasLivePendingHandoff(run)) continue; // detached chain-runner is starting the next PTY
-
-      if (allDeclaredAgentsComplete(run, runDir) && !hasPendingCompletionWork(context, run, runDir, runId)) {
-        run.status = "completed";
-        run.completed = latestAgentCompletion(run) || run.completed || new Date().toISOString();
-        changed = true;
-        reconcilerLog(context, `completed ${runId}: all declared agents are complete`, "warn");
-      } else {
-        // grace period: if any agent completed recently, typed completion
-        // may be doing handoff (artifact capture + next agent launch).
-        // don't mark as orphaned until 5 min after last agent completion.
-        const lastCompletion = agents
-          .filter((a) => a.status === "complete" && a.completed)
-          .map((a) => new Date(a.completed!).getTime())
-          .sort((a, b) => b - a)[0];
-
-        if (lastCompletion && now - lastCompletion < 300_000) {
-          reconcilerLog(context, `skipping ${runId}: agent completed ${Math.round((now - lastCompletion) / 1000)}s ago (handoff window)`);
-          continue;
-        }
-
-        // grace period: don't kill young runs (2 min from start). Run IDs are
-        // intentionally collision-resistant (`run-<millis>-<random>`), so the
-        // ID is not a timestamp parser. Trust the durable run-start field or
-        // this watchdog can stop a freshly queued run before its first PTY is
-        // admitted.
-        const runStartedAt = asTimeMs(run.started);
-        if (!runStartedAt) {
-          reconcilerLog(context, `skipping ${runId}: run has no valid started timestamp (startup age unknown)`, "warn");
-          continue;
-        }
-        if (now - runStartedAt < 120_000) {
-          reconcilerLog(context, `skipping ${runId}: run is ${Math.round((now - runStartedAt) / 1000)}s old (startup window)`);
-          continue;
-        }
-
-        // no live sessions → orphaned run
-        orphaned++;
-        run.status = "stopped";
-        run.completed = run.completed || new Date().toISOString();
-        run.statusReason = { actor: "reaper", reason: "no live agent session found after startup/handoff grace windows" };
-        changed = true;
-      }
-    }
-
-    // fix stale agent statuses on ANY non-active run
-    // (catches stopped runs with running/pending agents from crashes)
-    if (run.status !== "running" && run.status !== "pending") {
-      for (const agent of agents) {
-        if (agent.status === "running") {
-          // check if session is actually alive before marking stopped
-          const sessionAlive = agent.session ? liveSessions.has(agent.session) : false;
-          if (sessionAlive) continue;
-          reconcilerLog(context, `fixing agent ${agent.id} in ${runId}: running -> stopped (session alive: ${sessionAlive}, session: ${agent.session || 'none'})`, "warn");
-          agent.status = "stopped";
-          agent.statusReason = { actor: "reaper", reason: "agent session was not alive when the run was reconciled" };
-          changed = true;
-        } else if (agent.status === "pending") {
-          agent.status = "cancelled";
-          agent.statusReason = { actor: "reaper", reason: "run reconciled as non-active while agent was still pending" };
-          changed = true;
-        }
-      }
-    }
-
-    if (changed) {
-      try {
-        writeFileSync(runFile, JSON.stringify(run, null, 2));
-        if (!cleaned.includes(runId)) cleaned.push(runId);
-        reconcilerLog(context, `cleaned: ${runId} (status=${run.status})`, "warn");
-
-        // propagate to linked task
-        if (shouldPropagateRunToTask(context, run, runId)) {
-          try {
-            const agentSummary = (run.agents || [])
-              .map((a) => `${a.id}|${a.status}`)
-              .join(",");
-            taskMergeMeta(context.orgId, run.taskId, {
-              last_run_status: run.status,
-              last_run_id: runId,
-              last_run_completed: run.completed || new Date().toISOString(),
-              last_run_agents: agentSummary,
-            }, context.namespaceId);
-          } catch { /* non-fatal */ }
-        }
-      } catch (err) {
-        console.warn(`[reconciler] failed to clean ${runId}:`, err);
+      // propagate to linked task
+      if (shouldPropagateRunToTask(context, run, runId)) {
+        try {
+          const agentSummary = (run.agents || [])
+            .map((a) => `${a.id}|${a.status}`)
+            .join(",");
+          taskMergeMeta(context.orgId, run.taskId, {
+            last_run_status: run.status,
+            last_run_id: runId,
+            last_run_completed: run.completed || new Date().toISOString(),
+            last_run_agents: agentSummary,
+          }, context.namespaceId);
+        } catch { /* non-fatal */ }
       }
     }
   }
