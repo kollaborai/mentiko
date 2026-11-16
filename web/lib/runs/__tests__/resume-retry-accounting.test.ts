@@ -5,6 +5,11 @@
  * is still the current one — so late, overlapping, or post-reset responses
  * cannot spend a task's retry budget.
  *
+ * Round 5 P1: charging additionally requires the CURRENT run record to
+ * prove the resume did not take effect. Each test stages a real run.json in
+ * a temp runs dir; a running/pending record means "resume took effect"
+ * (nothing charged), an unreadable record is its own truthful outcome.
+ *
  * Runs against the REAL sqlite store in a temp globalRoot (same setup as
  * task-store-guarded-write.test.ts; no store mocks except where a test
  * explicitly spies taskMutateMetadata to force a store failure) so the
@@ -13,6 +18,9 @@
  *
  * @jest-environment node
  */
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   taskCreate,
   taskGet,
@@ -53,6 +61,37 @@ afterAll(() => {
 const ORG = "retry-org";
 const RUN = "run-1794775591879-b2676ce3";
 
+// Real run.json in a real temp runs dir (round 5): the accounting reads the
+// CURRENT run record through readRunRecordAt before any charge. Default
+// fixture is a terminal `failed` record — the shape the scan selected.
+let runsDir: string;
+
+beforeEach(() => {
+  runsDir = mkdtempSync(join(tmpdir(), "mentiko-resume-retry-runs-"));
+  stageRunRecord("failed");
+});
+
+afterEach(() => {
+  rmSync(runsDir, { recursive: true, force: true });
+});
+
+function runJsonPath(runId: string = RUN) {
+  return join(runsDir, runId, "run.json");
+}
+
+function stageRunRecord(status: string, runId: string = RUN) {
+  mkdirSync(join(runsDir, runId), { recursive: true });
+  writeFileSync(runJsonPath(runId), JSON.stringify({
+    id: runId,
+    chain: "Release Review",
+    goal: "resume accounting fixture",
+    started: "2026-07-15T12:00:00.000Z",
+    status,
+    sessions: [],
+    agents: [],
+  }));
+}
+
 function makeResumingTask(metadata: Record<string, unknown> = {}) {
   return taskCreate(ORG, {
     title: "resume accounting",
@@ -85,6 +124,7 @@ function consume(
     orgId: ORG,
     taskId,
     runId,
+    runsDir,
     attemptId,
     message,
   });
@@ -354,5 +394,63 @@ describe("consumeFailedResumeRetry (real sqlite store)", () => {
       outcome: "accounting_failed",
       error: "compare-and-set attempts exhausted or task vanished",
     });
+  });
+
+  it("spends nothing when the run record shows the resume took effect (running) despite a failed response", () => {
+    const t = makeResumingTask({ auto_run_retries: 0 });
+    const s = stamp(t.id);
+    if (!s.ok) throw new Error("stamp failed");
+    // The resume route marked the run running before the response was lost
+    // or the fetch rejected: the attempt is executing.
+    stageRunRecord("running");
+
+    const result = consume(t.id, s.attemptId, RUN, "Failed to reach the resume route");
+
+    expect(result).toEqual({ outcome: "resume_took_effect", status: "running" });
+    const after = metaOf(t.id);
+    expect(after.auto_run_retries).toBe(0); // budget untouched
+    expect(after.resume_last_error).toBeUndefined();
+  });
+
+  it("spends nothing when the run record shows the resume queued (pending at the concurrency cap)", () => {
+    const t = makeResumingTask({ auto_run_retries: 0 });
+    const s = stamp(t.id);
+    if (!s.ok) throw new Error("stamp failed");
+    stageRunRecord("pending");
+
+    const result = consume(t.id, s.attemptId);
+
+    expect(result).toEqual({ outcome: "resume_took_effect", status: "pending" });
+    expect(metaOf(t.id).auto_run_retries).toBe(0);
+  });
+
+  it("spends nothing and reports a distinct unreadable outcome when the run record cannot be read", () => {
+    const t = makeResumingTask({ auto_run_retries: 0 });
+    const s = stamp(t.id);
+    if (!s.ok) throw new Error("stamp failed");
+    // Corrupt the record: the accounting must not guess — no charge, and the
+    // read error is reported truthfully (not superseded, not consumed).
+    writeFileSync(runJsonPath(), "{broken json");
+
+    const result = consume(t.id, s.attemptId);
+
+    expect(result.outcome).toBe("run_record_unreadable");
+    expect(typeof (result as { error?: string }).error).toBe("string");
+    expect((result as { error: string }).error.length).toBeGreaterThan(0);
+    const after = metaOf(t.id);
+    expect(after.auto_run_retries).toBe(0); // budget untouched
+    expect(after.resume_last_error).toBeUndefined();
+  });
+
+  it("spends nothing and reports a distinct unreadable outcome when the run record is missing", () => {
+    const t = makeResumingTask({ auto_run_retries: 0 });
+    const s = stamp(t.id);
+    if (!s.ok) throw new Error("stamp failed");
+    rmSync(join(runsDir, RUN), { recursive: true, force: true });
+
+    const result = consume(t.id, s.attemptId);
+
+    expect(result.outcome).toBe("run_record_unreadable");
+    expect(metaOf(t.id).auto_run_retries).toBe(0);
   });
 });

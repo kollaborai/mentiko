@@ -1,6 +1,7 @@
 import { MAX_AUTO_RUN_RETRIES } from "@/lib/tasks/auto-run-state";
 import { isTerminalTaskStatus } from "@/lib/tasks/task-status";
 import { taskMutateMetadata } from "@/lib/tasks/task-store";
+import { readRunRecordAt } from "@/lib/runs/run-record";
 
 /**
  * Resume-attempt identity for #142 (review round 4 P1): the task row guards
@@ -107,22 +108,44 @@ export function stampResumeAttempt(input: {
 export type FailedResumeRetryOutcome =
   | { outcome: "consumed" }
   | { outcome: "superseded" }
+  | { outcome: "resume_took_effect"; status: string }
+  | { outcome: "run_record_unreadable"; error: string }
   | { outcome: "accounting_failed"; error: string };
 
 /**
  * Spend one auto_run_retries on a failed resume attempt — but only when the
- * CURRENT task record still owns that exact attempt: last_run_id still equals
- * the run the resume was sent for, the task is not closed, it is still
- * admissible the way the gate admits it, AND the stamped resume_attempt_id is
- * still the attempt this response belongs to. A response whose attempt id is
- * no longer current (a newer attempt was stamped, the series was reset by
- * "Retry task"/auto-run toggle, or the attempt already charged) is
- * `superseded` and spends nothing.
+ * failure is proven against what actually happened to the run AND the CURRENT
+ * task record still owns that exact attempt.
+ *
+ * Run-record proof (#142 review round 5 P1): a failed or lost RESPONSE does
+ * not prove the resume failed. The resume route marks run.json running (and
+ * starts the runner) before its response is written, so a lost response or a
+ * rejected fetch can arrive while that attempt is in fact executing. Before
+ * charging, the CURRENT run record is read through the same canonical reader
+ * the run status route uses (`readRunRecordAt`), resolved to the runs root
+ * the caller passes in:
+ *
+ *   - status running or pending — the resume took effect (executing, or
+ *     queued at the concurrency cap): `resume_took_effect`, spends nothing;
+ *     the normal run reconciliation owns the task from here.
+ *   - the record cannot be read (missing, unreadable, invalid) —
+ *     `run_record_unreadable` with the error, spends nothing: a distinct,
+ *     truthful outcome, NOT superseded (the task may well own this attempt)
+ *     and not a chargeable failure.
+ *   - any other status (still terminal: failed/stopped/cancelled...) — the
+ *     resume did not take effect; fall through to the ownership checks.
+ *
+ * Ownership checks: last_run_id still equals the run the resume was sent
+ * for, the task is not closed, it is still admissible the way the gate
+ * admits it, AND the stamped resume_attempt_id is still the attempt this
+ * response belongs to. A response whose attempt id is no longer current (a
+ * newer attempt was stamped, the series was reset by "Retry task"/auto-run
+ * toggle, or the attempt already charged) is `superseded` and spends nothing.
  *
  * Charging also clears the attempt stamp, so a duplicate delivery of the same
  * response cannot charge twice.
  *
- * All checks and the increment happen inside one taskMutateMetadata
+ * All task checks and the increment happen inside one taskMutateMetadata
  * read-modify-write, so a concurrent writer that changes the record between
  * the check and the write loses-and-retries instead of being clobbered.
  *
@@ -137,12 +160,27 @@ export function consumeFailedResumeRetry(input: {
   namespaceId?: string;
   /** The run id the resume request was sent for (the scan's selection). */
   runId: string;
+  /** Absolute runs root the run record lives under (scoped root or request root). */
+  runsDir: string;
   /** The attempt id stamped by stampResumeAttempt before the request was sent. */
   attemptId: string;
   /** Failure message recorded as resume_last_error when the write lands. */
   message: string;
 }): FailedResumeRetryOutcome {
-  const { orgId, taskId, namespaceId, runId, attemptId, message } = input;
+  const { orgId, taskId, namespaceId, runId, runsDir, attemptId, message } = input;
+
+  let runStatus: string;
+  try {
+    runStatus = readRunRecordAt(runsDir, runId).status;
+  } catch (error) {
+    return {
+      outcome: "run_record_unreadable",
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+  if (runStatus === "running" || runStatus === "pending") {
+    return { outcome: "resume_took_effect", status: runStatus };
+  }
 
   // True only when the LAST mutate decision (the one whose write landed, or
   // the null that ended the loop) was an increment: a decision that lost its

@@ -53,6 +53,7 @@ import {
   createTaskRunScope,
   locateTaskRun,
   parseTaskRunScope,
+  resolveTaskRunLocation,
   taskRunLaunchFailureMetadata,
   TASK_RUN_SCOPE_METADATA_KEY,
 } from "@/lib/tasks/task-run-locator";
@@ -641,6 +642,31 @@ function resumableRunIdFromRecord(
   return runId;
 }
 
+/**
+ * The runs root the resume-failure accounting must read the run record from:
+ * a scoped run lives under its persisted scope's root, everything else under
+ * the request namespace/org root — the same roots readResumableRunId reads.
+ */
+function resumeAccountingRunsDir(
+  taskId: string,
+  runId: string,
+  namespaceId: string,
+  orgId: string,
+  metadata: Record<string, unknown>
+): string {
+  if (TASK_RUN_SCOPE_METADATA_KEY in metadata) {
+    try {
+      const scope = parseTaskRunScope(metadata[TASK_RUN_SCOPE_METADATA_KEY]);
+      if (scope.taskId === taskId && scope.runId === runId) {
+        return resolveTaskRunLocation(scope).runsDir;
+      }
+    } catch {
+      /* malformed scope: fall through to the request root */
+    }
+  }
+  return resolveLinkRunsDir(namespaceId, orgId);
+}
+
 async function resumeExistingRun(
   taskId: string,
   runId: string,
@@ -735,9 +761,36 @@ async function resumeExistingRun(
       taskId,
       namespaceId,
       runId,
+      runsDir: resumeAccountingRunsDir(taskId, runId, namespaceId, orgId, metadata),
       attemptId: stamp.attemptId,
       message: resumeFailure.message,
     });
+    if (accounted.outcome === "resume_took_effect") {
+      // The response failed but the run did not: the resume route already
+      // marked the run running (or it was queued at the concurrency cap)
+      // before the response was lost or the fetch rejected. The attempt is
+      // executing — spend nothing and let the normal run reconciliation own
+      // the task from here (#142 review round 5 P1).
+      return {
+        triggered: false,
+        taskId,
+        runId,
+        action: "resume_took_effect",
+        reason: `Run ${runId} is ${accounted.status}; the resume took effect, retry budget not consumed`,
+      };
+    }
+    if (accounted.outcome === "run_record_unreadable") {
+      // Truthful reporting: without the run record the outcome is UNKNOWN,
+      // not a chargeable failure and not superseded. Spend nothing and say
+      // what could not be read so the gap is visible, not silent.
+      return {
+        triggered: false,
+        taskId,
+        runId,
+        action: "resume_run_unreadable",
+        reason: `Could not read run ${runId} to account the failed resume attempt: ${accounted.error}; retry budget not consumed`,
+      };
+    }
     if (accounted.outcome === "superseded") {
       return {
         triggered: false,

@@ -1732,7 +1732,14 @@ export function ChainAssignWorkflow({
             key={chain.id}
             className="w-full text-left px-2.5 py-2 rounded-md hover:bg-accent/30 transition-colors"
             onClick={async () => {
-              await onAssignChain(chain.id, chain.name);
+              // a rejected PATCH now throws from the page handler (#142
+              // review round 5 P2): surface it with the same failure path
+              // the generated-chain assignment uses, not an unhandled rejection.
+              try {
+                await onAssignChain(chain.id, chain.name);
+              } catch (error) {
+                handleChainAssignmentFailure(error);
+              }
             }}
           >
             <div className="text-xs font-medium">{chain.name}</div>

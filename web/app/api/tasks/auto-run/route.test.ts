@@ -30,6 +30,21 @@ jest.mock("@/lib/links/link-run-runtime", () => ({
   resolveLinkRunsDir: (...args: unknown[]) => mockResolveLinkRunsDir(...args),
 }));
 
+// The failed-resume accounting reads the CURRENT run record through
+// readRunRecordAt (round 5 P1) to prove a failed/lost response actually
+// means the resume did not take effect. The REAL reader is covered by the
+// accounting suite against a real run.json; here it is a controlled mock so
+// each route test can stage the run's post-response status.
+const mockReadRunRecordAt = jest.fn();
+jest.mock("@/lib/runs/run-record", () => {
+  const actual = jest.requireActual("@/lib/runs/run-record");
+  return {
+    ...actual,
+    readRunRecordAt: (...args: unknown[]) =>
+      mockReadRunRecordAt(...(args as Parameters<typeof actual.readRunRecordAt>)),
+  };
+});
+
 jest.mock("@/lib/namespace-config", () => ({
   getNamespaceIdFromRequest: jest.fn().mockResolvedValue("default"),
   getOrgIdFromRequest: jest.fn().mockResolvedValue("default"),
@@ -237,6 +252,18 @@ function jsonResponse(body: unknown, status = 200) {
   });
 }
 
+function runRecordFixture(status: string, runId: string) {
+  return {
+    id: runId,
+    chain: "Release Review",
+    goal: "resume accounting fixture",
+    started: "2026-07-15T12:00:00.000Z",
+    status,
+    sessions: [],
+    agents: [],
+  };
+}
+
 function taskRunResponse(init?: RequestInit) {
   const body = JSON.parse(String(init?.body || "{}"));
   return jsonResponse({ success: true, data: { runId: body.runId } });
@@ -262,6 +289,10 @@ describe("POST /api/tasks/auto-run", () => {
     mockReadFileSync.mockReturnValue("{}");
     mockStatSync.mockReturnValue({ mtimeMs: Date.now() });
     mockResolveLinkRunsDir.mockReturnValue("/tmp/mentiko-test/default/orgs/default/runs");
+    // Default post-response run state: still terminal (the scan's selection
+    // shape), so a failed resume response charges exactly one retry.
+    mockReadRunRecordAt.mockImplementation((_runsDir: string, runId: string) =>
+      runRecordFixture("failed", runId));
     mockListWorkspaces.mockReturnValue([]);
     mockResolveAutoRunPolicy.mockReturnValue(true);
     mockFindGeneratedChainRejection.mockReturnValue(undefined);
@@ -1196,6 +1227,109 @@ describe("POST /api/tasks/auto-run", () => {
       },
       "default",
     );
+  });
+
+  it("spends no retry when a transport rejection arrives after the resume actually took effect (run running)", async () => {
+    // Round 5 P1: the resume route marks run.json running BEFORE its response
+    // is written, so a rejected fetch does not prove the resume failed. The
+    // accounting must read the run record and treat running as "took effect".
+    mockTaskGet.mockReturnValue({
+      id: "TASK-TOOK-EFFECT",
+      title: "Lost response, live run",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      metadata: {
+        auto_run: true,
+        chain_id: "release-review",
+        last_run_id: "run-took-effect",
+        last_run_status: "stopped",
+        auto_run_retries: 1,
+      },
+    });
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      taskId: "TASK-TOOK-EFFECT",
+      chainId: "release-review",
+      status: "stopped",
+      agents: [
+        { id: "planner", status: "complete" },
+        { id: "reviewer", status: "stopped" },
+      ],
+    }));
+    (global.fetch as jest.Mock).mockRejectedValue(new Error("connect ETIMEDOUT"));
+    // The resume landed and dispatched before the response was lost.
+    mockReadRunRecordAt.mockImplementation((_runsDir: string, runId: string) =>
+      runRecordFixture("running", runId));
+
+    const res = await POST(makeRequest({ taskId: "TASK-TOOK-EFFECT" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      triggered: false,
+      taskId: "TASK-TOOK-EFFECT",
+      runId: "run-took-effect",
+      action: "resume_took_effect",
+      reason: expect.stringContaining("the resume took effect"),
+    });
+    // Budget untouched: the only metadata write is the attempt stamp, which
+    // carries the unchanged retries value.
+    const writes = (mockTaskUpdate as jest.Mock).mock.calls.filter(
+      (call) => call[1] === "TASK-TOOK-EFFECT"
+    );
+    for (const [, , patch] of writes) {
+      expect((patch.metadata || {}).auto_run_retries).toBe(1);
+    }
+  });
+
+  it("spends no retry and reports the read error when the run record cannot be read to account a failure", async () => {
+    mockTaskGet.mockReturnValue({
+      id: "TASK-UNREADABLE",
+      title: "Unreadable run record",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      metadata: {
+        auto_run: true,
+        chain_id: "release-review",
+        last_run_id: "run-unreadable",
+        last_run_status: "stopped",
+        auto_run_retries: 1,
+      },
+    });
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      taskId: "TASK-UNREADABLE",
+      chainId: "release-review",
+      status: "stopped",
+      agents: [
+        { id: "planner", status: "complete" },
+        { id: "reviewer", status: "stopped" },
+      ],
+    }));
+    (global.fetch as jest.Mock).mockRejectedValue(new Error("connect ECONNREFUSED"));
+    mockReadRunRecordAt.mockImplementation(() => {
+      throw new Error("run.json not found: /tmp/mentiko-test/runs/run-unreadable/run.json");
+    });
+
+    const res = await POST(makeRequest({ taskId: "TASK-UNREADABLE" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      triggered: false,
+      taskId: "TASK-UNREADABLE",
+      runId: "run-unreadable",
+      action: "resume_run_unreadable",
+      reason: expect.stringContaining("Could not read run run-unreadable"),
+    });
+    const writes = (mockTaskUpdate as jest.Mock).mock.calls.filter(
+      (call) => call[1] === "TASK-UNREADABLE"
+    );
+    for (const [, , patch] of writes) {
+      expect((patch.metadata || {}).auto_run_retries).toBe(1);
+    }
   });
 
   it("resumes a terminal run from its persisted nondefault scope without reading the request root", async () => {

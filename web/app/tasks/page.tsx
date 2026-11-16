@@ -586,11 +586,23 @@ function TasksPageContent() {
         resume_attempt_id: null,
         resume_attempt_run_id: null,
       };
-      await fetchWithNamespace(`/api/tasks/${id}${wsParam}`, {
+      const res = await fetchWithNamespace(`/api/tasks/${id}${wsParam}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ metadata: JSON.stringify(metadata) }),
       });
+      if (!res.ok) {
+        // A rejected PATCH must not clear the visible exhausted state: the
+        // stored budget and errors are still there. Keep the previous state
+        // and surface the failure the way this page's other actions do
+        // (#142 review round 5 P2).
+        const data = await res.json().catch(() => ({}));
+        const msg =
+          typeof data.error === "string"
+            ? data.error
+            : data.error?.message || `Failed to assign chain (${res.status})`;
+        throw new Error(msg);
+      }
       updateTaskBinding(selected.id, () => ({
         chain_id: chainId,
         chain_name: chainName,
@@ -694,11 +706,22 @@ function TasksPageContent() {
             resume_attempt_run_id: null,
           } : {}),
         };
-        await fetchWithNamespace(`/api/tasks/${id}${wsParam}`, {
+        const fallback = await fetchWithNamespace(`/api/tasks/${id}${wsParam}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ metadata: JSON.stringify(metadata) }),
         });
+        if (!fallback.ok) {
+          // Neither write landed: keep the previous resolved state (a failed
+          // enable must not display a cleared/reset auto-run) and surface the
+          // error (#142 review round 5 P2).
+          const data = await fallback.json().catch(() => ({}));
+          const msg =
+            typeof data.error === "string"
+              ? data.error
+              : data.error?.message || `Failed to update auto-run (${fallback.status})`;
+          throw new Error(msg);
+        }
       }
 
       updateTaskBinding(selected.id, (binding) =>
@@ -743,11 +766,23 @@ function TasksPageContent() {
       resume_attempt_run_id: null,
     };
 
-    await fetchWithNamespace(`/api/tasks/${id}${wsParam}`, {
+    const res = await fetchWithNamespace(`/api/tasks/${id}${wsParam}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ metadata: JSON.stringify(metadata) }),
     });
+    if (!res.ok) {
+      // A rejected reset must leave the exhausted state exactly as it was:
+      // the stored 3/3 budget and resume error are still on the record.
+      // Surface the failure the way this page's other actions do (#142
+      // review round 5 P2).
+      const data = await res.json().catch(() => ({}));
+      const msg =
+        typeof data.error === "string"
+          ? data.error
+          : data.error?.message || `Failed to reset auto-run attempts (${res.status})`;
+      throw new Error(msg);
+    }
 
     updateTaskBinding(selected.id, (binding) =>
       binding

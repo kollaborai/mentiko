@@ -69,4 +69,22 @@ describe("tasks page source contract", () => {
     expect(source).toContain("retriesExhausted: false");
     expect(source).toContain("resume_last_error: undefined");
   });
+
+  it("checks response.ok before every optimistic retry reset and throws on failure (#142 round 5 P2)", () => {
+    // A rejected PATCH must keep the previous visible state (the stored 3/3
+    // budget and errors are still on the record) and surface the failure the
+    // way the page's other actions do: throw, letting the detail header's
+    // existing autoRunError surface show it. No new UI.
+    const okChecks = [
+      "`Failed to assign chain (${res.status})`",
+      "`Failed to update auto-run (${fallback.status})`",
+      "`Failed to reset auto-run attempts (${res.status})`",
+    ];
+    for (const check of okChecks) {
+      expect(source).toContain(check);
+    }
+    // each guard throws the parsed server error, not a bare string
+    const throws = source.split("throw new Error(msg);").length - 1;
+    expect(throws).toBeGreaterThanOrEqual(3);
+  });
 });
