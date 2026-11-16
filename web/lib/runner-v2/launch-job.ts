@@ -89,9 +89,7 @@ export function routedLaunchJobId(input: {
   return `routed-launch:${digest}:v1`;
 }
 
-export function persistRoutedLaunchJob(input: {
-  runJsonPath: string;
-  jobId?: string;
+export interface UpsertRoutedLaunchJobInput {
   occurrenceId: string;
   runId: string;
   runDir: string;
@@ -99,16 +97,27 @@ export function persistRoutedLaunchJob(input: {
   targetAgentIds: string[];
   environment?: Record<string, string | undefined>;
   now?: Date;
-}): RoutedLaunchJob {
+}
+
+/**
+ * Pure form of persistRoutedLaunchJob: fold a queued routed launch job into a
+ * run record without touching the filesystem. Lets a caller persist the job as
+ * part of a larger atomic run.json transition (the resume route marks the run
+ * running and records its launch intent in one write) instead of two writes
+ * with a recoverable gap between them. Identity semantics are identical to
+ * persistRoutedLaunchJob: an existing job with the same id must have the same
+ * identity and is kept as-is.
+ */
+export function upsertRoutedLaunchJobRecord(
+  run: RunRecord,
+  input: UpsertRoutedLaunchJobInput,
+): { run: RunRecord; job: RoutedLaunchJob } {
   const targetAgentIds = normalizeTargetIds(input.targetAgentIds);
   const expectedId = routedLaunchJobId({
     occurrenceId: input.occurrenceId,
     runId: input.runId,
     targetAgentIds,
   });
-  if (input.jobId && input.jobId !== expectedId) {
-    throw new Error(`routed launch job id mismatch: expected ${expectedId}`);
-  }
   const at = (input.now || new Date()).toISOString();
   const candidate: RoutedLaunchJob = {
     version: 1,
@@ -124,19 +133,34 @@ export function persistRoutedLaunchJob(input: {
     createdAt: at,
     updatedAt: at,
   };
+  const jobs = launchJobMap(run);
+  const existing = jobs[expectedId];
+  if (existing) {
+    assertSameLaunchIdentity(existing, candidate);
+    return { run, job: existing };
+  }
+  return { run: withLaunchJobs(run, { ...jobs, [expectedId]: candidate }), job: candidate };
+}
+
+export function persistRoutedLaunchJob(input: {
+  runJsonPath: string;
+  jobId?: string;
+} & UpsertRoutedLaunchJobInput): RoutedLaunchJob {
+  const expectedId = routedLaunchJobId({
+    occurrenceId: input.occurrenceId,
+    runId: input.runId,
+    targetAgentIds: normalizeTargetIds(input.targetAgentIds),
+  });
+  if (input.jobId && input.jobId !== expectedId) {
+    throw new Error(`routed launch job id mismatch: expected ${expectedId}`);
+  }
   let persisted: RoutedLaunchJob | undefined;
   updateRunJson(input.runJsonPath, (run) => {
     if (!run) throw new Error(`run.json not found: ${input.runJsonPath}`);
     if (run.id !== input.runId) throw new Error(`routed launch job run id mismatch: ${input.runId}`);
-    const jobs = launchJobMap(run);
-    const existing = jobs[expectedId];
-    if (existing) {
-      assertSameLaunchIdentity(existing, candidate);
-      persisted = existing;
-      return run;
-    }
-    persisted = candidate;
-    return withLaunchJobs(run, { ...jobs, [expectedId]: candidate });
+    const result = upsertRoutedLaunchJobRecord(run, input);
+    persisted = result.job;
+    return result.run;
   });
   if (!persisted) throw new Error(`routed launch job was not persisted: ${expectedId}`);
   return persisted;
