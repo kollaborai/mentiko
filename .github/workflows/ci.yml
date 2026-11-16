@@ -270,19 +270,22 @@ jobs:
       #     scanned even when a later commit removes it (plain `git log
       #     -p` omits merge diffs). Only diff content lines are scanned,
       #     never pre-existing lines, so triaged findings stay quiet.
-      # (b) BLOB scan (binary additions): every blob object the range
-      #     introduces — `git rev-list --objects base..HEAD` covers any
-      #     commit in the range, merge resolutions included, and blobs
-      #     that a later commit removed. Diff patches never carry binary
-      #     content, so scan (a) cannot see these. Binary blobs are
-      #     written to extensionless temp files and scanned as one
-      #     directory: gitleaks skips files by EXTENSION (.bin .png .zip
-      #     ... — a plaintext secret in a .bin escapes `gitleaks dir`) but
-      #     does scan NUL-laden files, so an extensionless copy of every
-      #     binary blob is always scannable. Text blobs are skipped here —
-      #     their added lines are scan (a)'s job, and scanning whole text
-      #     blobs would trip the triaged pre-existing findings. A blob
-      #     that cannot be extracted fails the job.
+      # (b) BLOB scan (every added blob, text and binary): every blob
+      #     object the range introduces is staged under its object sha as
+      #     an extensionless file and the staging directory is dir-scanned
+      #     once. `git rev-list --objects base..HEAD` covers any commit in
+      #     the range, merge resolutions included, and blobs that a later
+      #     commit removed. A sha file name matches none of gitleaks'
+      #     default path ignores (package-lock.json, yarn.lock, *.png,
+      #     *.svg, *.bin, ...) and no extension, so text or plaintext
+      #     saved at an ignored path cannot escape either scan — scan (a)
+      #     runs the default config, which globally allowlists those
+      #     paths. Whole-blob scanning re-reads unchanged lines, so
+      #     main's triaged pre-existing findings resurface here; the
+      #     reviewed, literal-tight allowlist in
+      #     .github/workflows/config/gitleaks-blobs.toml suppresses
+      #     exactly those literals (default rules otherwise unchanged).
+      #     A blob that cannot be extracted fails the job.
       - name: Run Gitleaks (history + binary blobs, vs merge base)
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -322,32 +325,21 @@ jobs:
           echo "history scan: $(git rev-list --count "$base..HEAD") commits (merge diffs included)"
           gitleaks git --log-opts="-m -p -U0 $base..HEAD" --redact --verbose
 
-          # (b) blob scan: every binary blob the range introduces, at any
-          #     commit, extensionless so gitleaks cannot skip it.
-          blobdir="$RUNNER_TEMP/binary-blobs"
-          stagdir="$RUNNER_TEMP/blob-staging"
-          mkdir -p "$blobdir" "$stagdir"
+          # (b) blob scan: every blob the range introduces, at any commit,
+          #     text and binary, staged under its sha with no extension so
+          #     gitleaks can skip it by neither path nor extension.
+          blobdir="$RUNNER_TEMP/blob-staging"
+          mkdir -p "$blobdir"
           git rev-list --objects "$base..HEAD" \
             | git cat-file --batch-check='%(objectname) %(objecttype) %(rest)' \
             | while read -r sha type path; do
                 [ "$type" = "blob" ] || continue
-                tmp="$stagdir/$sha"
-                git cat-file blob "$sha" > "$tmp"
-                # text blob (grep -I: binary = has NUL bytes)? scan (a)
-                # already gates its added lines — whole-file text scanning
-                # would trip main's triaged pre-existing findings. The
-                # check reads the written file, not a pipe: under
-                # pipefail, `git cat-file | grep -q` dies of SIGPIPE on
-                # large blobs and every big text file would be
-                # misclassified as binary.
-                if LC_ALL=C grep -Iq . "$tmp"; then
-                  continue
-                fi
-                echo "binary blob: ${path:-<unnamed>} ($sha)"
-                mv "$tmp" "$blobdir/$sha"
+                git cat-file blob "$sha" > "$blobdir/$sha" \
+                  || { echo "::error::cannot extract blob $sha"; exit 1; }
               done
           if [ -n "$(command ls -A "$blobdir")" ]; then
-            gitleaks dir --redact --no-banner "$blobdir"
+            gitleaks dir --redact --no-banner \
+              --config .github/workflows/config/gitleaks-blobs.toml "$blobdir"
           else
-            echo "blob scan: range introduces no binary blobs; nothing to scan"
+            echo "blob scan: range introduces no blobs; nothing to scan"
           fi
