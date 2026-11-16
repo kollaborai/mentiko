@@ -9,6 +9,11 @@
  *  - mutate returning null writes nothing
  *  - maxAttempts exhaustion returns ok:false without throwing
  *  - the guard is NOT fooled by equal updated_at strings (revision column)
+ *  - the tasks_revision_bump trigger covers indirect writers (raw SQL /
+ *    old-binary writes, ON DELETE SET NULL children, startup repairs)
+ *  - an explicit application bump lands exactly one higher, never two
+ *  - taskMutateMetadata: bounded/clamped maxAttempts, guard-covered mutate
+ *    view, written-values return (no post-write re-read)
  *  - existing taskUpdate behavior is unchanged
  *
  * @jest-environment node
@@ -20,6 +25,9 @@ import {
   taskUpdateIfUnchanged,
   taskMutateMetadata,
   taskClose,
+  taskDelete,
+  taskAddDep,
+  taskAddComment,
   closeAll,
   _getDb,
 } from "../tasks/task-store";
@@ -84,7 +92,9 @@ describe("taskUpdateIfUnchanged", () => {
 
     const after = taskGet(ORG, t.id)!;
     expect(after.updated_at).toBe(t.updated_at); // timestamps equal...
-    expect(after.revision).toBe(t.revision! + 1); // ...but revision moved
+    // ...but revision moved: +1 from taskUpdate, +1 from the raw pin UPDATE
+    // (every tasks-row UPDATE bumps through the trigger, pin included).
+    expect(after.revision).toBe(t.revision! + 2);
 
     const ok = taskUpdateIfUnchanged(
       ORG,
@@ -204,5 +214,162 @@ describe("taskUpdate behavior unchanged (regression)", () => {
   it("taskGet returns the revision column", () => {
     const t = makeTask();
     expect(typeof t.revision).toBe("number");
+  });
+});
+
+// Round 2 (Codex VERDICT P1s): the revision bump lives in the
+// tasks_revision_bump trigger, so EVERY tasks-row UPDATE bumps — including
+// writers that never heard of the revision column.
+describe("tasks_revision_bump trigger covers indirect writers", () => {
+  it("a raw UPDATE with no revision clause bumps the revision (old-binary case)", () => {
+    const t = makeTask({ owner: "a" });
+    // an OLD server binary (pre-trigger code) writes metadata via raw SQL,
+    // never mentioning revision -- the trigger must bump anyway
+    _getDb()
+      .prepare("UPDATE tasks SET metadata = ? WHERE id = ?")
+      .run(JSON.stringify({ owner: "old-binary" }), t.id);
+
+    const after = taskGet(ORG, t.id)!;
+    expect(after.revision).toBe(t.revision! + 1);
+    expect(after.metadata).toEqual({ owner: "old-binary" });
+
+    // a CAS holding the pre-write revision must now fail (the P1 scenario:
+    // old process overwrites, new process's stale guard would have succeeded)
+    const ok = taskUpdateIfUnchanged(ORG, t.id, t.revision!, { priority: 0 });
+    expect(ok).toBe(false);
+    expect(taskGet(ORG, t.id)!.metadata).toEqual({ owner: "old-binary" });
+  });
+
+  it("deleting a parent bumps the child's revision (ON DELETE SET NULL)", () => {
+    const parent = makeTask();
+    const child = taskCreate(ORG, { title: "child", parent_id: parent.id });
+    const childRevision = taskGet(ORG, child.id)!.revision!;
+
+    taskDelete(ORG, parent.id);
+
+    const after = taskGet(ORG, child.id)!;
+    expect(after.parent_id).toBeNull();
+    expect(after.revision).toBe(childRevision + 1);
+
+    // a CAS holding the pre-delete revision must fail
+    const ok = taskUpdateIfUnchanged(ORG, child.id, childRevision, { priority: 0 });
+    expect(ok).toBe(false);
+  });
+
+  it("startup repair statements bump the revision on reopen", () => {
+    // forge lifecycle drift the repairs fix: terminal status, no closed_at,
+    // written by raw SQL so nothing but the repair touches it afterwards
+    const t = makeTask();
+    _getDb()
+      .prepare("UPDATE tasks SET status = 'done', closed_at = NULL WHERE id = ?")
+      .run(t.id);
+    const before = taskGet(ORG, t.id)!;
+    expect(before.closed_at).toBeNull();
+
+    // a fresh connection re-runs runMigrations -> the repair UPDATEs
+    closeAll();
+    const after = taskGet(ORG, t.id)!;
+    expect(after.closed_at).not.toBeNull(); // repair landed...
+    expect(after.revision).toBe(before.revision! + 1); // ...and bumped
+
+    // a CAS holding the pre-repair revision must fail
+    expect(taskUpdateIfUnchanged(ORG, t.id, before.revision!, { priority: 0 })).toBe(false);
+  });
+
+  it("an explicit application bump lands exactly one higher, not two", () => {
+    const t = makeTask();
+    // a writer that still carries its own `revision = revision + 1` (the
+    // WHEN clause makes the trigger skip rows whose revision already moved)
+    _getDb()
+      .prepare("UPDATE tasks SET revision = revision + 1, title = ? WHERE id = ?")
+      .run("explicit-bump", t.id);
+    expect(taskGet(ORG, t.id)!.revision).toBe(t.revision! + 1);
+  });
+});
+
+describe("taskMutateMetadata contract (round-2 P2s)", () => {
+  // a mutate that always loses the race back; the call count exposes the
+  // effective attempt budget
+  function makeAlwaysLosing(taskId: string) {
+    const spy = { calls: 0 };
+    const mutate = (m: Record<string, unknown>) => {
+      spy.calls++;
+      taskUpdate(ORG, taskId, { metadata: { ...m, winner: spy.calls } });
+      return { ...m, loser: spy.calls };
+    };
+    return { spy, mutate };
+  }
+
+  it("clamps maxAttempts: valid values pass through, values above 10 cap at 10", () => {
+    // valid values are honored
+    for (const [maxAttempts, expectedCalls] of [[2, 2], [1, 1]] as const) {
+      const t = makeTask();
+      const { spy, mutate } = makeAlwaysLosing(t.id);
+      const res = taskMutateMetadata(ORG, t.id, mutate, undefined, { maxAttempts });
+      expect(res.ok).toBe(false);
+      expect(spy.calls).toBe(expectedCalls);
+    }
+    // above the ceiling of 10 -> capped at 10 (bounded even for huge input)
+    const t = makeTask();
+    const { spy, mutate } = makeAlwaysLosing(t.id);
+    const res = taskMutateMetadata(ORG, t.id, mutate, undefined, { maxAttempts: 99 });
+    expect(res.ok).toBe(false);
+    expect(spy.calls).toBe(10);
+  });
+
+  it("invalid maxAttempts values (Infinity, NaN, 0, negative, fractional) fall back to the default 3", () => {
+    for (const bad of [Infinity, NaN, 0, -5, 2.5]) {
+      const t = makeTask();
+      const { spy, mutate } = makeAlwaysLosing(t.id);
+      const res = taskMutateMetadata(ORG, t.id, mutate, undefined, { maxAttempts: bad });
+      expect(res.ok).toBe(false);
+      expect(spy.calls).toBe(3);
+    }
+  });
+
+  it("mutate receives only guard-covered fields (no dependency/comment state)", () => {
+    const t = makeTask();
+    const blocker = makeTask();
+    taskAddDep(ORG, t.id, blocker.id);
+    taskAddComment(ORG, t.id, "agent", "a comment");
+
+    let seen: unknown;
+    taskMutateMetadata(ORG, t.id, (_m, task) => {
+      seen = task;
+      return null;
+    });
+
+    // taskGet itself exposes the related state; the mutate view must not
+    expect(taskGet(ORG, t.id)!.dependencies!.length).toBe(1);
+    expect(taskGet(ORG, t.id)!.comment_count).toBe(1);
+    expect(seen).not.toHaveProperty("dependencies");
+    expect(seen).not.toHaveProperty("dependents");
+    expect(seen).not.toHaveProperty("dependency_count");
+    expect(seen).not.toHaveProperty("dependent_count");
+    expect(seen).not.toHaveProperty("comment_count");
+  });
+
+  it("returns the written values it holds, not a re-read, even when the row is deleted mid-write", () => {
+    const t = makeTask({ keep: "me" });
+    // a trigger that deletes the task the instant our CAS lands with the
+    // vanish flag -- deterministic "task deleted between write and re-read"
+    _getDb().exec(`
+      CREATE TRIGGER vanish_after_guarded_write
+      AFTER UPDATE ON tasks
+      FOR EACH ROW
+      WHEN json_extract(NEW.metadata, '$.vanish') = 1
+      BEGIN
+        DELETE FROM tasks WHERE id = NEW.id;
+      END;
+    `);
+    try {
+      const res = taskMutateMetadata(ORG, t.id, (m) => ({ ...m, vanish: 1 }));
+      expect(res.ok).toBe(true); // the write landed; no re-read crash
+      expect(res.task!.metadata).toEqual({ keep: "me", vanish: 1 });
+      expect(res.task!.revision).toBe(t.revision! + 1);
+      expect(taskGet(ORG, t.id)).toBeNull(); // the row really is gone
+    } finally {
+      _getDb().exec("DROP TRIGGER IF EXISTS vanish_after_guarded_write");
+    }
   });
 });

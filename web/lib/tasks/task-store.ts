@@ -46,6 +46,12 @@ function getDb(namespaceId: string = "default"): Database.Database {
   db = new Database(dbPath);
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
+  // See tasks_revision_bump below: foreign-key actions (ON DELETE SET NULL on
+  // tasks.parent_id) must be able to fire row triggers. Some SQLite versions
+  // gate FK-action trigger firing behind this pragma; verified on 3.51.2 they
+  // fire either way, but enabling it makes the child-revision bump guaranteed
+  // regardless of engine build.
+  db.pragma("recursive_triggers = ON");
   db.pragma("busy_timeout = 5000");
   runMigrations(db);
   connections.set(namespaceId, db);
@@ -141,18 +147,40 @@ function runMigrations(db: Database.Database): void {
   // timestamp compare-and-set can be fooled. revision increments on every
   // tasks-row write, so taskUpdateIfUnchanged can guard on it instead.
   //
+  // The bump lives in a DATABASE TRIGGER, not in application writers: any
+  // statement that UPDATEs a tasks row without touching revision (raw SQL,
+  // the startup repairs below, an old server binary writing this database
+  // during a rollout/rollback, and the ON DELETE SET NULL that re-parents
+  // children when a parent task is deleted) is bumped by the trigger, so a
+  // writer cannot forget it. Exactly-one-bump semantics come from the WHEN
+  // clause: a statement that already changed revision (NEW != OLD) is not
+  // bumped again, and the trigger's own UPDATE (revision = OLD.revision + 1)
+  // makes NEW != OLD for that inner statement too, so it cannot re-fire
+  // itself -- recursive_triggers is therefore NOT required for recursion
+  // safety here (it IS set on our connections for the FK-action path; see
+  // getDb). Keyed on id, the table's PRIMARY KEY.
+  //
   // Deliberately NOT a new _migrations row: the shared MAX(version) ladder is
   // also used by task-attachment-store.ts, which already claims version 2. A
   // versioned block here would make fresh DBs skip the attachments migration
   // (or vice versa). An idempotent column check cannot collide with it; the
   // IMMEDIATE transaction serializes concurrent first opens on the write lock.
-  const addRevisionColumn = db.transaction(() => {
+  const addRevisionGuard = db.transaction(() => {
     const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
     if (!cols.some((c) => c.name === "revision")) {
       db.exec("ALTER TABLE tasks ADD COLUMN revision INTEGER NOT NULL DEFAULT 0");
     }
+    db.exec(`
+      CREATE TRIGGER IF NOT EXISTS tasks_revision_bump
+      AFTER UPDATE ON tasks
+      FOR EACH ROW
+      WHEN NEW.revision = OLD.revision
+      BEGIN
+        UPDATE tasks SET revision = OLD.revision + 1 WHERE id = OLD.id;
+      END;
+    `);
   });
-  addRevisionColumn.immediate();
+  addRevisionGuard.immediate();
 
   // Invariant repair (idempotent, runs once per process per namespace): any
   // task with no workspace_id whose parent IS workspace-scoped inherits the
@@ -542,9 +570,11 @@ export function taskUpdate(
   const { sets, params } = buildTaskSetClause(fields, timestamp);
 
   params.push(id, orgId);
+  // revision is bumped by the tasks_revision_bump trigger, not here: every
+  // tasks-row UPDATE gets exactly one bump regardless of who wrote it.
   db.prepare(`
     UPDATE tasks
-    SET updated_at = ?, revision = revision + 1${sets.length ? ", " + sets.join(", ") : ""}
+    SET updated_at = ?${sets.length ? ", " + sets.join(", ") : ""}
     WHERE id = ? AND org_id = ?
   `).run(timestamp, ...params);
 }
@@ -557,8 +587,10 @@ export function taskUpdate(
  * Guards on `revision`, not updated_at: now() has millisecond precision, so
  * two writes inside one millisecond produce identical updated_at strings and a
  * timestamp guard would let a stale write through. revision increments on
- * every tasks-row write (taskUpdate, taskClose, taskClaimMetadataKeyIfUnset,
- * this function), so it can never collide across distinct writes.
+ * every tasks-row UPDATE via the tasks_revision_bump trigger (application
+ * writers, raw SQL, startup repairs, old binaries during a rollout/rollback,
+ * and the ON DELETE SET NULL child update alike), so it can never collide
+ * across distinct writes.
  *
  * This PR adds the primitive only; no caller is converted yet.
  */
@@ -574,25 +606,49 @@ export function taskUpdateIfUnchanged(
   const { sets, params } = buildTaskSetClause(fields, timestamp);
 
   params.push(id, orgId, expectedRevision);
+  // The trigger bumps revision exactly once (see runMigrations).
   const result = db.prepare(`
     UPDATE tasks
-    SET updated_at = ?, revision = revision + 1${sets.length ? ", " + sets.join(", ") : ""}
+    SET updated_at = ?${sets.length ? ", " + sets.join(", ") : ""}
     WHERE id = ? AND org_id = ? AND revision = ?
   `).run(timestamp, ...params);
   return result.changes > 0;
 }
+
+// taskMutateMetadata retry budget: default when maxAttempts is absent or
+// invalid, and the hard ceiling a caller cannot raise.
+const MUTATE_DEFAULT_ATTEMPTS = 3;
+const MUTATE_MAX_ATTEMPTS = 10;
 
 /**
  * Read-modify-write metadata loop for issue #141: reads the task, lets
  * `mutate(currentMetadata, task)` compute the new metadata (return null for
  * "no change wanted"), and writes it with taskUpdateIfUnchanged. On a lost
  * race (another writer bumped revision in between) it re-reads and calls
- * `mutate` again, up to maxAttempts (default 3). `mutate` must be pure with
- * respect to the store — no reads or writes of its own — or the retry loop
- * cannot reason about what changed. Returns { ok: true, task } after a landed
- * write (or a null/no-change decision), { ok: false } when attempts run out
- * or the task vanished. This PR adds the primitive only; no caller is
- * converted yet.
+ * `mutate` again, up to maxAttempts. `mutate` must be pure with respect to
+ * the store — no reads or writes of its own — or the retry loop cannot
+ * reason about what changed.
+ *
+ * Guard coverage contract: the `task` passed to `mutate` carries ONLY fields
+ * covered by the revision guard — the core tasks row (metadata included).
+ * The dependency/comment-derived fields (dependencies, dependents,
+ * dependency_count, dependent_count, comment_count) are stripped because
+ * task_dependencies / task_comments writes do NOT bump the task's revision,
+ * so decisions based on them could be stale even when the CAS lands. Do not
+ * widen the guard to those tables; re-read them explicitly if needed.
+ *
+ * maxAttempts accepts a finite positive integer only, clamped to a hard
+ * ceiling of 10: anything else (absent, NaN, Infinity, fractional, 0,
+ * negative) falls back to the default of 3. The retry loop is therefore
+ * always bounded.
+ *
+ * Returns { ok: true, task } after a landed write or a null/no-change
+ * decision, { ok: false } when attempts run out or the task vanished. The
+ * returned task holds the values THIS call wrote (read snapshot + new
+ * metadata + the revision the write bumped to), NOT a re-read: another
+ * writer or a delete may have landed since, and a re-read would return its
+ * state (or nothing) rather than what we did. updated_at is the read's
+ * timestamp. This PR adds the primitive only; no caller is converted yet.
  */
 export function taskMutateMetadata(
   orgId: string,
@@ -604,13 +660,28 @@ export function taskMutateMetadata(
   namespaceId?: string,
   options?: { maxAttempts?: number }
 ): { ok: boolean; task?: TaskRecord } {
-  const maxAttempts = options?.maxAttempts ?? 3;
+  const requested = options?.maxAttempts;
+  const maxAttempts =
+    typeof requested === "number" &&
+    Number.isInteger(requested) &&
+    Number.isFinite(requested) &&
+    requested >= 1
+      ? Math.min(requested, MUTATE_MAX_ATTEMPTS)
+      : MUTATE_DEFAULT_ATTEMPTS;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const task = taskGet(orgId, id, namespaceId);
     if (!task || task.revision === undefined) return { ok: false };
 
-    const next = mutate(task.metadata, task);
-    if (next === null) return { ok: true, task };
+    // Strip fields the revision guard does not cover (see doc comment).
+    const guarded: TaskRecord = { ...task };
+    delete guarded.dependencies;
+    delete guarded.dependents;
+    delete guarded.dependency_count;
+    delete guarded.dependent_count;
+    delete guarded.comment_count;
+
+    const next = mutate(task.metadata, guarded);
+    if (next === null) return { ok: true, task: guarded };
 
     const landed = taskUpdateIfUnchanged(
       orgId,
@@ -619,7 +690,9 @@ export function taskMutateMetadata(
       { metadata: next },
       namespaceId
     );
-    if (landed) return { ok: true, task: taskGet(orgId, id, namespaceId)! };
+    if (landed) {
+      return { ok: true, task: { ...guarded, metadata: next, revision: task.revision + 1 } };
+    }
   }
   return { ok: false };
 }
@@ -660,7 +733,7 @@ export function taskClaimMetadataKeyIfUnset(
 
   const result = db.prepare(`
     UPDATE tasks
-    SET metadata = ${metadataExpression}, updated_at = ?, revision = revision + 1
+    SET metadata = ${metadataExpression}, updated_at = ?
     WHERE id = ?
       AND org_id = ?
       AND ${predicates.join(" AND ")}
@@ -704,7 +777,7 @@ export function taskClose(
   const db = getDb(namespaceId);
   const timestamp = now();
   db.prepare(
-    "UPDATE tasks SET status = 'closed', closed_at = ?, updated_at = ?, revision = revision + 1 WHERE id = ? AND org_id = ?"
+    "UPDATE tasks SET status = 'closed', closed_at = ?, updated_at = ? WHERE id = ? AND org_id = ?"
   ).run(timestamp, timestamp, id, orgId);
 }
 
