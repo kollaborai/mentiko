@@ -35,7 +35,12 @@ import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { collectStaleRunSessionNames } from "@/lib/runs/stale-run-sessions";
 import { resolveResumeChainPath } from "@/lib/runs/resume-chain-path";
 import { terminateRunProcess } from "@/lib/runs/run-process";
-import { updateRunJson } from "@/lib/runner-v2/run-state";
+import { updateRunJson, type RunRecord } from "@/lib/runner-v2/run-state";
+import {
+  acquireExclusiveFileClaim,
+  ExclusiveFileClaimBusyError,
+} from "@/lib/runner-v2/file-claim";
+import { upsertRoutedLaunchJobRecord, type RoutedLaunchJob } from "@/lib/runner-v2/launch-job";
 
 export const dynamic = "force-dynamic";
 
@@ -150,188 +155,283 @@ export const POST = withErrorHandling(async (
     throw new NotFound("Run", runId);
   }
 
-  const run: RunJson = JSON.parse(readFileSync(runJsonPath, "utf-8"));
-
-  // don't resume already running runs
-  if (run.status === "running") {
-    throw new Conflict("Run is already running");
-  }
-
-  // find the chain file: the run's own snapshot first, the chains-dir copy
-  // second. A record without chainId must resolve through its own snapshot,
-  // never throw on join(chainsDir, undefined) (issue #142).
-  const chainsDir = orgPath(nsId, orgId, "chains");
-  const chainPath = resolveResumeChainPath({ runDir, chainId: run.chainId, chainsDir });
-
-  if (!chainPath) {
-    throw new NotFound(
-      "Chain",
-      typeof run.chainId === "string" && run.chainId
-        ? run.chainId
-        : `${runId} (run has no chainId and no chain.json in its run directory)`,
-    );
-  }
-
-  // analyze agent states
-  if (!run.agents.some((agent) => agent.status !== "complete")) {
-    throw new Conflict("All agents already completed");
-  }
-
-  // stop any leftover chain-runner process before touching PTYs or relaunching.
-  await terminateRunProcess(runId);
-
-  // remove stale agent + typed-attempt PTY sessions from the previous attempt
-  const staleSessions = collectStaleRunSessionNames(run);
-  await Promise.allSettled(staleSessions.map((s) => pty.remove(s)));
-
-  // build a trigger-aware view so we resume the actual frontier — a pending agent
-  // whose trigger event was already produced — rather than the first pending agent
-  // by array order. That positional pick could select a sibling stranded on a
-  // branch that was never taken (regression: run-1783832264355-7d9c3cce resumed
-  // source-repointer after the remover had already resolved the bug, contradicting
-  // itself and failing the run). Falls back to positional order if the chain can't
-  // be parsed.
-  let routingAgents: RoutingAgent[] = [];
-  const routingContext = routingContextForEvents(readRoutingEvents(config.eventsDir, run.id), run.id);
+  // Single-winner resume claim, held from the read of the terminal record
+  // through stale-session cleanup, the transition to running, and the dispatch
+  // of the launcher. Two concurrent resume requests for one run must never
+  // both run cleanup: the loser of the claim can otherwise remove PTY sessions
+  // the winner's fresh occurrence already reuses (review P1). Same primitive
+  // existing-run-launch uses for single-flight bootstrap. The loser returns
+  // 409 without touching processes, sessions, or the run record.
+  const claimDir = join(runDir, ".resume-claim");
+  let releaseResumeClaim: () => void;
   try {
-    const chainForRouting = JSON.parse(readFileSync(chainPath, "utf-8"));
-    routingAgents = (chainForRouting.agents || []).map(
-      (a: { id: string; triggers?: string[]; emits?: string; wait_for_events?: RoutingAgent["wait_for_events"] }) => ({
-        id: a.id,
-        triggers: a.triggers,
-        emits: a.emits,
-        wait_for_events: a.wait_for_events,
-      }),
-    );
-  } catch { /* fall back to positional selection */ }
+    releaseResumeClaim = acquireExclusiveFileClaim(claimDir, { waitTimeoutMs: 250, retryDelayMs: 20 });
+  } catch (error) {
+    if (error instanceof ExclusiveFileClaimBusyError) {
+      throw new Conflict("A resume is already in progress for this run");
+    }
+    throw error;
+  }
 
-  let resumeAgentId = "";
-  const resumedRun = updateRunJson(runJsonPath, (current) => {
-    if (!current) throw new NotFound("Run", runId);
-    if (current.status === "running") throw new Conflict("Run is already running");
-    const currentIncomplete = current.agents.filter((agent) => agent.status !== "complete");
-    if (currentIncomplete.length === 0) throw new Conflict("All agents already completed");
-
-    const currentRoutingAgents = routingAgents.map((agent) => ({
-      ...agent,
-      status: current.agents.find((candidate) => candidate.id === agent.id)?.status,
-    }));
-    const frontierIds = new Set(
-      currentRoutingAgents
-        .filter((agent) => agent.status !== "complete" && hasCompletedTrigger(agent, currentRoutingAgents, routingContext))
-        .map((agent) => agent.id),
-    );
-    // Priority: interrupted > trigger-eligible frontier > first pending. The
-    // frontier includes cancelled/stopped agents whose trigger already fired.
-    const resumeAgent = currentIncomplete.find((agent) => agent.status === "running" || agent.status === "stopped")
-      || currentIncomplete.find((agent) => frontierIds.has(agent.id))
-      || currentIncomplete.find((agent) => agent.status === "pending")
-      || currentIncomplete[0];
-    resumeAgentId = resumeAgent.id;
-
-    const agents = current.agents.map((agent) => {
-      if (agent.status === "complete") return agent;
-      const { started: _started, completed: _completed, blockedReason: _blockedReason, lastMessage: _lastMessage, ...rest } = agent;
-      return { ...rest, status: "pending" as const, session: "" };
-    });
-    const run: typeof current = {
-      ...current,
-      agents,
-      status: "running",
-      resumedAt: new Date().toISOString(),
-    };
-    delete run.completed;
-    delete run.blockedReason;
-    delete run.blockedAt;
-    delete run.status_message;
-    return run;
-  });
-  const completed = resumedRun.agents.filter((agent) => agent.status === "complete");
-  const incomplete = resumedRun.agents.filter((agent) => agent.status !== "complete");
-
-  // resolve agent profile for env vars
-  let profileEnv: Record<string, string> = {};
   try {
-    const chainJson = JSON.parse(readFileSync(chainPath, "utf-8"));
-    const profileId = chainJson.default_agent_profile || chainJson.config?.default_agent_profile;
-    if (profileId) {
-      const profile = getProfile(nsId, orgId, profileId);
-      if (profile?.env) {
-        profileEnv = resolveProfileEnvVars(nsId, orgId, profile.env);
+    const run: RunJson = JSON.parse(readFileSync(runJsonPath, "utf-8"));
+
+    // don't resume already running runs
+    if (run.status === "running") {
+      throw new Conflict("Run is already running");
+    }
+
+    // find the chain file: the run's own snapshot first, the chains-dir copy
+    // second. A record without chainId must resolve through its own snapshot,
+    // never throw on join(chainsDir, undefined) (issue #142).
+    const chainsDir = orgPath(nsId, orgId, "chains");
+    const chainPath = resolveResumeChainPath({ runDir, chainId: run.chainId, chainsDir });
+
+    if (!chainPath) {
+      throw new NotFound(
+        "Chain",
+        typeof run.chainId === "string" && run.chainId
+          ? run.chainId
+          : `${runId} (run has no chainId and no chain.json in its run directory)`,
+      );
+    }
+
+    // analyze agent states
+    if (!run.agents.some((agent) => agent.status !== "complete")) {
+      throw new Conflict("All agents already completed");
+    }
+
+    // stop any leftover chain-runner process before touching PTYs or relaunching.
+    await terminateRunProcess(runId);
+
+    // remove stale agent + typed-attempt PTY sessions from the previous attempt
+    const staleSessions = collectStaleRunSessionNames(run);
+    await Promise.allSettled(staleSessions.map((s) => pty.remove(s)));
+
+    // build a trigger-aware view so we resume the actual frontier — a pending agent
+    // whose trigger event was already produced — rather than the first pending agent
+    // by array order. That positional pick could select a sibling stranded on a
+    // branch that was never taken (regression: run-1783832264355-7d9c3cce resumed
+    // source-repointer after the remover had already resolved the bug, contradicting
+    // itself and failing the run). Falls back to positional order if the chain can't
+    // be parsed.
+    let routingAgents: RoutingAgent[] = [];
+    const routingContext = routingContextForEvents(readRoutingEvents(config.eventsDir, run.id), run.id);
+    try {
+      const chainForRouting = JSON.parse(readFileSync(chainPath, "utf-8"));
+      routingAgents = (chainForRouting.agents || []).map(
+        (a: { id: string; triggers?: string[]; emits?: string; wait_for_events?: RoutingAgent["wait_for_events"] }) => ({
+          id: a.id,
+          triggers: a.triggers,
+          emits: a.emits,
+          wait_for_events: a.wait_for_events,
+        }),
+      );
+    } catch { /* fall back to positional selection */ }
+
+    // resolve agent profile for env vars
+    let profileEnv: Record<string, string> = {};
+    try {
+      const chainJson = JSON.parse(readFileSync(chainPath, "utf-8"));
+      const profileId = chainJson.default_agent_profile || chainJson.config?.default_agent_profile;
+      if (profileId) {
+        const profile = getProfile(nsId, orgId, profileId);
+        if (profile?.env) {
+          profileEnv = resolveProfileEnvVars(nsId, orgId, profile.env);
+        }
       }
+    } catch { /* use empty */ }
+
+    // Producer fix (#142): resume re-enters the ORIGINAL run through the typed
+    // routed-launch path — the same mechanism the completion handoff and the
+    // error-handling retry dispatch (error-handling.ts dispatchChainRunner) use
+    // to start the next agent of an existing run: runner-v2-launch-agent pins
+    // MENTIKO_RUN_ID/MENTIKO_RUN_DIR, bootstraps the agent through
+    // startRunnerV2Bootstrap under the original run id, and re-persists the
+    // launch job idempotently. The resumedAt persisted below is the bootstrap
+    // gate's documented resume admission (bootstrap-executor
+    // assertBootstrapLaunchable), so a resume never reserves a second run
+    // directory or splits run ownership across a child record.
+    const compiledLauncher = join(config.codeRoot, "lib", "runner-v2-launch-agent.js");
+    const launcherPath = existsSync(compiledLauncher)
+      ? compiledLauncher
+      : join(config.codeRoot, "web", "scripts", "runner-v2-launch-agent.cjs");
+    // A fresh occurrence id per resume attempt gives the durable launch job a
+    // fresh identity (same shape as the fan-group occurrence ids in adapters.ts),
+    // so a retried resume never collides with the previous attempt's job.
+    const occurrenceId = `resume:${runId}:${Date.now()}`;
+    const webOrigin = resolveInternalWebOrigin(new URL(req.url).origin);
+    // The launch base env is fixed BEFORE the state transition: the routed
+    // launch job persisted inside that transition derives its identity from the
+    // whitelisted subset of exactly this env, so the launcher child's idempotent
+    // re-persist computes the identical job. Session-token values are not in the
+    // persisted whitelist and are minted after the transition.
+    const launchBaseEnv: Record<string, string> = {
+      ...getSecretsEnvVars(nsId, orgId),
+      ...profileEnv,
+      BETTER_AUTH_SECRET: resolveInternalAuthSecret("chain-resume"),
+      ...buildLocalAiGatewayProxyEnv(new URL(req.url).origin),
+      MENTIKO_GLOBAL_ROOT: config.globalRoot,
+      MENTIKO_CODE_ROOT: config.codeRoot,
+      MENTIKO_PROJECT_ROOT: orgPath(nsId, orgId),
+      MENTIKO_ORG_ROOT: orgPath(nsId, orgId),
+      MENTIKO_NAMESPACE_ROOT: nsPath(nsId),
+      NAMESPACE_ID: nsId,
+      ORG_ID: orgId,
+      MENTIKO_RUN_ID: runId,
+      RUN_ID: runId,
+      MENTIKO_RUN_DIR: runDir,
+      MENTIKO_COMPLETION_OCCURRENCE_ID: occurrenceId,
+      MENTIKO_RUNNER_V2: "1",
+      MENTIKO_RUNNER_V2_COMPLETION: "1",
+      MENTIKO_WEB_URL: webOrigin,
+      ...(run.workspacePath ? { MENTIKO_WORKSPACE_PATH: run.workspacePath } : {}),
+      ...(run.taskId ? { MENTIKO_TASK_ID: run.taskId } : {}),
+      ...(run.debug ? { MENTIKO_DEBUG: "1" } : {}),
+    };
+
+    // Durable acceptance (review P1): the transition to running and the queued
+    // routed launch job are ONE atomic run.json write. A 200 therefore implies
+    // the launch intent is durably recorded; a crash between this write and the
+    // dispatch leaves a queued job the background worker reclaims. Anything
+    // that fails before the dispatch completes rolls the record back to its
+    // prior state with the failure reason and surfaces a non-2xx so the
+    // caller's retry accounting sees it.
+    let resumeAgentId = "";
+    let previousRun: RunRecord | undefined;
+    let launchJob: RoutedLaunchJob | undefined;
+    const resumedRun = updateRunJson(runJsonPath, (current) => {
+      if (!current) throw new NotFound("Run", runId);
+      if (current.status === "running") throw new Conflict("Run is already running");
+      const currentIncomplete = current.agents.filter((agent) => agent.status !== "complete");
+      if (currentIncomplete.length === 0) throw new Conflict("All agents already completed");
+
+      const currentRoutingAgents = routingAgents.map((agent) => ({
+        ...agent,
+        status: current.agents.find((candidate) => candidate.id === agent.id)?.status,
+      }));
+      const frontierIds = new Set(
+        currentRoutingAgents
+          .filter((agent) => agent.status !== "complete" && hasCompletedTrigger(agent, currentRoutingAgents, routingContext))
+          .map((agent) => agent.id),
+      );
+      // Priority: interrupted > trigger-eligible frontier > first pending. The
+      // frontier includes cancelled/stopped agents whose trigger already fired.
+      const resumeAgent = currentIncomplete.find((agent) => agent.status === "running" || agent.status === "stopped")
+        || currentIncomplete.find((agent) => frontierIds.has(agent.id))
+        || currentIncomplete.find((agent) => agent.status === "pending")
+        || currentIncomplete[0];
+      resumeAgentId = resumeAgent.id;
+
+      const agents = current.agents.map((agent) => {
+        if (agent.status === "complete") return agent;
+        const { started: _started, completed: _completed, blockedReason: _blockedReason, lastMessage: _lastMessage, ...rest } = agent;
+        return { ...rest, status: "pending" as const, session: "" };
+      });
+      const run: typeof current = {
+        ...current,
+        agents,
+        status: "running",
+        resumedAt: new Date().toISOString(),
+      };
+      delete run.completed;
+      delete run.blockedReason;
+      delete run.blockedAt;
+      delete run.status_message;
+
+      previousRun = current;
+      const upsert = upsertRoutedLaunchJobRecord(run, {
+        occurrenceId,
+        runId,
+        runDir,
+        chainPath,
+        targetAgentIds: [resumeAgentId],
+        environment: launchBaseEnv,
+      });
+      launchJob = upsert.job;
+      return upsert.run;
+    });
+    const completed = resumedRun.agents.filter((agent) => agent.status === "complete");
+    const incomplete = resumedRun.agents.filter((agent) => agent.status !== "complete");
+
+    // Dispatch after durable acceptance. A failure here (token mint, log open,
+    // spawn) must not leave the run looking alive with nothing behind it:
+    // restore the prior record (dropping the un-dispatched launch job) with
+    // the failure reason, then fail the request.
+    let sessionEnv: Record<string, string>;
+    let logFd: number;
+    let child: ReturnType<typeof spawn>;
+    try {
+      sessionEnv = await buildResumeSessionEnv(req, nsId, orgId, runId);
+      logFd = openSync(join(runDir, "output.log"), "a");
+      try {
+        child = spawn(
+          process.execPath,
+          [launcherPath, chainPath, resumeAgentId],
+          {
+            cwd: config.codeRoot,
+            detached: true,
+            stdio: ["ignore", logFd, logFd],
+            env: (() => {
+              const e = buildChildEnv({ ...launchBaseEnv, ...sessionEnv });
+              delete e.CLAUDECODE;
+              return e;
+            })(),
+          }
+        );
+      } finally {
+        closeSync(logFd);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      rollbackResumeDispatch(runJsonPath, previousRun, `resume dispatch failed: ${message}`);
+      throw new Error(`resume dispatch failed: ${message}`);
     }
-  } catch { /* use empty */ }
+    // Async spawn failures (the 'error' event) cannot fail the response, but
+    // the durable queued job is the recovery path: the background worker
+    // reclaims it. Never let the event crash the route process.
+    child.on?.("error", (error: Error) => {
+      console.error(`[resume] launcher spawn error for ${runId} (job ${launchJob?.id}): ${error.message}`);
+    });
 
-  // Producer fix (#142): resume re-enters the ORIGINAL run through the typed
-  // routed-launch path — the same mechanism the completion handoff and the
-  // error-handling retry dispatch (error-handling.ts dispatchChainRunner) use
-  // to start the next agent of an existing run: runner-v2-launch-agent pins
-  // MENTIKO_RUN_ID/MENTIKO_RUN_DIR, persists a durable launch job in the
-  // original run.json, and bootstraps the agent through startRunnerV2Bootstrap
-  // under the original run id. The resumedAt persisted above is the bootstrap
-  // gate's documented resume admission (bootstrap-executor
-  // assertBootstrapLaunchable), so a resume never reserves a second run
-  // directory or splits run ownership across a child record.
-  const sessionEnv = await buildResumeSessionEnv(req, nsId, orgId, runId);
-  const compiledLauncher = join(config.codeRoot, "lib", "runner-v2-launch-agent.js");
-  const launcherPath = existsSync(compiledLauncher)
-    ? compiledLauncher
-    : join(config.codeRoot, "web", "scripts", "runner-v2-launch-agent.cjs");
-  // A fresh occurrence id per resume attempt gives the durable launch job a
-  // fresh identity (same shape as the fan-group occurrence ids in adapters.ts),
-  // so a retried resume never collides with the previous attempt's job.
-  const occurrenceId = `resume:${runId}:${Date.now()}`;
+    child.unref();
 
-  const logPath = join(runDir, "output.log");
-  const logFd = openSync(logPath, "a");
-
-  const child = spawn(
-    process.execPath,
-    [launcherPath, chainPath, resumeAgentId],
-    {
-      cwd: config.codeRoot,
-      detached: true,
-      stdio: ["ignore", logFd, logFd],
-      env: (() => {
-        const e = buildChildEnv({
-          ...getSecretsEnvVars(nsId, orgId),
-          ...profileEnv,
-          BETTER_AUTH_SECRET: resolveInternalAuthSecret("chain-resume"),
-          ...buildLocalAiGatewayProxyEnv(new URL(req.url).origin),
-          MENTIKO_GLOBAL_ROOT: config.globalRoot,
-          MENTIKO_CODE_ROOT: config.codeRoot,
-          MENTIKO_PROJECT_ROOT: orgPath(nsId, orgId),
-          MENTIKO_ORG_ROOT: orgPath(nsId, orgId),
-          MENTIKO_NAMESPACE_ROOT: nsPath(nsId),
-          NAMESPACE_ID: nsId,
-          ORG_ID: orgId,
-          MENTIKO_RUN_ID: runId,
-          RUN_ID: runId,
-          MENTIKO_RUN_DIR: runDir,
-          MENTIKO_COMPLETION_OCCURRENCE_ID: occurrenceId,
-          MENTIKO_RUNNER_V2: "1",
-          MENTIKO_RUNNER_V2_COMPLETION: "1",
-          ...(resumedRun.workspacePath ? { MENTIKO_WORKSPACE_PATH: resumedRun.workspacePath } : {}),
-          ...(resumedRun.taskId ? { MENTIKO_TASK_ID: resumedRun.taskId } : {}),
-          ...(resumedRun.debug ? { MENTIKO_DEBUG: "1" } : {}),
-          ...sessionEnv,
-        });
-        delete e.CLAUDECODE;
-        return e;
-      })(),
-    }
-  );
-
-  child.unref();
-  closeSync(logFd);
-
-  return apiSuccess({
-    success: true,
-    runId,
-    resumeFrom: resumeAgentId,
-    completedAgents: completed.map((a) => a.id),
-    resumingAgents: incomplete.map((a) => a.id),
-    launchOccurrenceId: occurrenceId,
-    pid: child.pid,
-  });
+    return apiSuccess({
+      success: true,
+      runId,
+      resumeFrom: resumeAgentId,
+      completedAgents: completed.map((a) => a.id),
+      resumingAgents: incomplete.map((a) => a.id),
+      launchOccurrenceId: occurrenceId,
+      launchJobId: launchJob?.id,
+      pid: child.pid,
+    });
+  } finally {
+    releaseResumeClaim();
+  }
 });
+
+function rollbackResumeDispatch(
+  runJsonPath: string,
+  previousRun: RunRecord | undefined,
+  reason: string,
+): void {
+  try {
+    updateRunJson(runJsonPath, (current) => {
+      // Restoring the pre-transition record also drops the launch job folded
+      // into the transition: it was never dispatched, so nothing may reclaim it.
+      const restore = previousRun ?? current;
+      if (!restore) throw new Error(`run.json not found: ${runJsonPath}`);
+      return {
+        ...restore,
+        statusReason: { actor: "system", reason },
+      };
+    });
+  } catch (rollbackError) {
+    console.error(
+      `[resume] dispatch rollback failed for ${runJsonPath}: ${
+        rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
+      } (original reason: ${reason})`,
+    );
+  }
+}

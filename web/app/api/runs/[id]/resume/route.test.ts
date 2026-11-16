@@ -2,7 +2,11 @@
  * @jest-environment node
  */
 
-const mockSpawn = jest.fn((..._args: unknown[]) => ({ pid: 4242, unref: jest.fn() }));
+const mockSpawn = jest.fn((..._args: unknown[]) => ({
+  pid: 4242,
+  unref: jest.fn(),
+  on: jest.fn(),
+}));
 jest.mock("child_process", () => ({
   spawn: (...args: unknown[]) => mockSpawn(...args),
 }));
@@ -24,8 +28,9 @@ jest.mock("@/lib/auth/rbac-auth", () => ({
   requirePermission: async () => null,
 }));
 
+const mockPtyRemove = jest.fn(async (..._args: unknown[]) => undefined);
 jest.mock("@/lib/pty/pty-client", () => ({
-  pty: { remove: jest.fn() },
+  pty: { remove: (...args: unknown[]) => mockPtyRemove(...args) },
 }));
 
 jest.mock("@/lib/namespace-config", () => ({
@@ -66,8 +71,9 @@ jest.mock("@/lib/auth/auth-bridge", () => ({
   getSessionUser: async () => null,
 }));
 
+let mockMintSessionToken: (input: unknown) => Promise<string> = async () => "test-session-token";
 jest.mock("@/lib/auth/session-token", () => ({
-  mintSessionToken: async () => "test-session-token",
+  mintSessionToken: (input: unknown) => mockMintSessionToken(input),
 }));
 
 jest.mock("@/lib/runner-v2/routing", () => ({
@@ -79,12 +85,9 @@ jest.mock("@/lib/runner-v2/events", () => ({
   parseRunnerEvent: (raw: string) => JSON.parse(raw),
 }));
 
-jest.mock("@/lib/runs/stale-run-sessions", () => ({
-  collectStaleRunSessionNames: () => [],
-}));
-
+const mockTerminateRunProcess = jest.fn(async (..._args: unknown[]) => undefined);
 jest.mock("@/lib/runs/run-process", () => ({
-  terminateRunProcess: async () => undefined,
+  terminateRunProcess: (...args: unknown[]) => mockTerminateRunProcess(...args),
 }));
 
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -133,6 +136,14 @@ beforeEach(() => {
   rmSync(TEST_ROOT, { recursive: true, force: true });
   mkdirSync(TEST_ROOT, { recursive: true });
   mockSpawn.mockClear();
+  mockSpawn.mockImplementation((..._args: unknown[]) => ({
+    pid: 4242,
+    unref: jest.fn(),
+    on: jest.fn(),
+  }));
+  mockPtyRemove.mockClear();
+  mockTerminateRunProcess.mockClear();
+  mockMintSessionToken = async () => "test-session-token";
 });
 
 afterAll(() => {
@@ -224,4 +235,112 @@ describe("POST /api/runs/[id]/resume", () => {
     const args = (mockSpawn.mock.calls[0] as unknown[])[1] as string[];
     expect(args[1]).toBe(chainsCopy);
   });
+
+  it("persists the queued routed launch job in the same atomic write that marks the run running", async () => {
+    const runsDir = writeRun(validRun({ chainId: undefined }));
+    writeChainSnapshot(runsDir);
+
+    const res = await POST(makeRequest("run-resume-1") as never, { params: Promise.resolve({ id: "run-resume-1" }) } as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data.launchJobId).toMatch(/^routed-launch:/);
+    const record = JSON.parse(readFileSync(join(runsDir, "run.json"), "utf8"));
+    expect(record.status).toBe("running");
+    const jobs = Object.values(record.runnerV2?.launchJobs || {}) as Array<Record<string, unknown>>;
+    expect(jobs).toHaveLength(1);
+    const job = jobs[0];
+    expect(job.id).toBe(body.data.launchJobId);
+    expect(job.status).toBe("queued");
+    expect(job.occurrenceId).toMatch(/^resume:run-resume-1:\d+$/);
+    expect(job.targets).toEqual([{ agentId: "reviewer" }]);
+    expect(job.chainPath).toBe(join(runsDir, "chain.json"));
+    // the spawned launcher recomputes the identical job identity
+    const env = (mockSpawn.mock.calls[0][2] as { env: Record<string, string> }).env;
+    expect(job.occurrenceId).toBe(env.MENTIKO_COMPLETION_OCCURRENCE_ID);
+  });
+
+  it("lets exactly one of two overlapping resumes proceed; the loser 409s and never touches sessions or processes", async () => {
+    const runsDir = writeRun(validRun({ chainId: undefined }));
+    writeChainSnapshot(runsDir);
+
+    // Track the run status observed at every PTY removal: a loser that removes
+    // sessions after the winner's transition would read status "running".
+    const removeStatuses: Array<[string, string | undefined]> = [];
+    mockPtyRemove.mockImplementation(async (...args: unknown[]) => {
+      removeStatuses.push([String(args[0]), readStatus(runsDir)]);
+      return undefined;
+    });
+
+    // Hold the winner between its atomic transition and its dispatch by
+    // deferring the session-token mint.
+    let releaseMint: (token: string) => void = () => {};
+    const mintGate = new Promise<string>((resolve) => { releaseMint = resolve; });
+    mockMintSessionToken = () => mintGate;
+
+    const winner = POST(makeRequest("run-resume-1") as never, { params: Promise.resolve({ id: "run-resume-1" }) } as never);
+    for (let i = 0; i < 200 && readStatus(runsDir) !== "running"; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(readStatus(runsDir)).toBe("running");
+    expect(mockSpawn).not.toHaveBeenCalled();
+
+    const winnerRemoveCalls = mockPtyRemove.mock.calls.length;
+    const winnerTerminateCalls = mockTerminateRunProcess.mock.calls.length;
+
+    const loser = await POST(makeRequest("run-resume-1") as never, { params: Promise.resolve({ id: "run-resume-1" }) } as never);
+    const loserBody = await loser.json();
+
+    expect(loser.status).toBe(409);
+    expect(loserBody.error.message).toContain("resume is already in progress");
+    // the loser did nothing: no cleanup, no transition, no launch
+    expect(mockPtyRemove.mock.calls.length).toBe(winnerRemoveCalls);
+    expect(mockTerminateRunProcess.mock.calls.length).toBe(winnerTerminateCalls);
+
+    releaseMint("test-session-token");
+    const winnerResponse = await winner;
+    expect(winnerResponse.status).toBe(200);
+
+    // exactly one launch; every session removal happened while the run was
+    // still terminal, so the fresh occurrence's sessions were never removed
+    expect(mockSpawn).toHaveBeenCalledTimes(1);
+    expect(removeStatuses.length).toBeGreaterThan(0);
+    for (const entry of removeStatuses) {
+      expect(entry[1]).toBe("failed");
+    }
+  });
+
+  it("rolls the run back to its prior terminal state with a reason and errors when the dispatch fails after the status write", async () => {
+    const runsDir = writeRun(validRun({ chainId: undefined }));
+    writeChainSnapshot(runsDir);
+    mockSpawn.mockImplementation(() => {
+      throw new Error("spawn exploded");
+    });
+
+    const res = await POST(makeRequest("run-resume-1") as never, { params: Promise.resolve({ id: "run-resume-1" }) } as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(500);
+    expect(body.error.message).toContain("resume dispatch failed");
+    expect(body.error.message).toContain("spawn exploded");
+    const record = JSON.parse(readFileSync(join(runsDir, "run.json"), "utf8"));
+    expect(record.status).toBe("failed");
+    expect(record.statusReason).toMatchObject({ actor: "system" });
+    expect(record.statusReason.reason).toContain("resume dispatch failed");
+    // prior agent evidence restored, not left pending
+    expect(record.agents).toEqual([
+      { id: "planner", name: "Planner", status: "complete", session: "done-1" },
+      { id: "reviewer", name: "Reviewer", status: "stopped", session: "dead-1" },
+    ]);
+    // the never-dispatched launch job is gone; nothing may reclaim it
+    expect(Object.values(record.runnerV2?.launchJobs || {})).toEqual([]);
+  });
 });
+
+function readStatus(runsDir: string): string | undefined {
+  try {
+    return (JSON.parse(readFileSync(join(runsDir, "run.json"), "utf8")) as { status?: string }).status;
+  } catch {
+    return undefined;
+  }
+}
