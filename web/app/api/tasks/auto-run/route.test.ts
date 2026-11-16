@@ -2606,6 +2606,31 @@ describe("POST /api/tasks/auto-run", () => {
     expect(mockTaskMutateMetadata).toHaveBeenCalledTimes(1);
   });
 
+  it("the unknown-outcome pause fences on the task series observed before the request (#142 r4 P2-1)", async () => {
+    mockTaskGet.mockReturnValue(resumableTaskFixture({ resume_series: 5 }));
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(resumableRunRecord());
+    (global.fetch as jest.Mock).mockImplementation(async () => {
+      mockReadFileSync.mockReturnValue("{ not json");
+      return jsonResponse({ error: { message: "boom" } }, 500);
+    });
+
+    const res = await POST(makeRequest({ taskId: "TASK-RESUME" }) as never);
+    const body = await res.json();
+
+    expect(body.data).toMatchObject({ triggered: false, action: "resume_outcome_unknown" });
+    expect(mockTaskMutateMetadata).toHaveBeenCalledTimes(1);
+    const mutate = mockTaskMutateMetadata.mock.calls[0][2] as (
+      metadata: Record<string, unknown>, task: { status: string }
+    ) => Record<string, unknown> | null;
+    // the observed series (5) is still current -> the pause lands
+    expect(mutate({ resume_series: 5, last_run_id: "run-outcome" }, { status: "open" }))
+      .toMatchObject({ auto_run_paused: true });
+    // a same-run reset that moved resume_series while the outcome was unknown
+    // -> the pause never lands on the reset task
+    expect(mutate({ resume_series: 6, last_run_id: "run-outcome" }, { status: "open" })).toBeNull();
+  });
+
   it("stops resuming at the retry ceiling even with a retained accepted analysis pointer (TASK-010 shape)", async () => {
     mockTaskGet.mockReturnValue(resumableTaskFixture({
       analysis_job_id: "job-1794746071590-ekcfgc3",

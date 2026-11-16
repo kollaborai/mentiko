@@ -984,8 +984,13 @@ async function resumeExistingRun(
     taskId,
     runId,
     detail,
-    // fence on the observed series whenever the record yielded one
-    series: recorded.readable ? recorded.series : undefined,
+    // Fence on the observed series (#142 round 4, P2-1): the record's series
+    // when it is readable, otherwise the task's resume_series read BEFORE the
+    // resume request — an unreadable record must not leave the unknown pause
+    // without a series fence a same-run reset could dodge.
+    series: recorded.readable && typeof recorded.series === "number"
+      ? recorded.series
+      : currentResumeSeries(metadata),
   });
   return {
     triggered: false,
