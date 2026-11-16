@@ -25,6 +25,7 @@ import {
 import { startLaunchCoordinatorHeartbeat } from "@/lib/runner-v2/launch-coordinator-state";
 import { discoverScopedRunJsonPaths } from "@/lib/runner-v2/run-scope";
 import { readRunJson } from "@/lib/runner-v2/run-state";
+import { buildChildEnv } from "@/lib/runs/child-env";
 import type { RunnerV2LaunchContext, RunnerV2LaunchResult } from "@/lib/runner-v2/types";
 
 const DEFAULT_LEASE_MS = 120_000;
@@ -61,6 +62,16 @@ export interface RoutedLaunchJobRunnerDependencies {
     context: RunnerV2LaunchContext;
     attempt: AgentAttemptRecord;
   }) => Promise<RoutedBootstrapRecoveryResult>;
+  /**
+   * Reconstruct the scoped session token and profile/secrets for an accepted
+   * resume job at claim time (issue #142 round 2). When provided and the run
+   * carries an accepted resumeAttempt, it MUST succeed before any PTY effect;
+   * failure blocks the job visibly instead of launching unauthenticated or
+   * different work. Returns only in-memory env; token/secret values are never
+   * persisted. The route-spawned coordinator does not need it (it inherits the
+   * canonical env), so it stays optional.
+   */
+  reconstructResumeEnvironment?: (job: RoutedLaunchJob) => Promise<Record<string, string>>;
 }
 
 export async function runRoutedLaunchJob(input: {
@@ -94,6 +105,25 @@ export async function runRoutedLaunchJob(input: {
     agentIds: claimed.targets.map((target) => target.agentId),
   });
   try {
+    // Accepted resume jobs (issue #142 round 2): reconstruct the scoped
+    // session identity and profile/secrets at claim time, BEFORE any PTY
+    // effect. A reconstruction failure blocks the job with a visible reason —
+    // never unauthenticated work, never a silent requeue.
+    let resumeEnvironment: Record<string, string> | undefined;
+    if (dependencies.reconstructResumeEnvironment && runHasAcceptedResume(input.runJsonPath)) {
+      try {
+        resumeEnvironment = await dependencies.reconstructResumeEnvironment(claimed);
+      } catch (error) {
+        const reason = `resume launch blocked: credentials could not be reconstructed for ${claimed.id}: ${errorMessage(error)}`;
+        blockRoutedLaunchJob({
+          runJsonPath: input.runJsonPath,
+          jobId: input.jobId,
+          ownerId: input.ownerId,
+          reason,
+        });
+        return { status: "blocked", jobId: input.jobId, error: reason };
+      }
+    }
     const chain = JSON.parse(readFileSync(claimed.chainPath, "utf8")) as { id?: string; name?: string };
     const targetResults = await Promise.allSettled(claimed.targets.map((target) => runLaunchTarget({
       runJsonPath: input.runJsonPath,
@@ -102,6 +132,7 @@ export async function runRoutedLaunchJob(input: {
       agentId: target.agentId,
       chain,
       dependencies,
+      ...(resumeEnvironment ? { resumeEnvironment } : {}),
     })));
     const rejectedTarget = targetResults.find(
       (result): result is PromiseRejectedResult => result.status === "rejected",
@@ -190,6 +221,7 @@ async function runLaunchTarget(input: {
   agentId: string;
   chain: { id?: string; name?: string };
   dependencies: RoutedLaunchJobRunnerDependencies;
+  resumeEnvironment?: Record<string, string>;
 }): Promise<void> {
   if (!routedLaunchJobLeaseOwned({
     runJsonPath: input.runJsonPath,
@@ -197,9 +229,17 @@ async function runLaunchTarget(input: {
     ownerId: input.ownerId,
   })) throw new Error(`routed launch job ownership lost: ${input.job.id}`);
 
+  // A resumed launch runs on the canonical sanitized env: the job's persisted
+  // subset plus the just-reconstructed scoped credentials, inheriting only the
+  // allowlisted worker env (PTY daemon socket, capacity settings) — the same
+  // allowlist the route used, so worker and launcher see one environment.
+  const inherited = input.resumeEnvironment
+    ? buildChildEnv({})
+    : (input.dependencies.processEnv || process.env);
   const env: NodeJS.ProcessEnv = {
-    ...(input.dependencies.processEnv || process.env),
+    ...inherited,
     ...input.job.environment,
+    ...(input.resumeEnvironment || {}),
     MENTIKO_RUN_ID: input.job.runId,
     RUN_ID: input.job.runId,
     MENTIKO_RUN_DIR: input.job.runDir,
@@ -305,6 +345,21 @@ async function runLaunchTarget(input: {
 function attemptBlocksLaunch(attempt: AgentAttemptRecord): boolean {
   return BLOCKED_ATTEMPT_PHASES.has(attempt.phase)
     || Boolean(attempt.terminalReason && BLOCKING_TERMINAL_REASONS.has(attempt.terminalReason));
+}
+
+/**
+ * Minimal, dependency-free check that the run record carries an ACCEPTED
+ * resumeAttempt (the full parser lives web-side in resume-attempt.ts and must
+ * not be dragged into the runner bundle). Unreadable/absent -> false: an
+ * ordinary (non-resume) routed launch job takes the legacy env merge.
+ */
+function runHasAcceptedResume(runJsonPath: string): boolean {
+  try {
+    const raw = JSON.parse(readFileSync(runJsonPath, "utf8")) as { resumeAttempt?: { outcome?: unknown } };
+    return raw?.resumeAttempt?.outcome === "accepted";
+  } catch {
+    return false;
+  }
 }
 
 function latestJobAttempt(

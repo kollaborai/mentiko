@@ -38,8 +38,11 @@ jest.mock("@/lib/namespace-config", () => ({
   getOrgIdFromRequest: async () => "default",
 }));
 
+// Identity by default; individual tests switch this to the REAL buildChildEnv
+// to prove inherited PTY_DAEMON/capacity settings reach the canonical env.
+let mockBuildChildEnv: (env: Record<string, string>) => Record<string, string> = (env) => ({ ...env });
 jest.mock("@/lib/runs/child-env", () => ({
-  buildChildEnv: (env: Record<string, string>) => env,
+  buildChildEnv: (env: Record<string, string>) => mockBuildChildEnv(env),
 }));
 
 jest.mock("@/lib/ai-gateway/local-proxy-env", () => ({
@@ -165,6 +168,7 @@ beforeEach(() => {
   rmSync(TEST_ROOT, { recursive: true, force: true });
   mkdirSync(TEST_ROOT, { recursive: true });
   closeAll();
+  mockBuildChildEnv = (env) => ({ ...env });
   mockSpawn.mockClear();
   mockSpawn.mockImplementation((..._args: unknown[]) => ({
     pid: 4242,
@@ -423,5 +427,66 @@ describe("POST /api/runs/[id]/resume (route-owned attempts)", () => {
     expect(record.resumeHistory).toHaveLength(1);
     expect(record.resumeHistory[0].statusReason).toEqual({ actor: "system", reason: "agent exited nonzero" });
     expect(record.resumeHistory[0].statusMessage).toBe("agent crashed");
+  });
+
+  it("persists ONE canonical child env (inherited PTY daemon and capacity settings included) and the launcher re-persist does not conflict", async () => {
+    // The REAL buildChildEnv: the inherited allowlist (PTY_DAEMON, runner
+    // capacity settings) must land in both the spawned env and the persisted
+    // job environment, byte-for-byte, so the launcher child re-persisting its
+    // own process.env computes the identical accepted job.
+    const actual = jest.requireActual("@/lib/runs/child-env") as {
+      buildChildEnv: (env: Record<string, string>) => Record<string, string>;
+    };
+    mockBuildChildEnv = actual.buildChildEnv;
+    process.env.PTY_DAEMON = "/tmp/mentiko-142-test-pty.sock";
+    process.env.MENTIKO_CAP_POLL_SECS = "7";
+    process.env.CLAUDECODE = "1";
+    try {
+      const taskId = seedTask010("run-resume-1");
+      const runsDir = writeRun(validRun({ chainId: undefined, taskId }));
+      writeChainSnapshot(runsDir);
+
+      const res = await POST(
+        makeRequest("run-resume-1", { [RESUME_SOURCE_HEADER]: "auto-run" }) as never,
+        { params: Promise.resolve({ id: "run-resume-1" }) } as never,
+      );
+      expect(res.status).toBe(200);
+
+      const spawnEnv = (mockSpawn.mock.calls[0][2] as { env: Record<string, string> }).env;
+      expect(spawnEnv.PTY_DAEMON).toBe("/tmp/mentiko-142-test-pty.sock");
+      expect(spawnEnv.MENTIKO_CAP_POLL_SECS).toBe("7");
+      expect(spawnEnv.CLAUDECODE).toBeUndefined();
+
+      const record = readRecord(runsDir);
+      const job = Object.values(record.runnerV2.launchJobs)[0] as Record<string, unknown>;
+      const jobEnv = job.environment as Record<string, string>;
+      // the persisted subset carries the inherited settings the launcher will
+      // re-derive from its own process.env — no conflicting second identity
+      expect(jobEnv.PTY_DAEMON).toBe("/tmp/mentiko-142-test-pty.sock");
+      expect(jobEnv.MENTIKO_CAP_POLL_SECS).toBe("7");
+      expect(jobEnv.BETTER_AUTH_SECRET).toBeUndefined();
+
+      // The launcher child re-persists its WHOLE environment idempotently
+      // (launch-agent-cli persistRoutedLaunchJob with process.env). Its env is
+      // the spawn env above, so this must return the SAME job, not conflict.
+      const { persistRoutedLaunchJob } = await import("@/lib/runner-v2/launch-job");
+      const repersisted = persistRoutedLaunchJob({
+        runJsonPath: join(runsDir, "run.json"),
+        jobId: job.id as string,
+        occurrenceId: job.occurrenceId as string,
+        runId: "run-resume-1",
+        runDir: runsDir,
+        chainPath: join(runsDir, "chain.json"),
+        targetAgentIds: ["reviewer"],
+        environment: spawnEnv,
+      });
+      expect(repersisted.id).toBe(job.id);
+      expect(repersisted.status).toBe("queued");
+      expect(readRecord(runsDir).status).toBe("running");
+    } finally {
+      delete process.env.PTY_DAEMON;
+      delete process.env.MENTIKO_CAP_POLL_SECS;
+      delete process.env.CLAUDECODE;
+    }
   });
 });

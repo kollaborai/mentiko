@@ -390,6 +390,7 @@ export const POST = withErrorHandling(async (
     // persisted whitelist and are minted after the transition.
     const launchBaseEnv: Record<string, string> = {
       ...getSecretsEnvVars(nsId, orgId),
+      ...getSecretsEnvVars(nsId, orgId),
       ...profileEnv,
       BETTER_AUTH_SECRET: resolveInternalAuthSecret("chain-resume"),
       ...buildLocalAiGatewayProxyEnv(new URL(req.url).origin),
@@ -411,6 +412,15 @@ export const POST = withErrorHandling(async (
       ...(run.taskId ? { MENTIKO_TASK_ID: run.taskId } : {}),
       ...(run.debug ? { MENTIKO_DEBUG: "1" } : {}),
     };
+    // ONE canonical sanitized child environment, derived before acceptance
+    // (issue #142 round 2): the queued routed launch job persists exactly the
+    // whitelisted subset of this env, and the spawn below uses it byte-for-byte.
+    // The launcher child therefore re-persists (from its own process.env, which
+    // IS this env plus the never-persisted session keys) the identical job it
+    // was accepted with — the immediate launch can never conflict with its own
+    // accepted job over inherited PTY_DAEMON/capacity settings.
+    const canonicalChildEnv: Record<string, string> = buildChildEnv(launchBaseEnv);
+    delete canonicalChildEnv.CLAUDECODE;
 
     // Durable acceptance (issue #142): the transition to running, the accepted
     // outcome, and the queued routed launch job are ONE atomic run.json write.
@@ -480,7 +490,7 @@ export const POST = withErrorHandling(async (
         runDir,
         chainPath,
         targetAgentIds: [resumeAgentId],
-        environment: launchBaseEnv,
+        environment: canonicalChildEnv,
       });
       launchJob = upsert.job;
       return upsert.run;
@@ -506,11 +516,10 @@ export const POST = withErrorHandling(async (
             cwd: config.codeRoot,
             detached: true,
             stdio: ["ignore", logFd, logFd],
-            env: (() => {
-              const e = buildChildEnv({ ...launchBaseEnv, ...sessionEnv });
-              delete e.CLAUDECODE;
-              return e;
-            })(),
+            // byte-for-byte the canonical persisted env; the session keys are
+            // added on top and are not in the persisted whitelist, so the
+            // launcher's idempotent re-persist still computes the same job.
+            env: { ...canonicalChildEnv, ...sessionEnv },
           }
         );
       } finally {
