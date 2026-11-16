@@ -96,6 +96,16 @@ export interface UpsertRoutedLaunchJobInput {
   chainPath: string;
   targetAgentIds: string[];
   environment?: Record<string, string | undefined>;
+  /**
+   * Env keys whose VALUES came from the secrets store (issue #142 round 3).
+   * Persistence filters by provenance, not just the key allowlist: a secret
+   * mapped to an allowlisted name (e.g. MENTIKO_DEBUG) must never be written
+   * into the persisted job environment — whatever its env var name. The
+   * launcher child re-derives the same list from the never-persisted
+   * MENTIKO_LAUNCH_SECRET_ENV_KEYS marker so its idempotent re-persist
+   * computes the identical job.
+   */
+  excludeEnvKeys?: string[];
   now?: Date;
 }
 
@@ -127,7 +137,7 @@ export function upsertRoutedLaunchJobRecord(
     runDir: input.runDir,
     chainPath: input.chainPath,
     targets: targetAgentIds.map((agentId) => ({ agentId })),
-    environment: persistedEnvironment(input.environment || {}),
+    environment: persistedEnvironment(input.environment || {}, new Set(input.excludeEnvKeys || [])),
     status: "queued",
     attemptCount: 0,
     createdAt: at,
@@ -362,9 +372,12 @@ export function startRoutedLaunchJobHeartbeat(input: {
   return () => clearInterval(interval);
 }
 
-function persistedEnvironment(env: Record<string, string | undefined>): Record<string, string> {
+function persistedEnvironment(
+  env: Record<string, string | undefined>,
+  excludeEnvKeys: Set<string>,
+): Record<string, string> {
   return Object.fromEntries(Object.entries(env)
-    .filter(([key, value]) => PERSISTED_ENV_KEYS.has(key) && typeof value === "string")
+    .filter(([key, value]) => PERSISTED_ENV_KEYS.has(key) && !excludeEnvKeys.has(key) && typeof value === "string")
     .sort(([left], [right]) => left.localeCompare(right))) as Record<string, string>;
 }
 

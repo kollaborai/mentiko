@@ -373,6 +373,18 @@ export function findProfilesUsingSecret(namespaceId: string, orgId: string, secr
 }
 
 /**
+ * The secret NAME a `{secret:NAME}` reference points at, or null when the
+ * value is not a secret reference. Shared by fail-closed callers (the resume
+ * route and its worker-side credential reconstruction, issue #142 round 3)
+ * that must treat an UNRESOLVED reference — resolveProfileEnvVars leaves the
+ * literal `{secret:NAME}` marker in place — as a launch-blocking condition.
+ */
+export function secretReferenceName(value: string): string | null {
+  const match = value.match(SECRET_REF_PATTERN);
+  return match ? match[1] : null;
+}
+
+/**
  * Resolve secret references in agent profile env values.
  * Supports syntax: {secret:SECRET_NAME}
  * Returns Record<envVarName, resolvedValue>.

@@ -49,13 +49,22 @@ jest.mock("@/lib/ai-gateway/local-proxy-env", () => ({
   buildLocalAiGatewayProxyEnv: () => ({}),
 }));
 
+let mockGetSecretsEnvVars: () => Record<string, string> = () => ({});
+let mockResolveProfileEnvVars: (ns: string, org: string, env: Record<string, string>) => Record<string, string>
+  = (_ns, _org, env) => ({ ...env });
 jest.mock("@/lib/secrets/secrets-store", () => ({
-  getSecretsEnvVars: () => ({}),
-  resolveProfileEnvVars: () => ({}),
+  getSecretsEnvVars: () => mockGetSecretsEnvVars(),
+  resolveProfileEnvVars: (ns: string, org: string, env: Record<string, string>) =>
+    mockResolveProfileEnvVars(ns, org, env),
+  secretReferenceName: (value: string) => {
+    const match = /^\{secret:([^}]+)\}$/.exec(value);
+    return match ? match[1] : null;
+  },
 }));
 
+let mockGetProfile: (nsId: string, orgId: string, id: string) => unknown = () => null;
 jest.mock("@/lib/agents/agent-profile-storage", () => ({
-  getProfile: () => null,
+  getProfile: (...args: unknown[]) => mockGetProfile(args[0] as string, args[1] as string, args[2] as string),
 }));
 
 jest.mock("@/lib/auth/run-acl", () => ({
@@ -109,13 +118,14 @@ function writeRun(record: Record<string, unknown>): string {
   return runsDir;
 }
 
-function writeChainSnapshot(runsDir: string): void {
+function writeChainSnapshot(runsDir: string, chainOverrides: Record<string, unknown> = {}): void {
   writeFileSync(join(runsDir, "chain.json"), JSON.stringify({
     name: "Release Review",
     agents: [
       { id: "planner", name: "Planner" },
       { id: "reviewer", name: "Reviewer" },
     ],
+    ...chainOverrides,
   }));
 }
 
@@ -179,6 +189,9 @@ beforeEach(() => {
   mockPtyRemove.mockClear();
   mockTerminateRunProcess.mockClear();
   mockMintSessionToken = async () => "test-session-token";
+  mockGetSecretsEnvVars = () => ({});
+  mockResolveProfileEnvVars = (_ns, _org, env) => ({ ...env });
+  mockGetProfile = () => null;
 });
 
 afterAll(() => {
@@ -560,5 +573,103 @@ describe("POST /api/runs/[id]/resume (route-owned attempts)", () => {
       series: 1,
       outcome: "accepted",
     });
+  });
+
+  // ---- fail-closed credential reconstruction (#142 round 3) ----
+
+  it("a missing referenced agent profile blocks the resume before any PTY effect, with a recorded reason", async () => {
+    const taskId = seedTask010("run-resume-1");
+    const runsDir = writeRun(validRun({ chainId: undefined, taskId }));
+    writeChainSnapshot(runsDir, { default_agent_profile: "prof-gone" });
+    mockGetProfile = () => null;
+
+    const res = await POST(
+      makeRequest("run-resume-1", { [RESUME_SOURCE_HEADER]: "auto-run" }) as never,
+      { params: Promise.resolve({ id: "run-resume-1" }) } as never,
+    );
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.error.message).toContain("profile prof-gone");
+    expect(body.error.message).toContain("missing");
+
+    const record = readRecord(runsDir);
+    expect(record.status).toBe("failed");
+    expect(record.resumeAttempt.outcome).toBe("failed");
+    expect(record.resumeAttempt.reason).toContain("profile prof-gone");
+    // blocked before any PTY effect: no stale-session cleanup, no launcher
+    expect(mockPtyRemove).not.toHaveBeenCalled();
+    expect(mockTerminateRunProcess).not.toHaveBeenCalled();
+    expect(mockSpawn).not.toHaveBeenCalled();
+    // a confirmed automatic failure is accounted exactly once
+    const task = taskGet("default", taskId, "default")!;
+    expect((task.metadata as Record<string, unknown>).auto_run_retries).toBe(1);
+  });
+
+  it("an unresolved {secret:NAME} reference blocks the resume with a recorded reason", async () => {
+    const taskId = seedTask010("run-resume-1");
+    const runsDir = writeRun(validRun({ chainId: undefined, taskId }));
+    writeChainSnapshot(runsDir, { default_agent_profile: "prof-release" });
+    mockGetProfile = () => ({ id: "prof-release", env: { API_KEY: "{secret:VAULT_MISSING}" } });
+    // resolveProfileEnvVars leaves the literal marker for an absent secret
+    mockResolveProfileEnvVars = (_ns, _org, env) => ({ ...env });
+
+    const res = await POST(
+      makeRequest("run-resume-1", { [RESUME_SOURCE_HEADER]: "auto-run" }) as never,
+      { params: Promise.resolve({ id: "run-resume-1" }) } as never,
+    );
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.error.message).toContain("API_KEY");
+    expect(body.error.message).toContain("could not be resolved");
+
+    const record = readRecord(runsDir);
+    expect(record.resumeAttempt.outcome).toBe("failed");
+    expect(record.resumeAttempt.reason).toContain("API_KEY");
+    expect(mockSpawn).not.toHaveBeenCalled();
+  });
+
+  it("a secret mapped to an allowlisted env name reaches the launcher env but is never persisted to the job or run record", async () => {
+    const taskId = seedTask010("run-resume-1");
+    const runsDir = writeRun(validRun({ chainId: undefined, taskId }));
+    writeChainSnapshot(runsDir);
+    // A vault secret mapped to MENTIKO_DEBUG — an allowlisted, nonsecret name.
+    mockGetSecretsEnvVars = () => ({ MENTIKO_DEBUG: "vault-only-debug-value" });
+
+    const res = await POST(
+      makeRequest("run-resume-1", { [RESUME_SOURCE_HEADER]: "auto-run" }) as never,
+      { params: Promise.resolve({ id: "run-resume-1" }) } as never,
+    );
+    expect(res.status).toBe(200);
+
+    const spawnEnv = (mockSpawn.mock.calls[0][2] as { env: Record<string, string> }).env;
+    // the launcher child still GETS the secret at runtime...
+    expect(spawnEnv.MENTIKO_DEBUG).toBe("vault-only-debug-value");
+    // ...the provenance marker travels with it...
+    expect(spawnEnv.MENTIKO_LAUNCH_SECRET_ENV_KEYS).toBe(JSON.stringify(["MENTIKO_DEBUG"]));
+
+    const record = readRecord(runsDir);
+    const raw = JSON.stringify(record);
+    // ...but the value is never persisted, whatever its env var name
+    expect(raw).not.toContain("vault-only-debug-value");
+    const job = Object.values(record.runnerV2.launchJobs)[0] as Record<string, unknown>;
+    expect((job.environment as Record<string, string>).MENTIKO_DEBUG).toBeUndefined();
+    expect((job.environment as Record<string, string>).MENTIKO_LAUNCH_SECRET_ENV_KEYS).toBeUndefined();
+
+    // the launcher child re-persists from its own process.env using the
+    // marker: identical job, still without the secret
+    const { persistRoutedLaunchJob } = await import("@/lib/runner-v2/launch-job");
+    const repersisted = persistRoutedLaunchJob({
+      runJsonPath: join(runsDir, "run.json"),
+      jobId: job.id as string,
+      occurrenceId: job.occurrenceId as string,
+      runId: "run-resume-1",
+      runDir: runsDir,
+      chainPath: join(runsDir, "chain.json"),
+      targetAgentIds: ["reviewer"],
+      environment: spawnEnv,
+      excludeEnvKeys: JSON.parse(spawnEnv.MENTIKO_LAUNCH_SECRET_ENV_KEYS) as string[],
+    });
+    expect(repersisted.id).toBe(job.id);
+    expect(JSON.stringify(readRecord(runsDir))).not.toContain("vault-only-debug-value");
   });
 });

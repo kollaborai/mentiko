@@ -3,8 +3,20 @@ import { buildLocalAiGatewayProxyEnv } from "@/lib/ai-gateway/local-proxy-env";
 import { resolveInternalAuthSecret } from "@/lib/auth/internal-api-auth";
 import { mintSessionToken } from "@/lib/auth/session-token";
 import { getProfile } from "@/lib/agents/agent-profile-storage";
-import { getSecretsEnvVars, resolveProfileEnvVars } from "@/lib/secrets/secrets-store";
+import { getSecretsEnvVars, resolveProfileEnvVars, secretReferenceName } from "@/lib/secrets/secrets-store";
 import type { RoutedLaunchJob } from "@/lib/runner-v2/launch-job";
+
+/**
+ * A configured credential input (profile, secret reference) that cannot be
+ * reconstructed. Distinct class so callers can distinguish a fail-closed
+ * configuration gap from an incidental I/O error in the reason they surface.
+ */
+export class UnresolvedResumeCredentialError extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = "UnresolvedResumeCredentialError";
+  }
+}
 
 /**
  * Worker-side credential reconstruction for an accepted resume launch job
@@ -42,7 +54,10 @@ export async function reconstructResumeLaunchEnvironment(
   };
 
   // Profile env vars come from the chain snapshot's nonsecret profile
-  // reference, exactly as the route resolved it at acceptance.
+  // reference, exactly as the route resolved it at acceptance. Fail CLOSED
+  // (issue #142 round 3): a referenced profile that is missing, or a
+  // {secret:NAME} reference that does not resolve, blocks the launch — the
+  // worker never proceeds without the configured provider environment.
   let profileId: string | undefined;
   try {
     const chain = JSON.parse(readFileSync(job.chainPath, "utf8")) as {
@@ -52,11 +67,28 @@ export async function reconstructResumeLaunchEnvironment(
     profileId = chain.default_agent_profile || chain.config?.default_agent_profile;
     if (profileId) {
       const profile = getProfile(nsId, orgId, profileId);
-      if (profile?.env) {
-        Object.assign(env, resolveProfileEnvVars(nsId, orgId, profile.env));
+      if (!profile) {
+        throw new UnresolvedResumeCredentialError(
+          `agent profile ${profileId} referenced by ${job.chainPath} is missing; `
+          + `recreate the profile before resuming run ${job.runId}`,
+        );
+      }
+      if (profile.env) {
+        const resolved = resolveProfileEnvVars(nsId, orgId, profile.env);
+        const unresolved = Object.entries(resolved)
+          .filter(([, value]) => secretReferenceName(value) !== null)
+          .map(([key]) => key);
+        if (unresolved.length > 0) {
+          throw new UnresolvedResumeCredentialError(
+            `secret reference(s) ${unresolved.join(", ")} of agent profile ${profileId} `
+            + `could not be resolved from the secrets store for run ${job.runId}`,
+          );
+        }
+        Object.assign(env, resolved);
       }
     }
   } catch (error) {
+    if (error instanceof UnresolvedResumeCredentialError) throw error;
     throw new Error(
       `resume launch job ${job.id} could not resolve its agent profile from `
       + `${job.chainPath}: ${error instanceof Error ? error.message : String(error)}`,

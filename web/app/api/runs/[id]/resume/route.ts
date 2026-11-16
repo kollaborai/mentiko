@@ -26,7 +26,7 @@ import { pty } from "@/lib/pty/pty-client";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { buildChildEnv } from "@/lib/runs/child-env";
 import { buildLocalAiGatewayProxyEnv } from "@/lib/ai-gateway/local-proxy-env";
-import { getSecretsEnvVars, resolveProfileEnvVars } from "@/lib/secrets/secrets-store";
+import { getSecretsEnvVars, resolveProfileEnvVars, secretReferenceName } from "@/lib/secrets/secrets-store";
 import { getProfile } from "@/lib/agents/agent-profile-storage";
 import { checkRunAccess } from "@/lib/auth/run-acl";
 import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
@@ -343,6 +343,52 @@ export const POST = withErrorHandling(async (
       throw new NotFound("Chain", chainPath);
     }
 
+    // Fail CLOSED before any PTY effect (issue #142 round 3): a referenced
+    // agent profile that is missing, or a {secret:NAME} reference that does
+    // not resolve, blocks the resume with a visible recorded reason — the
+    // launch never proceeds without the configured provider environment.
+    const secretsEnv = getSecretsEnvVars(nsId, orgId);
+    const secretEnvKeys = new Set<string>(Object.keys(secretsEnv));
+    let profileEnv: Record<string, string> = {};
+    const profileId = chainJson.default_agent_profile || chainJson.config?.default_agent_profile;
+    if (profileId) {
+      const profile = getProfile(nsId, orgId, profileId);
+      const failClosed = (reason: string): void => {
+        const failed = recordResumeFailure(runJsonPath, runId, attempt, reason);
+        if (taskMetadata && automatic) {
+          const projection = projectConfirmedResumeFailure({
+            orgId, namespaceId: nsId, taskId: taskId as string, runId, attempt: failed,
+          });
+          if (projection.status === "unwritten") {
+            pauseTaskForUnwrittenResumeProjection({
+              orgId, namespaceId: nsId, taskId: taskId as string, runId, attempt: failed,
+            });
+          }
+        }
+      };
+      if (!profile) {
+        const reason = `agent profile ${profileId} referenced by the chain is missing; `
+          + "recreate the profile (or clear the chain's default agent profile) before resuming";
+        failClosed(reason);
+        throw new Conflict(reason);
+      }
+      if (profile.env) {
+        profileEnv = resolveProfileEnvVars(nsId, orgId, profile.env);
+        for (const [key, value] of Object.entries(profile.env)) {
+          if (secretReferenceName(value)) secretEnvKeys.add(key);
+        }
+        const unresolved = Object.entries(profileEnv)
+          .filter(([, value]) => secretReferenceName(value) !== null)
+          .map(([key]) => key);
+        if (unresolved.length > 0) {
+          const reason = `secret reference(s) ${unresolved.join(", ")} of agent profile ${profileId} `
+            + "could not be resolved from the secrets store; restore the secrets before resuming";
+          failClosed(reason);
+          throw new Conflict(reason);
+        }
+      }
+    }
+
     // stop any leftover chain-runner process before touching PTYs or relaunching.
     await terminateRunProcess(runId);
 
@@ -367,18 +413,6 @@ export const POST = withErrorHandling(async (
         wait_for_events: a.wait_for_events,
       }),
     );
-
-    // resolve agent profile for env vars
-    let profileEnv: Record<string, string> = {};
-    try {
-      const profileId = chainJson.default_agent_profile || chainJson.config?.default_agent_profile;
-      if (profileId) {
-        const profile = getProfile(nsId, orgId, profileId);
-        if (profile?.env) {
-          profileEnv = resolveProfileEnvVars(nsId, orgId, profile.env);
-        }
-      }
-    } catch { /* use empty */ }
 
     // Producer fix (#142): resume re-enters the ORIGINAL run through the typed
     // routed-launch path — the same mechanism the completion handoff and the
@@ -405,8 +439,7 @@ export const POST = withErrorHandling(async (
     // re-persist computes the identical job. Session-token values are not in the
     // persisted whitelist and are minted after the transition.
     const launchBaseEnv: Record<string, string> = {
-      ...getSecretsEnvVars(nsId, orgId),
-      ...getSecretsEnvVars(nsId, orgId),
+      ...secretsEnv,
       ...profileEnv,
       BETTER_AUTH_SECRET: resolveInternalAuthSecret("chain-resume"),
       ...buildLocalAiGatewayProxyEnv(new URL(req.url).origin),
@@ -536,6 +569,10 @@ export const POST = withErrorHandling(async (
         chainPath,
         targetAgentIds: [resumeAgentId],
         environment: canonicalChildEnv,
+        // Provenance, not key name (#142 r3): values sourced from the secrets
+        // store are excluded from the persisted job environment even when
+        // their env var name is allowlisted.
+        excludeEnvKeys: [...secretEnvKeys],
       });
       launchJob = upsert.job;
       return upsert.run;
@@ -564,7 +601,17 @@ export const POST = withErrorHandling(async (
             // byte-for-byte the canonical persisted env; the session keys are
             // added on top and are not in the persisted whitelist, so the
             // launcher's idempotent re-persist still computes the same job.
-            env: { ...canonicalChildEnv, ...sessionEnv } as NodeJS.ProcessEnv,
+            // MENTIKO_LAUNCH_SECRET_ENV_KEYS tells the launcher child which
+            // env keys carry secret values so its re-persist excludes them
+            // exactly like the acceptance write did (#142 r3); the marker
+            // itself is never persisted.
+            env: {
+              ...canonicalChildEnv,
+              ...sessionEnv,
+              ...(secretEnvKeys.size > 0
+                ? { MENTIKO_LAUNCH_SECRET_ENV_KEYS: JSON.stringify([...secretEnvKeys].sort()) }
+                : {}),
+            } as NodeJS.ProcessEnv,
           }
         );
       } finally {
