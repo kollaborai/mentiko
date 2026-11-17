@@ -753,15 +753,31 @@ export async function startChainRun({
       const metadata = task?.metadata && typeof task.metadata === "object" && !Array.isArray(task.metadata)
         ? task.metadata as Record<string, unknown>
         : runMetadata || {};
-      taskUpdate(orgId, executionTaskId, {
-        status: "in_progress",
-        metadata: executionStartedLifecycleMetadata({
-          taskId: executionTaskId,
-          metadata,
-          runId,
-          chainId: runObject.chainId as string,
-        }),
-      }, namespaceId);
+      try {
+        taskUpdate(orgId, executionTaskId, {
+          status: "in_progress",
+          metadata: executionStartedLifecycleMetadata({
+            taskId: executionTaskId,
+            metadata,
+            runId,
+            chainId: runObject.chainId as string,
+          }),
+        }, namespaceId);
+      } catch (error) {
+        // #142 round 5 (review P2): the re-point failed AFTER the launch
+        // started. Mark the new run failed HERE, while the old run's resume
+        // claim is still held, so nothing can interleave with a run the task
+        // will never point at; then surface the error. The stored reason is
+        // fixed text plus the error class, never the exception message.
+        // ponytail: this stamps run.json and does not kill a PTY the launch
+        // already started (main never did either); the reaper's orphan rules
+        // own that process. Stop it here if that window ever matters.
+        markChainLaunchFailed(
+          runDir, validChainName, namespaceId, runObject, runId,
+          `task re-point failed after launch (${error instanceof Error ? error.name : "error"})`,
+        );
+        throw error;
+      }
     }
   };
 
@@ -780,16 +796,6 @@ export async function startChainRun({
         markChainLaunchFailed(runDir, validChainName, namespaceId, runObject, runId, error.message);
         throw new Conflict(error.message);
       }
-      // #142 round 5 (review P2): a non-conflict failure AFTER the launch
-      // started — the task re-point write above — must not release the
-      // claim with a live run the task will never point at. Terminalize the
-      // new run first (launch-phase failures already stamped the same
-      // failed status; re-marking is idempotent), then rethrow the visible
-      // error so the caller does not mistake the run for healthy.
-      markChainLaunchFailed(
-        runDir, validChainName, namespaceId, runObject, runId,
-        error instanceof Error ? error.message : String(error),
-      );
       throw error;
     }
   } else {

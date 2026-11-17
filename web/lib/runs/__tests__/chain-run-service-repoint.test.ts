@@ -226,7 +226,9 @@ describe("startChainRun task re-point serialization (#142 round 4)", () => {
     // the new run is NOT left running: it is terminally failed with the reason
     const newRun = JSON.parse(readFileSync(join(RUNS, "run-new-throw", "run.json"), "utf8"));
     expect(newRun.status).toBe("failed");
-    expect(newRun.status_message).toContain("repoint write exploded");
+    expect(newRun.status_message).toContain("task re-point failed after launch (Error)");
+    // the exception text itself is never stored on the run (#142 round 5)
+    expect(newRun.status_message).not.toContain("repoint write exploded");
 
     // the task still points at the old run and was not moved to in_progress
     const after = taskGet("default", task.id, "default")!;
