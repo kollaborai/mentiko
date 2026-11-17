@@ -2739,6 +2739,29 @@ describe("POST /api/tasks/auto-run", () => {
     (global.fetch as jest.Mock).mockRejectedValue(new Error("ECONNREFUSED"));
   }
 
+  it("an unknown-outcome pause never persists the transport exception text, only its class (#142 round 5)", async () => {
+    mockTaskGet.mockReturnValue(resumableTaskFixture({}));
+    mockExistsSync.mockReturnValue(true);
+    // no resumeAttempt on the run record: the outcome is unknown
+    mockReadFileSync.mockReturnValue(resumableRunRecord({}));
+    (global.fetch as jest.Mock).mockRejectedValue(
+      new TypeError("fetch failed for http://x/?token=SECRET_CANARY_VALUE"),
+    );
+
+    const res = await POST(makeRequest({ taskId: "TASK-RESUME" }) as never);
+    const body = await res.json();
+
+    expect(JSON.stringify(body)).not.toContain("SECRET_CANARY_VALUE");
+    expect(mockTaskMutateMetadata).toHaveBeenCalledTimes(1);
+    const mutate = mockTaskMutateMetadata.mock.calls[0][2] as (
+      metadata: Record<string, unknown>, task: { status: string }
+    ) => Record<string, unknown> | null;
+    const next = mutate({ last_run_id: "run-outcome" }, { status: "open" }) as Record<string, unknown>;
+    expect(next.auto_run_paused).toBe(true);
+    expect(next.auto_run_paused_reason).toContain("resume request transport failed (TypeError)");
+    expect(JSON.stringify(next)).not.toContain("SECRET_CANARY_VALUE");
+  });
+
   it("the first stuck-preparing transport loss starts a bounded clock instead of pausing", async () => {
     preparingTransportLossFixture({});
     await POST(makeRequest({ taskId: "TASK-RESUME" }) as never);

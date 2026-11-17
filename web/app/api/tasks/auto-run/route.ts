@@ -821,7 +821,10 @@ async function resumeExistingRun(
       },
     });
   } catch (error) {
-    transportError = error instanceof Error ? error.message : String(error);
+    // Only the error CLASS is kept (#142 round 5 review): this text is
+    // persisted in the task's pause reason, and a transport exception message
+    // can quote a URL, header or token.
+    transportError = error instanceof Error && /^[A-Za-z]{1,40}$/.test(error.name) ? error.name : "error";
   }
 
   /**
