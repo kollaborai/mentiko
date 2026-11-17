@@ -422,6 +422,30 @@ export function acceptedResumeTerminalJob(
 }
 
 /**
+ * Where the dispatch of the run's accepted resume attempt stands, for every
+ * reaper that might otherwise stop the run or treat its stop as an ordinary
+ * execution failure (issue #142 round 7):
+ * - "pending": the bound launch job is still queued or leased. The dispatch
+ *   path (worker, then the run reaper's bound) owns it; nobody else stops
+ *   the run for having no live session.
+ * - "terminal": the bound job is blocked with a typed terminal code. The run
+ *   reaper owns the stop and the guarded task pause; the stop is not an
+ *   execution failure to retry or summarize.
+ * - undefined: no accepted attempt, no bound job (older head), or the job
+ *   completed or was blocked for an ordinary reason: ordinary rules apply.
+ */
+export function acceptedResumeDispatchState(run: RunRecord): "pending" | "terminal" | undefined {
+  const resumeAttempt = objectValue(run.resumeAttempt);
+  if (!resumeAttempt || resumeAttempt.outcome !== "accepted") return undefined;
+  const boundJobId = typeof resumeAttempt.launchJobId === "string" ? resumeAttempt.launchJobId : undefined;
+  if (!boundJobId) return undefined;
+  const job = launchJobMap(run)[boundJobId];
+  if (!job) return undefined;
+  if (job.status === "queued" || job.status === "leased") return "pending";
+  return acceptedResumeTerminalJob(run) ? "terminal" : undefined;
+}
+
+/**
  * Block ONLY the launch job bound to the run's accepted resume attempt once
  * it is past its dispatch bound (never claimed for its whole life, or
  * requeued past the attempt ceiling). Pure fold for the caller's run.json
