@@ -327,14 +327,17 @@ describe("reconcileOrphanedRuns vs route-owned resume work", () => {
     expect((task.metadata as Record<string, unknown>).auto_run_paused).toBeUndefined();
   });
 
-  it("a run the WORKER already stopped for the bound still gets its guarded task pause on the next scan", async () => {
+  it("a run stopped for ANY reason whose bound job is blocked with the typed code still gets its guarded task pause", async () => {
     const runDir = join(RUNS, "run-worker-stopped");
     const taskId = seedTaskForRun("run-worker-stopped", { resume_series: 3 });
     const record = neverClaimedJobRun("run-worker-stopped", runDir, taskId);
+    // the run was stopped by the GENERIC orphan path (or a crash): the pause
+    // keys on the bound job's typed code, never on the run's stop reason
     record.status = "stopped";
-    record.statusReason = { actor: "reaper", reason: "accepted resume launch job exceeded its dispatch bound" };
+    record.statusReason = { actor: "reaper", reason: "no live agent session found after startup/handoff grace windows" };
     const jobId = Object.keys((record.runnerV2 as any).launchJobs)[0];
     (record.runnerV2 as any).launchJobs[jobId].status = "blocked";
+    (record.runnerV2 as any).launchJobs[jobId].terminalCode = "resume_dispatch_bound";
     writeRun("run-worker-stopped", record);
 
     await reconcileOrphanedRuns({ runsDir: RUNS, eventsDir: join(TEST_ROOT, "events") });
@@ -352,22 +355,30 @@ describe("reconcileOrphanedRuns vs route-owned resume work", () => {
     const runDir = join(RUNS, runId);
     const taskId = seedTaskForRun(runId, { resume_series: 3 });
     const record = neverClaimedJobRun(runId, runDir, taskId);
-    const reason = "resume launch blocked: credentials could not be reconstructed for routed-launch:x:v1: "
-      + "agent profile missing-profile referenced by chain.json is missing; recreate the profile before resuming "
-      + `run ${runId}`;
-    record.status = "stopped";
-    record.statusReason = { actor: "system", reason };
+    // exactly what the worker writes: ONLY the job is blocked with the typed
+    // code; the run is still running (the worker never stops a run)
+    const reason = "accepted resume launch job was blocked: its credentials could not be rebuilt "
+      + "(agent profile missing-profile referenced by chain.json is missing; recreate the profile before resuming "
+      + `run ${runId})`;
     const jobId = Object.keys((record.runnerV2 as any).launchJobs)[0];
     (record.runnerV2 as any).launchJobs[jobId].status = "blocked";
+    (record.runnerV2 as any).launchJobs[jobId].terminalCode = "resume_credentials_unavailable";
     (record.runnerV2 as any).launchJobs[jobId].lastError = reason;
+    (record.runnerV2 as any).launchJobs[jobId].createdAt = isoAgo(3 * 60_000); // young: not the dispatch bound
     writeRun(runId, record);
 
     await reconcileOrphanedRuns({ runsDir: RUNS, eventsDir: join(TEST_ROOT, "events") });
 
+    const stopped = readRun(runId);
+    expect(stopped.status).toBe("stopped");
+    expect(stopped.statusReason).toEqual({
+      actor: "reaper",
+      reason: "accepted resume launch job was blocked: its credentials could not be rebuilt",
+    });
     const task = taskGet("default", taskId, "default")!;
     const metadata = task.metadata as Record<string, unknown>;
     expect(metadata.auto_run_paused).toBe(true);
-    expect(metadata.auto_run_paused_reason).toContain("resume launch blocked: credentials could not be reconstructed");
+    expect(metadata.auto_run_paused_reason).toContain("its credentials could not be rebuilt");
     expect(metadata.auto_run_paused_reason).toContain("recreate the profile");
     // NO retry debit for an operational pause
     expect(metadata.auto_run_retries).toBeUndefined();
@@ -469,10 +480,11 @@ describe("reconcileOrphanedRuns vs route-owned resume work", () => {
       .not.toBe("accepted resume launch job exceeded its dispatch bound");
   });
 
-  it("a past-bound resume job does not stop the run while another job is actively leased", async () => {
+  it("another job's live lease keeps the run running but never defers the bound job's block or the task pause", async () => {
     const runId = "run-scope-leased";
     const runDir = join(RUNS, runId);
-    const record = neverClaimedJobRun(runId, runDir, "TASK-LEASED");
+    const taskId = seedTaskForRun(runId, { resume_series: 3 });
+    const record = neverClaimedJobRun(runId, runDir, taskId);
     const jobs = (record.runnerV2 as any).launchJobs as Record<string, Record<string, any>>;
     const boundJobId = (record.resumeAttempt as Record<string, unknown>).launchJobId as string;
     const otherJobId = Object.keys(jobs).find((id) => id !== boundJobId);
@@ -505,10 +517,53 @@ describe("reconcileOrphanedRuns vs route-owned resume work", () => {
     await reconcileOrphanedRuns({ runsDir: RUNS, eventsDir: join(TEST_ROOT, "events") });
 
     const after = readRun(runId);
+    // the run is left to the other, actively leased job ...
     expect(after.status).toBe("running");
-    expect((after.runnerV2.launchJobs as Record<string, any>)[boundJobId].status).toBe("queued");
+    expect((after.runnerV2.launchJobs as Record<string, any>)[leaseOtherId].status).toBe("leased");
+    // ... but the bound job ends and the owner sees why at once: a lease that
+    // renews forever can no longer hold the task in a silent in-progress state
+    expect((after.runnerV2.launchJobs as Record<string, any>)[boundJobId].status).toBe("blocked");
+    expect((after.runnerV2.launchJobs as Record<string, any>)[boundJobId].terminalCode).toBe("resume_dispatch_bound");
+    const metadata = taskGet("default", taskId, "default")!.metadata as Record<string, unknown>;
+    expect(metadata.auto_run_paused).toBe(true);
+    expect(metadata.auto_run_paused_reason).toContain("dispatch bound");
+    expect(metadata.auto_run_retries).toBeUndefined();
+  });
+
+  it("a past-bound bound job is NOT blocked and the task is NOT paused while an agent session of the run is live", async () => {
+    const runId = "run-bound-live-pty";
+    const runDir = join(RUNS, runId);
+    const taskId = seedTaskForRun(runId, { resume_series: 3 });
+    const record = neverClaimedJobRun(runId, runDir, taskId);
+    record.agents = [{ id: "reviewer", name: "Reviewer", status: "running", session: "live-pty-1" }];
+    writeRun(runId, record);
+    mockLiveSessions = new Set(["live-pty-1"]);
+
+    await reconcileOrphanedRuns({ runsDir: RUNS, eventsDir: join(TEST_ROOT, "events") });
+
+    const after = readRun(runId);
+    expect(after.status).toBe("running");
+    expect((Object.values(after.runnerV2.launchJobs) as Array<Record<string, any>>)[0].status).toBe("queued");
+    expect((taskGet("default", taskId, "default")!.metadata as Record<string, unknown>).auto_run_paused).toBeUndefined();
+  });
+
+  it("a bound job blocked WITHOUT a typed code, or an unrelated stop reason that looks like one, never pauses the task", async () => {
+    const runId = "run-untyped-block";
+    const runDir = join(RUNS, runId);
+    const taskId = seedTaskForRun(runId, { resume_series: 3 });
+    const record = neverClaimedJobRun(runId, runDir, taskId);
+    record.status = "stopped";
+    record.statusReason = { actor: "user", reason: "accepted resume launch job was blocked: its credentials could not be rebuilt" };
+    const jobId = Object.keys((record.runnerV2 as any).launchJobs)[0];
+    (record.runnerV2 as any).launchJobs[jobId].status = "blocked";
+    writeRun(runId, record);
+
+    await reconcileOrphanedRuns({ runsDir: RUNS, eventsDir: join(TEST_ROOT, "events") });
+
+    expect((taskGet("default", taskId, "default")!.metadata as Record<string, unknown>).auto_run_paused).toBeUndefined();
   });
 });
+
 
 function cleanedOrStopped(result: { cleaned: string[] }, runId: string): boolean {
   return result.cleaned.includes(runId);

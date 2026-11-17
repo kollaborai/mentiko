@@ -22,8 +22,9 @@ import { parseRunnerEvent } from "../runner-v2/events";
 import { runnerEventIdentityMatches } from "../runner-v2/event-identity";
 import { updateRunJsonRecord } from "../runner-v2/run-state";
 import {
-  expireAcceptedResumeLaunchJobs,
-  isResumeDispatchTerminalReason,
+  acceptedResumeTerminalJob,
+  blockPastBoundResumeLaunchJob,
+  resumeLaunchTerminalReason,
   routedLaunchJobPastDispatchBound,
   RESUME_LAUNCH_DISPATCH_BOUND_REASON,
   type RoutedLaunchJob,
@@ -150,9 +151,34 @@ function asTimeMs(value?: string): number | undefined {
  * task's CURRENT row: closed tasks, resets (series moved) and replacements
  * (task no longer points at this run) are never paused.
  */
+interface ResumeDispatchPause {
+  taskId: string;
+  series: number;
+  runId: string;
+  /** Fixed, secret-free reason derived from the bound job's typed terminal code. */
+  reason: string;
+  /** The blocked job's recorded reason (typed-error text only, never raw exception text). */
+  detail?: string;
+}
+
+/** Another launch job of the run (not the bound one) still holds an unexpired lease. */
+function hasOtherLiveLaunchLease(run: RunJson, boundJobId: string, nowMs: number): boolean {
+  const runnerV2 = run.runnerV2 as { launchJobs?: unknown } | undefined;
+  const jobs = runnerV2 && typeof runnerV2 === "object" && !Array.isArray(runnerV2)
+    && runnerV2.launchJobs && typeof runnerV2.launchJobs === "object" && !Array.isArray(runnerV2.launchJobs)
+    ? runnerV2.launchJobs as Record<string, { status?: unknown; lease?: { expiresAt?: unknown } }>
+    : undefined;
+  if (!jobs) return false;
+  return Object.entries(jobs).some(([id, job]) => id !== boundJobId
+    && job && typeof job === "object"
+    && job.status === "leased"
+    && typeof job.lease?.expiresAt === "string"
+    && Date.parse(job.lease.expiresAt) > nowMs);
+}
+
 function pauseTaskForResumeDispatchBound(
   context: ReconcilerContext,
-  bound: { taskId: string; series: number; runId: string; reason: string },
+  bound: ResumeDispatchPause,
 ): void {
   try {
     const landed = taskMutateMetadata(context.orgId, bound.taskId, (metadata, task) => {
@@ -166,10 +192,10 @@ function pauseTaskForResumeDispatchBound(
         return null;
       }
       const explanation = bound.reason === RESUME_LAUNCH_DISPATCH_BOUND_REASON
-        ? "the accepted launch job was never "
-          + "claimed (or kept requeueing) past its time/attempt ceiling, so the run was stopped. "
+        ? "the accepted launch job was never claimed (or kept requeueing) past its time/attempt "
+          + "ceiling, so the resume did not start. "
           + "Auto-run paused without consuming a retry; use Retry task once the worker is dispatching again."
-        : "the accepted resume launch job was blocked and the run was stopped. "
+        : `${bound.detail || "the launch job was blocked"}. The resume did not start. `
           + "Auto-run paused without consuming a retry; use Retry task once the reported cause is addressed.";
       return {
         ...metadata,
@@ -604,7 +630,7 @@ export async function reconcileOrphanedRuns(options: ReconcileOptions = {}): Pro
     // preparing (a resume in flight under its claim) is left entirely alone.
     let mutated = false;
     let finalRun: Record<string, unknown> | undefined;
-    let resumeDispatchBoundTask: { taskId: string; series: number; runId: string; reason: string } | undefined;
+    let resumeDispatchBoundTask: ResumeDispatchPause | undefined;
     try {
       finalRun = updateRunJsonRecord(runFile, (currentRecord) => {
         if (!currentRecord) throw new Error(`run.json vanished before reconciliation: ${runFile}`);
@@ -615,22 +641,25 @@ export async function reconcileOrphanedRuns(options: ReconcileOptions = {}): Pro
           return currentRecord;
         }
 
-        // A run the WORKER already stopped for a terminal resume-dispatch
-        // outcome (#142 r3; reconstruction-blocked jobs join this path in
-        // round 4) still owes its task the guarded visible pause — this scan
-        // delivers it (idempotent; the pause write itself no-ops once landed).
-        const stoppedDispatchReason = (run.statusReason as RunStatusReason | undefined)?.reason;
-        if (run.status !== "running" && run.status !== "pending"
-          && resumeAttempt?.outcome === "accepted"
-          && typeof run.taskId === "string" && run.taskId
-          && typeof stoppedDispatchReason === "string"
-          && isResumeDispatchTerminalReason(stoppedDispatchReason)) {
-          resumeDispatchBoundTask = {
+        // A run that is no longer active but whose accepted resume ended in a
+        // typed terminal launch job (#142 round 5) still owes its task the
+        // guarded visible pause, however the run came to stop (this reaper,
+        // the generic orphan stop, a crash). Keyed on the bound job's typed
+        // code only; idempotent (the pause write no-ops once landed). A
+        // completed run owes nothing.
+        const pauseFor = (record: Record<string, unknown>): ResumeDispatchPause | undefined => {
+          const terminal = acceptedResumeTerminalJob(record as never);
+          if (!terminal || typeof run.taskId !== "string" || !run.taskId) return undefined;
+          return {
             taskId: run.taskId,
-            series: typeof resumeAttempt.series === "number" ? resumeAttempt.series : 0,
+            series: typeof resumeAttempt?.series === "number" ? resumeAttempt.series : 0,
             runId,
-            reason: stoppedDispatchReason,
+            reason: resumeLaunchTerminalReason(terminal.code),
+            ...(terminal.detail ? { detail: terminal.detail } : {}),
           };
+        };
+        if (run.status !== "running" && run.status !== "pending" && run.status !== "completed") {
+          resumeDispatchBoundTask = pauseFor(currentRecord);
         }
 
         const agents = run.agents || [];
@@ -671,31 +700,37 @@ export async function reconcileOrphanedRuns(options: ReconcileOptions = {}): Pro
           if (hasLiveSession) return currentRecord; // run is alive
           if (hasLivePendingHandoff(run)) return currentRecord; // detached chain-runner is starting the next PTY
 
-          // Liveness bound (#142 round 3, scoped #142 round 4): an accepted
-          // resume whose BOUND launch job (the one named by
-          // resumeAttempt.launchJobId) is past its dispatch bound — never
-          // claimed for its whole life, or requeued past the attempt ceiling —
-          // is expired HERE under the lock (job blocked, run stopped with a
-          // reaper-style reason) instead of being skipped forever. Unrelated
-          // launch jobs of the run are never expired, and the run is not
-          // stopped while another job holds an unexpired lease or a session is
-          // still live. Every bound decision is re-derived against this record.
-          const expired = expireAcceptedResumeLaunchJobs(currentRecord as never, {
-            now: new Date(now),
-            liveSessionNames: liveSessions,
-          });
-          if (expired) {
-            if (typeof run.taskId === "string" && run.taskId && resumeAttempt?.outcome === "accepted") {
-              resumeDispatchBoundTask = {
-                taskId: run.taskId,
-                series: typeof resumeAttempt.series === "number" ? resumeAttempt.series : 0,
-                runId,
-                reason: RESUME_LAUNCH_DISPATCH_BOUND_REASON,
-              };
+          // Terminal resume dispatch (#142 round 5). No session of this run
+          // is live here (checked above), so the reaper may decide:
+          // 1. a BOUND launch job past its dispatch bound (never claimed, or
+          //    requeued past the ceiling) is blocked with its typed code;
+          // 2. a bound job blocked with a typed code (by step 1, or by the
+          //    worker for a credential failure or a blown requeue ceiling)
+          //    always gets the guarded task pause, with no deferral;
+          // 3. the run is stopped too, unless ANOTHER launch job still holds
+          //    an unexpired lease; then only the pause lands and the run is
+          //    left to that work and to the ordinary rules below.
+          // Unrelated jobs are never blocked. Every decision is re-derived
+          // against this locked record.
+          const blockedNow = blockPastBoundResumeLaunchJob(currentRecord as never, { now: new Date(now) }) as
+            unknown as Record<string, unknown> | undefined;
+          const working = blockedNow || currentRecord;
+          const terminal = acceptedResumeTerminalJob(working as never);
+          if (terminal) {
+            resumeDispatchBoundTask = pauseFor(working);
+            const reason = resumeLaunchTerminalReason(terminal.code);
+            if (hasOtherLiveLaunchLease(working as RunJson, terminal.jobId, now)) {
+              reconcilerLog(context, `paused task for ${runId}: ${reason} (run left to another leased launch job)`, "warn");
+              return working;
             }
-            reconcilerLog(context, `stopped ${runId}: ${RESUME_LAUNCH_DISPATCH_BOUND_REASON}`, "warn");
+            reconcilerLog(context, `stopped ${runId}: ${reason}`, "warn");
             mutated = true;
-            return expired as unknown as Record<string, unknown>;
+            return {
+              ...working,
+              status: "stopped",
+              completed: (working.completed as string | undefined) || new Date(now).toISOString(),
+              statusReason: { actor: "reaper", reason },
+            };
           }
 
           // Honor accepted resume work (#142 round 2): a queued or live-leased

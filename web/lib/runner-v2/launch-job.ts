@@ -33,7 +33,15 @@ export interface RoutedLaunchJob {
   completedAt?: string;
   blockedAt?: string;
   lastError?: string;
+  /**
+   * Typed terminal outcome of an accepted resume launch job (issue #142
+   * round 5). Set only together with status "blocked". The reaper keys the
+   * guarded task pause on this code, never on free-text reasons.
+   */
+  terminalCode?: ResumeLaunchTerminalCode;
 }
+
+export type ResumeLaunchTerminalCode = "resume_dispatch_bound" | "resume_credentials_unavailable";
 
 const PERSISTED_ENV_KEYS = new Set([
   "AGENT_FAN_GROUP_ID",
@@ -328,6 +336,7 @@ export function blockRoutedLaunchJob(input: {
   jobId: string;
   ownerId: string;
   reason: string;
+  terminalCode?: ResumeLaunchTerminalCode;
   now?: Date;
 }): boolean {
   const at = (input.now || new Date()).toISOString();
@@ -341,6 +350,7 @@ export function blockRoutedLaunchJob(input: {
       blockedAt: at,
       updatedAt: at,
       lastError: input.reason,
+      ...(input.terminalCode ? { terminalCode: input.terminalCode } : {}),
     };
   }));
 }
@@ -364,57 +374,14 @@ export function routedLaunchJobIsReclaimable(job: RoutedLaunchJob, now = new Dat
 export const RESUME_LAUNCH_DISPATCH_BOUND_MS = 10 * 60_000;
 export const RESUME_LAUNCH_ATTEMPT_CEILING = 5;
 export const RESUME_LAUNCH_DISPATCH_BOUND_REASON = "accepted resume launch job exceeded its dispatch bound";
-/**
- * Prefix of the sanitized reason the worker records when credential
- * reconstruction for an accepted resume launch job fails (issue #142 round 2
- * P1-1, closed round 4). Together with the dispatch-bound reason this is the
- * other terminal resume-dispatch outcome the reaper turns into a guarded
- * operational task pause.
- */
-export const RESUME_LAUNCH_RECONSTRUCTION_FAILURE_PREFIX =
-  "resume launch blocked: credentials could not be reconstructed";
+export const RESUME_LAUNCH_CREDENTIALS_UNAVAILABLE_REASON =
+  "accepted resume launch job was blocked: its credentials could not be rebuilt";
 
-/** A run-level reason that must end in the guarded resume-dispatch task pause. */
-export function isResumeDispatchTerminalReason(reason: unknown): boolean {
-  return reason === RESUME_LAUNCH_DISPATCH_BOUND_REASON
-    || (typeof reason === "string" && reason.startsWith(RESUME_LAUNCH_RECONSTRUCTION_FAILURE_PREFIX));
-}
-
-/**
- * Stop the accepted run of a resume launch job the worker blocked for a
- * terminal cause (issue #142 round 4, review P1-1): a reconstruction failure
- * must not leave the run `running` with an accepted attempt the scanner can
- * relaunch forever. Under the run.json lock, and only for the job the
- * acceptance bound (resumeAttempt.launchJobId) — an unrelated job can never
- * stop the run this way. Returns whether the stop landed.
- */
-export function stopAcceptedResumeRunForBlockedJob(input: {
-  runJsonPath: string;
-  jobId: string;
-  reason: string;
-  now?: Date;
-}): boolean {
-  const at = (input.now || new Date()).toISOString();
-  let stopped = false;
-  try {
-    updateRunJson(input.runJsonPath, (run) => {
-      if (!run) throw new Error(`run.json not found: ${input.runJsonPath}`);
-      const resumeAttempt = objectValue(run.resumeAttempt);
-      if (!resumeAttempt || resumeAttempt.outcome !== "accepted") return run;
-      if (resumeAttempt.launchJobId !== input.jobId) return run;
-      if (run.status !== "running" && run.status !== "pending") return run;
-      stopped = true;
-      return {
-        ...run,
-        status: "stopped",
-        completed: run.completed || at,
-        statusReason: { actor: "system", reason: input.reason },
-      };
-    });
-  } catch {
-    return false;
-  }
-  return stopped;
+/** The fixed, secret-free run/task reason for a typed terminal code. */
+export function resumeLaunchTerminalReason(code: ResumeLaunchTerminalCode): string {
+  return code === "resume_dispatch_bound"
+    ? RESUME_LAUNCH_DISPATCH_BOUND_REASON
+    : RESUME_LAUNCH_CREDENTIALS_UNAVAILABLE_REASON;
 }
 
 export function routedLaunchJobPastDispatchBound(job: RoutedLaunchJob, now = new Date()): boolean {
@@ -425,26 +392,49 @@ export function routedLaunchJobPastDispatchBound(job: RoutedLaunchJob, now = new
 }
 
 /**
- * Expire ONLY the routed launch job bound to the run's accepted resume
- * attempt (issue #142 round 4), and stop a still-active run with a
- * reaper-style reason. The binding is the `launchJobId` the acceptance write
- * records on resumeAttempt: an accepted record from an older head carries no
- * bound job id and is left entirely alone — the expiry cannot know which job
- * belongs to the attempt, and an unrelated old queued job must never end a
- * resumed run. The run is also never stopped while ANOTHER launch job of the
- * run holds an unexpired lease, or while a caller-provided live-session set
- * still names an incomplete agent's session (the worker bundle has no
- * PTY-daemon access, so only callers that know pass the set). Pure fold for
- * the caller's run.json lock (the worker's dispatch scan, the worker's
- * requeue path, and the web reaper all call it under their own lock): every
- * decision is re-derived against the record passed in, so a job that was
- * claimed or completed while this was deciding is left alone. Returns the
- * updated record, or undefined when the bound job was not past its bound or
- * the run still has live work.
+ * The ONE durable signal that an accepted resume dispatch ended without
+ * launching (issue #142 round 5): the launch job bound to the run's accepted
+ * resume attempt (resumeAttempt.launchJobId) is `blocked` with a typed
+ * terminal code. Whoever blocks the job (the worker on a credential failure
+ * or a blown requeue ceiling, the reaper on a never-claimed job) writes only
+ * that; the reaper alone turns it into the guarded task pause and the run
+ * stop. A run-level reason is never the signal, so a failed or skipped run
+ * stop cannot hide the outcome, and an unrelated job or stop reason can never
+ * fake it.
  */
-export function expireAcceptedResumeLaunchJobs(
+export function acceptedResumeTerminalJob(
   run: RunRecord,
-  input: { now?: Date; liveSessionNames?: ReadonlySet<string> } = {},
+): { jobId: string; code: ResumeLaunchTerminalCode; detail?: string } | undefined {
+  const resumeAttempt = objectValue(run.resumeAttempt);
+  if (!resumeAttempt || resumeAttempt.outcome !== "accepted") return undefined;
+  const boundJobId = typeof resumeAttempt.launchJobId === "string" ? resumeAttempt.launchJobId : undefined;
+  if (!boundJobId) return undefined;
+  const job = launchJobMap(run)[boundJobId];
+  if (!job || job.status !== "blocked") return undefined;
+  if (job.terminalCode !== "resume_dispatch_bound" && job.terminalCode !== "resume_credentials_unavailable") {
+    return undefined;
+  }
+  return {
+    jobId: boundJobId,
+    code: job.terminalCode,
+    ...(typeof job.lastError === "string" && job.lastError ? { detail: job.lastError } : {}),
+  };
+}
+
+/**
+ * Block ONLY the launch job bound to the run's accepted resume attempt once
+ * it is past its dispatch bound (never claimed for its whole life, or
+ * requeued past the attempt ceiling). Pure fold for the caller's run.json
+ * lock; every decision is re-derived against the record passed in, so a job
+ * claimed or completed meanwhile is left alone (an unexpired lease is never
+ * past the bound). It never stops the run and never looks at other jobs:
+ * the reaper, which knows the live PTY sessions, decides the run stop.
+ * An accepted record without a bound job id (older head) is left alone.
+ * Returns the updated record, or undefined when nothing changed.
+ */
+export function blockPastBoundResumeLaunchJob(
+  run: RunRecord,
+  input: { now?: Date } = {},
 ): RunRecord | undefined {
   const now = input.now || new Date();
   const resumeAttempt = objectValue(run.resumeAttempt);
@@ -454,22 +444,8 @@ export function expireAcceptedResumeLaunchJobs(
   const jobs = launchJobMap(run);
   const boundJob = jobs[boundJobId];
   if (!boundJob || !routedLaunchJobPastDispatchBound(boundJob, now)) return undefined;
-  const otherActiveLease = Object.entries(jobs).some(([id, job]) => (
-    id !== boundJobId
-    && job.status === "leased"
-    && Date.parse(job.lease?.expiresAt || "") > now.getTime()
-  ));
-  if (otherActiveLease) return undefined;
-  if (input.liveSessionNames) {
-    const liveSession = (run.agents || []).some((agent) =>
-      agent.status !== "complete"
-      && typeof agent.session === "string"
-      && agent.session.length > 0
-      && input.liveSessionNames!.has(agent.session));
-    if (liveSession) return undefined;
-  }
   const at = now.toISOString();
-  const nextJobs = {
+  return withLaunchJobs(run, {
     ...jobs,
     [boundJobId]: {
       ...boundJob,
@@ -478,36 +454,9 @@ export function expireAcceptedResumeLaunchJobs(
       blockedAt: at,
       updatedAt: at,
       lastError: RESUME_LAUNCH_DISPATCH_BOUND_REASON,
+      terminalCode: "resume_dispatch_bound" as const,
     },
-  };
-  let next: RunRecord = withLaunchJobs(run, nextJobs);
-  if (run.status === "running" || run.status === "pending") {
-    next = {
-      ...next,
-      status: "stopped",
-      completed: next.completed || at,
-      statusReason: { actor: "reaper", reason: RESUME_LAUNCH_DISPATCH_BOUND_REASON },
-    };
-  }
-  return next;
-}
-
-/**
- * The launch job id bound to the run's ACCEPTED resume attempt, if any.
- * Dependency-light reader for the worker scan (#142 round 4): only the bound
- * job's requeue loop ends at the dispatch bound; every other job keeps its
- * ordinary worker treatment.
- */
-export function readAcceptedResumeLaunchJobId(runJsonPath: string): string | undefined {
-  try {
-    const run = readRunJson(runJsonPath) as RunRecord;
-    const resumeAttempt = objectValue(run.resumeAttempt);
-    if (!resumeAttempt || resumeAttempt.outcome !== "accepted") return undefined;
-    const boundJobId = typeof resumeAttempt.launchJobId === "string" ? resumeAttempt.launchJobId : undefined;
-    return boundJobId || undefined;
-  } catch {
-    return undefined;
-  }
+  });
 }
 
 export function startRoutedLaunchJobHeartbeat(input: {

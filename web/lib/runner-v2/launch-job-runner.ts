@@ -14,17 +14,15 @@ import {
   blockRoutedLaunchJob,
   claimRoutedLaunchJob,
   completeRoutedLaunchJob,
-  expireAcceptedResumeLaunchJobs,
-  readAcceptedResumeLaunchJobId,
+  blockPastBoundResumeLaunchJob,
   readRoutedLaunchJob,
   readRoutedLaunchJobs,
   releaseRoutedLaunchJob,
   routedLaunchJobIsReclaimable,
   routedLaunchJobLeaseOwned,
-  routedLaunchJobPastDispatchBound,
+  RESUME_LAUNCH_CREDENTIALS_UNAVAILABLE_REASON,
   RESUME_LAUNCH_DISPATCH_BOUND_REASON,
   startRoutedLaunchJobHeartbeat,
-  stopAcceptedResumeRunForBlockedJob,
   type RoutedLaunchJob,
 } from "@/lib/runner-v2/launch-job";
 import { startLaunchCoordinatorHeartbeat } from "@/lib/runner-v2/launch-coordinator-state";
@@ -112,27 +110,29 @@ export async function runRoutedLaunchJob(input: {
   try {
     // Accepted resume jobs (issue #142 round 2): reconstruct the scoped
     // session identity and profile/secrets at claim time, BEFORE any PTY
-    // effect. A reconstruction failure blocks the job with a visible reason —
-    // never unauthenticated work, never a silent requeue — and (round 4,
-    // review P1-1) STOPS the accepted run with that sanitized reason, so the
-    // reaper's dispatch-bound pause path can end the loop visibly instead of
-    // leaving a resumable run the scanner relaunches forever.
+    // effect. A reconstruction failure blocks the job with the typed terminal
+    // code `resume_credentials_unavailable` (round 5): that blocked job is the
+    // one durable signal, and the reaper alone turns it into the guarded task
+    // pause and the run stop, so the scanner cannot relaunch it silently.
+    // The persisted reason is secret-free by construction: only the message
+    // of the helper's own typed error (identifiers only) is kept; any other
+    // exception is reduced to its class name. If the block write itself
+    // throws, the outer catch requeues the job and the attempt ceiling ends it.
     let resumeEnvironment: Record<string, string> | undefined;
     if (dependencies.reconstructResumeEnvironment && runHasAcceptedResume(input.runJsonPath)) {
       try {
         resumeEnvironment = await dependencies.reconstructResumeEnvironment(claimed);
       } catch (error) {
-        const reason = `resume launch blocked: credentials could not be reconstructed for ${claimed.id}: ${errorMessage(error)}`;
+        const safeDetail = error instanceof Error && error.name === "UnresolvedResumeCredentialError"
+          ? error.message
+          : `unexpected ${error instanceof Error ? error.name : "error"} while rebuilding credentials`;
+        const reason = `${RESUME_LAUNCH_CREDENTIALS_UNAVAILABLE_REASON} (${safeDetail})`;
         blockRoutedLaunchJob({
           runJsonPath: input.runJsonPath,
           jobId: input.jobId,
           ownerId: input.ownerId,
           reason,
-        });
-        stopAcceptedResumeRunForBlockedJob({
-          runJsonPath: input.runJsonPath,
-          jobId: input.jobId,
-          reason,
+          terminalCode: "resume_credentials_unavailable",
         });
         return { status: "blocked", jobId: input.jobId, error: reason };
       }
@@ -220,21 +220,20 @@ export async function runRoutedLaunchJob(input: {
       ownerId: input.ownerId,
       error: message,
     });
-    // Liveness bound (#142 r3, scoped #142 round 4): a job whose requeue loop
-    // has aged past the dispatch bound (or blown its attempt ceiling) must END
-    // here — block the job and stop the run under the lock — instead of
-    // requeueing forever. ONLY the job bound to the run's accepted resume
-    // attempt ends this way; an unrelated job past the bound keeps its
-    // ordinary worker treatment (requeue), exactly as before the bound existed.
-    const released = readRoutedLaunchJob(input.runJsonPath, input.jobId);
-    if (
-      released
-      && routedLaunchJobPastDispatchBound(released)
-      && readAcceptedResumeLaunchJobId(input.runJsonPath) === input.jobId
-    ) {
-      expirePastBoundResumeLaunchJobs(input.runJsonPath);
-      const reason = `${RESUME_LAUNCH_DISPATCH_BOUND_REASON} (last error: ${message})`;
-      return { status: "blocked", jobId: input.jobId, error: reason };
+    // Liveness bound (#142 r3, round 5): a requeue loop that has aged past
+    // the dispatch bound (or blown its attempt ceiling) ENDS here instead of
+    // requeueing forever, and ONLY for the job bound to the run's accepted
+    // resume attempt; any other job keeps its ordinary requeue. The worker
+    // only blocks the job with its typed code. It never stops the run: it
+    // cannot see live PTY sessions, so the run stop and the task pause belong
+    // to the reaper, which keys on the blocked job. The persisted reason is
+    // the fixed constant; the launch error stays in this process's result.
+    if (blockPastBoundResumeLaunchJobUnderLock(input.runJsonPath, input.jobId)) {
+      return {
+        status: "blocked",
+        jobId: input.jobId,
+        error: `${RESUME_LAUNCH_DISPATCH_BOUND_REASON} (last error: ${message})`,
+      };
     }
     return { status: "requeued", jobId: input.jobId, error: message };
   } finally {
@@ -404,22 +403,37 @@ function latestJobAttempt(
 const activeJobs = new Map<string, Promise<RoutedLaunchJobRunResult>>();
 
 /**
- * Expire a run's past-bound accepted resume launch jobs under the run.json
- * lock (idempotent; every bound decision is re-derived against the current
- * record). Failure to expire is logged, never thrown: the job simply stays
- * reclaimable and the next pass retries the expiry.
+ * Block the run's bound accepted resume launch job under the run.json lock
+ * when it is `jobId` and past its dispatch bound. Returns whether THIS job
+ * ended up blocked with the dispatch-bound code. A failed write is logged,
+ * never thrown: the job stays queued and the next requeue or the reaper
+ * retries the same idempotent fold.
  */
-function expirePastBoundResumeLaunchJobs(runJsonPath: string): void {
+function blockPastBoundResumeLaunchJobUnderLock(runJsonPath: string, jobId: string): boolean {
+  let blocked = false;
   try {
     updateRunJson(runJsonPath, (run) => {
       if (!run) throw new Error(`run.json not found: ${runJsonPath}`);
-      return expireAcceptedResumeLaunchJobs(run) || run;
+      if (readBoundJobId(run) !== jobId) return run;
+      const next = blockPastBoundResumeLaunchJob(run);
+      if (!next) return run;
+      blocked = true;
+      return next;
     });
   } catch (error) {
     console.error(
-      `[runner-v2] resume dispatch-bound expiry failed for ${runJsonPath}: ${errorMessage(error)}`,
+      `[runner-v2] resume dispatch-bound block failed for ${runJsonPath}: ${errorMessage(error)}`,
     );
+    return false;
   }
+  return blocked;
+}
+
+function readBoundJobId(run: object): string | undefined {
+  const attempt = (run as { resumeAttempt?: unknown }).resumeAttempt;
+  if (!attempt || typeof attempt !== "object" || Array.isArray(attempt)) return undefined;
+  const record = attempt as { outcome?: unknown; launchJobId?: unknown };
+  return record.outcome === "accepted" && typeof record.launchJobId === "string" ? record.launchJobId : undefined;
 }
 
 export function reconcileRoutedLaunchJobs(input: {
@@ -444,19 +458,10 @@ export function reconcileRoutedLaunchJobs(input: {
     for (const job of jobs) {
       examined += 1;
       if (!routedLaunchJobIsReclaimable(job)) continue;
-      // Liveness bound (#142 r3, scoped #142 round 4): a reclaimable job past
-      // the dispatch bound (never claimed for its whole life, or requeued past
-      // the attempt ceiling) ends here ONLY when it is the job bound to the
-      // run's accepted resume attempt. An unrelated old queued job is NOT
-      // expired and NOT starved: the worker still dispatches it, exactly as
-      // before the resume bound existed.
-      if (
-        routedLaunchJobPastDispatchBound(job)
-        && readAcceptedResumeLaunchJobId(runJsonPath) === job.id
-      ) {
-        expirePastBoundResumeLaunchJobs(runJsonPath);
-        continue;
-      }
+      // The scan never expires a job (#142 round 5): it cannot see live PTY
+      // sessions, so a reclaimable job, however old, gets its ordinary
+      // dispatch and interrupted-bootstrap recovery. A never-claimed bound
+      // job is ended by the reaper; a failing one by the requeue ceiling.
       const key = `${runJsonPath}\0${job.id}`;
       if (activeJobs.has(key)) continue;
       const ownerId = `worker:${process.pid}:${randomUUID()}`;

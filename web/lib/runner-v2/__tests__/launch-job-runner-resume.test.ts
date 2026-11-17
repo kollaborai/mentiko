@@ -97,27 +97,31 @@ describe("runRoutedLaunchJob credential reconstruction (accepted resume jobs)", 
       dependencies: {
         bootstrap,
         reconstructResumeEnvironment: async () => {
-          throw new Error("no scoped session identity for org default");
+          // an arbitrary exception whose text quotes a credential (a JSON
+          // parse error does exactly this on Node 24)
+          throw new SyntaxError("Unexpected token 'S', \"SECRET_CANARY_VALUE\" is not valid JSON");
         },
       },
     });
 
     expect(result.status).toBe("blocked");
-    expect(result.error).toContain("resume launch blocked");
-    expect(result.error).toContain("no scoped session identity");
+    expect(result.error).toContain("its credentials could not be rebuilt");
     expect(bootstrap).not.toHaveBeenCalled();
-    const after = JSON.parse(readFileSync(runJsonPath, "utf8"));
+    const raw = readFileSync(runJsonPath, "utf8");
+    // nothing of the raw exception text is persisted anywhere in run.json
+    expect(raw).not.toContain("SECRET_CANARY_VALUE");
+    expect(result.error).not.toContain("SECRET_CANARY_VALUE");
+    const after = JSON.parse(raw);
     const job = after.runnerV2.launchJobs[jobId];
     expect(job.status).toBe("blocked");
-    expect(job.lastError).toContain("resume launch blocked");
+    expect(job.terminalCode).toBe("resume_credentials_unavailable");
+    expect(job.lastError).toBe(
+      "accepted resume launch job was blocked: its credentials could not be rebuilt "
+      + "(unexpected SyntaxError while rebuilding credentials)",
+    );
+    // the worker never stops the run: the reaper, which sees live sessions, does
+    expect(after.status).toBe("running");
     expect(job.lease).toBeUndefined();
-    // round 4 (review P1-1): the failure is FINAL and visible — the accepted
-    // run stops under the lock with the same sanitized reason, so the reaper
-    // can deliver the guarded task pause instead of leaving a resumable loop
-    expect(after.status).toBe("stopped");
-    expect(after.statusReason).toEqual({ actor: "system", reason: result.error });
-    // sanitized: the reason names the CAUSE, never a credential value
-    expect(after.statusReason.reason).not.toContain("sk-live-secret-value");
   });
 
   it("reconstructs scoped credentials before bootstrap and merges them with the canonical persisted env", async () => {
@@ -188,7 +192,7 @@ describe("runRoutedLaunchJob credential reconstruction (accepted resume jobs)", 
 
   // ---- dispatch-bound liveness (#142 round 3) ----
 
-  it("a requeued job past its attempt ceiling ENDS: job blocked, run stopped, never requeued again", async () => {
+  it("a requeued job past its attempt ceiling ENDS: job blocked with the typed code, never requeued again", async () => {
     const { runJsonPath, jobId } = setupRun({ resumeAttempt: acceptedAttempt });
     // the job already burned its attempts on nonterminal launch errors
     const record = JSON.parse(readFileSync(runJsonPath, "utf8")) as {
@@ -214,11 +218,33 @@ describe("runRoutedLaunchJob credential reconstruction (accepted resume jobs)", 
     expect(result.error).toContain("dispatch bound");
     const after = JSON.parse(readFileSync(runJsonPath, "utf8"));
     expect(after.runnerV2.launchJobs[jobId].status).toBe("blocked");
-    expect(after.status).toBe("stopped");
-    expect(after.statusReason).toEqual({
-      actor: "reaper",
-      reason: "accepted resume launch job exceeded its dispatch bound",
+    expect(after.runnerV2.launchJobs[jobId].terminalCode).toBe("resume_dispatch_bound");
+    // the persisted reason is the fixed constant, never the launch error text
+    expect(after.runnerV2.launchJobs[jobId].lastError).toBe("accepted resume launch job exceeded its dispatch bound");
+    // the worker never stops the run (it cannot see live PTY sessions)
+    expect(after.status).toBe("running");
+  });
+
+  it("keeps the typed credential error's own message (identifiers only) as the visible detail", async () => {
+    const { runJsonPath, jobId } = setupRun({ resumeAttempt: acceptedAttempt });
+    class UnresolvedResumeCredentialError extends Error {
+      constructor(message: string) { super(message); this.name = "UnresolvedResumeCredentialError"; }
+    }
+    const result = await runRoutedLaunchJob({
+      runJsonPath,
+      jobId,
+      ownerId: "worker:test:typed",
+      dependencies: {
+        bootstrap: jest.fn(),
+        reconstructResumeEnvironment: async () => {
+          throw new UnresolvedResumeCredentialError("agent profile p1 referenced by chain.json is missing");
+        },
+      },
     });
+    expect(result.status).toBe("blocked");
+    const after = JSON.parse(readFileSync(runJsonPath, "utf8"));
+    expect(after.runnerV2.launchJobs[jobId].lastError).toContain("agent profile p1 referenced by chain.json is missing");
+    expect(after.runnerV2.launchJobs[jobId].terminalCode).toBe("resume_credentials_unavailable");
   });
 
   it("a job INSIDE the bound still requeues on a nonterminal launch error", async () => {
