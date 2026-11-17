@@ -73,6 +73,13 @@ export function withTaskResumeClaim<T>(
  * same-process resume awaiting cleanup keeps making progress while a reset
  * waits out its budget. Busy past waitTimeoutMs -> ResumeResetConflictError,
  * a visible retryable conflict; never an optimistic unserialized write.
+ *
+ * #142 round 5 (review P2): the task's run pointer is re-read after EACH
+ * acquisition. Another replacement may have re-pointed the task while this
+ * caller waited; running the guarded write under the stale run's claim would
+ * serialize against the wrong run. The caller hops to the current run's
+ * claim instead, bounded at 3 claim acquisitions — a thrashing pointer is a
+ * ResumeResetConflictError and fn never runs.
  */
 export async function withTaskResumeClaimAsync<T>(
   input: { orgId: string; namespaceId?: string; taskId: string },
@@ -81,27 +88,41 @@ export async function withTaskResumeClaimAsync<T>(
 ): Promise<T> {
   const waitTimeoutMs = options.waitTimeoutMs ?? 5_000;
   const retryDelayMs = options.retryDelayMs ?? 25;
-  const runId = taskResumeClaimRunId(input);
-  if (!runId) return fn();
-  const claimDir = join(resolveLinkRunsDir(input.namespaceId || "default", input.orgId), runId, ".resume-claim");
+  const initialRunId = taskResumeClaimRunId(input);
+  if (!initialRunId) return fn();
   const deadline = Date.now() + waitTimeoutMs;
-  let release: (() => void) | undefined;
+  let runId = initialRunId;
+  let hops = 0;
   while (true) {
-    try {
-      // waitTimeoutMs 0: one non-blocking attempt per loop; the waiting
-      // happens in the awaited setTimeout below.
-      release = acquireExclusiveFileClaim(claimDir, { waitTimeoutMs: 0 });
-      break;
-    } catch (error) {
-      if (!(error instanceof ExclusiveFileClaimBusyError)) throw error;
-      if (Date.now() >= deadline) throw new ResumeResetConflictError(runId);
-      await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+    const claimDir = join(resolveLinkRunsDir(input.namespaceId || "default", input.orgId), runId, ".resume-claim");
+    hops++; // the first acquisition counts as hop 1
+    let release: (() => void) | undefined;
+    while (true) {
+      try {
+        // waitTimeoutMs 0: one non-blocking attempt per loop; the waiting
+        // happens in the awaited setTimeout below.
+        release = acquireExclusiveFileClaim(claimDir, { waitTimeoutMs: 0 });
+        break;
+      } catch (error) {
+        if (!(error instanceof ExclusiveFileClaimBusyError)) throw error;
+        if (Date.now() >= deadline) throw new ResumeResetConflictError(runId);
+        await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+      }
     }
-  }
-  try {
-    return await fn();
-  } finally {
-    release();
+    // the pointer moved while waiting: never run fn under a stale claim —
+    // release and take the CURRENT run's claim instead (bounded above).
+    const pointerNow = taskResumeClaimRunId(input);
+    if (pointerNow && pointerNow !== runId) {
+      release();
+      if (hops >= 3) throw new ResumeResetConflictError(pointerNow);
+      runId = pointerNow;
+      continue;
+    }
+    try {
+      return await fn();
+    } finally {
+      release();
+    }
   }
 }
 
