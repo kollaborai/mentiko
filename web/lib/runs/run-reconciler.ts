@@ -155,6 +155,8 @@ interface ResumeDispatchPause {
   taskId: string;
   series: number;
   runId: string;
+  /** The accepted resume attempt this pause belongs to; one pause per attempt, ever. */
+  attemptId?: string;
   /** Fixed, secret-free reason derived from the bound job's typed terminal code. */
   reason: string;
   /** The blocked job's recorded reason (typed-error text only, never raw exception text). */
@@ -185,6 +187,10 @@ function pauseTaskForResumeDispatchBound(
       if (isTerminalTaskStatus(task.status)) return null;
       if (currentResumeSeries(metadata) !== bound.series) return null;
       if (!taskPointsAtRun(metadata, bound.taskId, bound.runId)) return null;
+      // Delivered once per attempt (#142 round 5 review): the marker stays
+      // when the owner clears the pause by hand, so the reaper never re-pauses
+      // a task for an outcome it already reported.
+      if (bound.attemptId && metadata.resume_dispatch_pause_attempt_id === bound.attemptId) return null;
       // already paused for this stop: idempotent no-op, never a repeated write
       if (metadata.auto_run_paused === true
         && typeof metadata.auto_run_paused_reason === "string"
@@ -202,6 +208,7 @@ function pauseTaskForResumeDispatchBound(
         resume_pending_since: null,
         auto_run_paused: true,
         auto_run_paused_reason: `${bound.reason} for run ${bound.runId}: ${explanation}`,
+        ...(bound.attemptId ? { resume_dispatch_pause_attempt_id: bound.attemptId } : {}),
       };
     }, context.namespaceId);
     if (!landed.ok) {
@@ -654,6 +661,9 @@ export async function reconcileOrphanedRuns(options: ReconcileOptions = {}): Pro
             taskId: run.taskId,
             series: typeof resumeAttempt?.series === "number" ? resumeAttempt.series : 0,
             runId,
+            ...(typeof (resumeAttempt as { id?: unknown } | undefined)?.id === "string"
+              ? { attemptId: (resumeAttempt as { id: string }).id }
+              : {}),
             reason: resumeLaunchTerminalReason(terminal.code),
             ...(terminal.detail ? { detail: terminal.detail } : {}),
           };

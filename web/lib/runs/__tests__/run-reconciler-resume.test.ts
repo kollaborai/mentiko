@@ -50,7 +50,7 @@ jest.mock("@/lib/runner-v2/run-state", () => {
 
 import { reconcileOrphanedRuns } from "@/lib/runs/run-reconciler";
 import { upsertRoutedLaunchJobRecord } from "@/lib/runner-v2/launch-job";
-import { closeAll, taskCreate, taskGet } from "@/lib/tasks/task-store";
+import { closeAll, taskCreate, taskGet, taskMutateMetadata } from "@/lib/tasks/task-store";
 import { resolveAutoRunState } from "@/lib/tasks/auto-run-state";
 
 const TEST_ROOT = "/tmp/mentiko-reaper-142-test";
@@ -308,6 +308,29 @@ describe("reconcileOrphanedRuns vs route-owned resume work", () => {
     const metadataAfter = taskAfter.metadata as Record<string, unknown>;
     expect(metadataAfter.auto_run_paused).toBe(true);
     expect(metadataAfter.auto_run_paused_reason).toBe(metadata.auto_run_paused_reason);
+  });
+
+  it("a pause the owner cleared by hand is never delivered again for the same attempt (#142 round 5)", async () => {
+    const runDir = join(RUNS, "run-bound-ack");
+    const taskId = seedTaskForRun("run-bound-ack", { resume_series: 3 });
+    writeRun("run-bound-ack", neverClaimedJobRun("run-bound-ack", runDir, taskId));
+
+    await reconcileOrphanedRuns({ runsDir: RUNS, eventsDir: join(TEST_ROOT, "events") });
+    const paused = taskGet("default", taskId, "default")!.metadata as Record<string, unknown>;
+    expect(paused.auto_run_paused).toBe(true);
+    expect(paused.resume_dispatch_pause_attempt_id).toBe("a1");
+
+    // the owner clears the pause directly, WITHOUT a reset (series unchanged)
+    const cleared = taskMutateMetadata("default", taskId, (metadata) => ({
+      ...metadata,
+      auto_run_paused: false,
+      auto_run_paused_reason: null,
+    }), "default");
+    expect(cleared.ok).toBe(true);
+
+    await reconcileOrphanedRuns({ runsDir: RUNS, eventsDir: join(TEST_ROOT, "events") });
+    const after = taskGet("default", taskId, "default")!.metadata as Record<string, unknown>;
+    expect(after.auto_run_paused).toBe(false);
   });
 
   it("a never-claimed accepted job INSIDE the bound is left alone", async () => {
