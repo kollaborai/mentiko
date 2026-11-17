@@ -41,6 +41,16 @@ jest.mock("@/lib/runner-v2/controller", () => ({
   startRunnerV2Launch: (...args: unknown[]) => mockStartRunnerV2Launch(...(args as [])),
 }));
 
+// real sqlite store, with taskUpdate wrapped so a test can make the re-point
+// write itself throw (the ES namespace is sealed; spyOn cannot redefine it)
+jest.mock("@/lib/tasks/task-store", () => {
+  const actual = jest.requireActual("@/lib/tasks/task-store");
+  const mock = jest.fn((...args: unknown[]) =>
+    (actual.taskUpdate as (...a: unknown[]) => void)(...args));
+  (globalThis as Record<string, unknown>).__TASK_UPDATE_MOCK = mock;
+  return { ...actual, taskUpdate: mock };
+});
+
 jest.mock("@/lib/webhooks/webhook-utils", () => ({ fireWebhooks: async () => undefined }));
 jest.mock("@/lib/notifications/notification-server", () => ({ createNotification: () => undefined }));
 jest.mock("@/lib/api/audit-exec", () => ({ execAuditLog: async () => undefined }));
@@ -193,6 +203,37 @@ describe("startChainRun task re-point serialization (#142 round 4)", () => {
     expect(after.status).toBe("in_progress");
     expect((after.metadata as Record<string, unknown>).last_run_id).toBe("run-new-free");
     // and the claim was released afterwards
+    const release = acquireExclusiveFileClaim(join(oldRunDir, ".resume-claim"), { waitTimeoutMs: 50 });
+    release();
+  });
+
+  it("a re-point write that throws after the launch: the new run is terminal, the task keeps the old run, the caller sees the error (#142 round 5)", async () => {
+    const oldRunDir = join(RUNS, "run-old");
+    mkdirSync(oldRunDir, { recursive: true });
+    const task = taskCreate("default", {
+      title: "repoint probe throw",
+      issue_type: "task",
+      metadata: { last_run_id: "run-old", last_run_status: "stopped" },
+    }, "default");
+
+    // the re-point write itself fails AFTER the launch succeeded
+    const taskUpdateMock = (globalThis as Record<string, unknown>).__TASK_UPDATE_MOCK as jest.Mock;
+    taskUpdateMock.mockImplementationOnce(() => {
+      throw new Error("repoint write exploded");
+    });
+    await expect(callStart(task.id, "run-new-throw")).rejects.toThrow(/repoint write exploded/);
+
+    // the new run is NOT left running: it is terminally failed with the reason
+    const newRun = JSON.parse(readFileSync(join(RUNS, "run-new-throw", "run.json"), "utf8"));
+    expect(newRun.status).toBe("failed");
+    expect(newRun.status_message).toContain("repoint write exploded");
+
+    // the task still points at the old run and was not moved to in_progress
+    const after = taskGet("default", task.id, "default")!;
+    expect((after.metadata as Record<string, unknown>).last_run_id).toBe("run-old");
+    expect(after.status).not.toBe("in_progress");
+
+    // and the claim was released
     const release = acquireExclusiveFileClaim(join(oldRunDir, ".resume-claim"), { waitTimeoutMs: 50 });
     release();
   });

@@ -780,6 +780,16 @@ export async function startChainRun({
         markChainLaunchFailed(runDir, validChainName, namespaceId, runObject, runId, error.message);
         throw new Conflict(error.message);
       }
+      // #142 round 5 (review P2): a non-conflict failure AFTER the launch
+      // started — the task re-point write above — must not release the
+      // claim with a live run the task will never point at. Terminalize the
+      // new run first (launch-phase failures already stamped the same
+      // failed status; re-marking is idempotent), then rethrow the visible
+      // error so the caller does not mistake the run for healthy.
+      markChainLaunchFailed(
+        runDir, validChainName, namespaceId, runObject, runId,
+        error instanceof Error ? error.message : String(error),
+      );
       throw error;
     }
   } else {
