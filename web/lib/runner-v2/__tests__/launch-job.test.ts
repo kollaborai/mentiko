@@ -7,10 +7,14 @@ import {
   bindRoutedLaunchJobAttempt,
   claimRoutedLaunchJob,
   completeRoutedLaunchJob,
+  acceptedResumeTerminalJob,
+  blockPastBoundResumeLaunchJob,
   persistRoutedLaunchJob,
   readRoutedLaunchJob,
   routedLaunchJobId,
   routedLaunchJobLeaseOwned,
+  upsertRoutedLaunchJobRecord,
+  type RoutedLaunchJob,
 } from "@/lib/runner-v2/launch-job";
 import { createRunRecord, updateRunJson } from "@/lib/runner-v2/run-state";
 
@@ -113,5 +117,132 @@ describe("durable routed launch jobs", () => {
       status: "completed",
       targets: [{ agentId: "editor", attemptId: "run-job:editor:1" }],
     });
+  });
+});
+
+// ---- accepted resume dispatch expiry scope (#142 round 4) ----
+
+describe("blockPastBoundResumeLaunchJob blocks only the accepted attempt's bound job", () => {
+  const NOW = new Date("2026-11-16T12:00:00.000Z");
+  const OLD = new Date(NOW.getTime() - 11 * 60_000).toISOString(); // past the 10-minute bound
+
+  interface SeedInput {
+    resumeAttempt?: Record<string, unknown>;
+    resumeJob?: { createdAt?: string; status?: "queued" | "leased"; lease?: RoutedLaunchJob["lease"] };
+    unrelatedJob?: { createdAt?: string; status?: "queued" | "leased"; lease?: RoutedLaunchJob["lease"] };
+  }
+
+  function seedRun(seed: SeedInput): { run: ReturnType<typeof createRunRecord>; resumeJobId: string; unrelatedJobId: string } {
+    const paths = fixture();
+    let run = createRunRecord({ runId: "run-scope", chainName: "chain", goal: "scope" });
+    run = { ...run, status: "running", agents: [{ id: "editor", name: "Editor", status: "pending", session: "" }] };
+    const resumeUpsert = upsertRoutedLaunchJobRecord(run, {
+      occurrenceId: "resume:run-scope:1",
+      runId: "run-scope",
+      runDir: paths.runDir,
+      chainPath: paths.chainPath,
+      targetAgentIds: ["editor"],
+      environment: { NAMESPACE_ID: "default" },
+      now: new Date(seed.resumeJob?.createdAt || OLD),
+    });
+    const unrelatedUpsert = upsertRoutedLaunchJobRecord(resumeUpsert.run, {
+      occurrenceId: "completion:run-scope:2",
+      runId: "run-scope",
+      runDir: paths.runDir,
+      chainPath: paths.chainPath,
+      targetAgentIds: ["editor"],
+      environment: { NAMESPACE_ID: "default" },
+      now: new Date(seed.unrelatedJob?.createdAt || OLD),
+    });
+    const resumeJobId = resumeUpsert.job.id;
+    const unrelatedJobId = unrelatedUpsert.job.id;
+    return { run: unrelatedUpsert.run as ReturnType<typeof createRunRecord>, resumeJobId, unrelatedJobId };
+  }
+
+  function withJob(run: Record<string, unknown>, jobId: string, overrides: { status?: RoutedLaunchJob["status"]; lease?: RoutedLaunchJob["lease"] }): Record<string, unknown> {
+    const record = JSON.parse(JSON.stringify(run)) as {
+      runnerV2: { launchJobs: Record<string, RoutedLaunchJob> };
+    };
+    record.runnerV2.launchJobs[jobId] = {
+      ...record.runnerV2.launchJobs[jobId],
+      ...(overrides.status ? { status: overrides.status } : {}),
+      ...(overrides.lease ? { lease: overrides.lease } : {}),
+    };
+    return record;
+  }
+
+  it("blocks ONLY the bound job past its bound with the typed code and never stops the run", () => {
+    const { run, resumeJobId, unrelatedJobId } = seedRun({
+      unrelatedJob: { createdAt: new Date(NOW.getTime() - 60_000).toISOString() },
+    });
+    const record = JSON.parse(JSON.stringify(run)) as Record<string, unknown>;
+    const bound = { ...record, resumeAttempt: { id: "a1", series: 0, outcome: "accepted", launchJobId: resumeJobId } };
+    const next = blockPastBoundResumeLaunchJob(bound as never, { now: NOW });
+    expect(next).toBeDefined();
+    // the fold never decides the run stop: only the reaper, which knows the live sessions
+    expect(next!.status).toBe("running");
+    const jobs = (next!.runnerV2 as { launchJobs: Record<string, RoutedLaunchJob> }).launchJobs;
+    expect(jobs[resumeJobId].status).toBe("blocked");
+    expect(jobs[resumeJobId].terminalCode).toBe("resume_dispatch_bound");
+    expect(jobs[unrelatedJobId].status).toBe("queued");
+    expect(acceptedResumeTerminalJob(next as never)).toMatchObject({ jobId: resumeJobId, code: "resume_dispatch_bound" });
+    // idempotent: a blocked job is no longer past the bound
+    expect(blockPastBoundResumeLaunchJob(next as never, { now: NOW })).toBeUndefined();
+  });
+
+  it("an old UNRELATED queued job is not blocked", () => {
+    const { run, resumeJobId } = seedRun({
+      resumeJob: { createdAt: new Date(NOW.getTime() - 60_000).toISOString() },
+    });
+    const bound = { ...run, resumeAttempt: { id: "a1", series: 0, outcome: "accepted", launchJobId: resumeJobId } };
+    expect(blockPastBoundResumeLaunchJob(bound as never, { now: NOW })).toBeUndefined();
+    expect(acceptedResumeTerminalJob(bound as never)).toBeUndefined();
+  });
+
+  it("an accepted record with NO bound job id (older head) is left alone", () => {
+    const { run } = seedRun({});
+    const unbound = { ...run, resumeAttempt: { id: "a1", series: 0, outcome: "accepted" } };
+    expect(blockPastBoundResumeLaunchJob(unbound as never, { now: NOW })).toBeUndefined();
+    expect(acceptedResumeTerminalJob(unbound as never)).toBeUndefined();
+  });
+
+  it("a bound job with an unexpired lease is never past the bound, however old", () => {
+    const { run, resumeJobId } = seedRun({});
+    const leased = withJob(run, resumeJobId, {
+      status: "leased",
+      lease: {
+        ownerId: "worker:1:x",
+        acquiredAt: OLD,
+        heartbeatAt: OLD,
+        expiresAt: new Date(NOW.getTime() + 60_000).toISOString(),
+      },
+    });
+    const bound = { ...leased, resumeAttempt: { id: "a1", series: 0, outcome: "accepted", launchJobId: resumeJobId } };
+    expect(blockPastBoundResumeLaunchJob(bound as never, { now: NOW })).toBeUndefined();
+  });
+
+  it("another job's lease does not defer the bound job's block (no endless deferral)", () => {
+    const { run, resumeJobId, unrelatedJobId } = seedRun({});
+    const leased = withJob(run, unrelatedJobId, {
+      status: "leased",
+      lease: {
+        ownerId: "worker:1:x",
+        acquiredAt: OLD,
+        heartbeatAt: OLD,
+        expiresAt: new Date(NOW.getTime() + 60_000).toISOString(),
+      },
+    });
+    const bound = { ...leased, resumeAttempt: { id: "a1", series: 0, outcome: "accepted", launchJobId: resumeJobId } };
+    const next = blockPastBoundResumeLaunchJob(bound as never, { now: NOW });
+    const jobs = (next!.runnerV2 as { launchJobs: Record<string, RoutedLaunchJob> }).launchJobs;
+    expect(jobs[resumeJobId].status).toBe("blocked");
+    expect(jobs[unrelatedJobId].status).toBe("leased");
+  });
+
+  it("the terminal signal needs the typed code: a bound job blocked without one is not terminal", () => {
+    const { run, resumeJobId } = seedRun({});
+    const blocked = withJob(run, resumeJobId, { status: "blocked" });
+    const bound = { ...blocked, resumeAttempt: { id: "a1", series: 0, outcome: "accepted", launchJobId: resumeJobId } };
+    expect(acceptedResumeTerminalJob(bound as never)).toBeUndefined();
   });
 });

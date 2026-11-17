@@ -39,4 +39,23 @@ describe("tasks page source contract", () => {
     const occurrences = source.split("onToggleAutoRunPause={handleToggleAutoRunPause}").length - 1;
     expect(occurrences).toBe(3);
   });
+
+  it("increments resume_series at every retry reset and clears errors with nulls, not undefined (#142)", () => {
+    // every client reset that zeroes auto_run_retries must also start a new
+    // resume series and null the stale errors; undefined would be dropped by
+    // JSON.stringify and the server merge would keep the old values alive.
+    const resets = source.split("auto_run_retries: 0").length - 1;
+    const seriesIncrements = source.split("resume_series: (Number(selected.metadata?.resume_series) || 0) + 1").length - 1;
+    const resumeErrorNulls = source.split("resume_last_error: null").length - 1;
+    expect(resets).toBeGreaterThanOrEqual(3);
+    expect(seriesIncrements).toBeGreaterThanOrEqual(3); // assign-chain, toggle fallback, retry-task reset
+    expect(resumeErrorNulls).toBeGreaterThanOrEqual(3);
+  });
+
+  it("checks the PATCH response before optimistically resetting task state (#142)", () => {
+    const okChecks = source.split("!res.ok").length - 1;
+    const patchOkChecks = source.split("!patchRes.ok").length - 1;
+    expect(okChecks).toBeGreaterThanOrEqual(3); // assign-chain, retry-task, run-chain and friends
+    expect(patchOkChecks).toBeGreaterThanOrEqual(1); // auto-run toggle fallback PATCH
+  });
 });

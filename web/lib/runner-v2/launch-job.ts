@@ -33,7 +33,15 @@ export interface RoutedLaunchJob {
   completedAt?: string;
   blockedAt?: string;
   lastError?: string;
+  /**
+   * Typed terminal outcome of an accepted resume launch job (issue #142
+   * round 5). Set only together with status "blocked". The reaper keys the
+   * guarded task pause on this code, never on free-text reasons.
+   */
+  terminalCode?: ResumeLaunchTerminalCode;
 }
+
+export type ResumeLaunchTerminalCode = "resume_dispatch_bound" | "resume_credentials_unavailable";
 
 const PERSISTED_ENV_KEYS = new Set([
   "AGENT_FAN_GROUP_ID",
@@ -89,26 +97,45 @@ export function routedLaunchJobId(input: {
   return `routed-launch:${digest}:v1`;
 }
 
-export function persistRoutedLaunchJob(input: {
-  runJsonPath: string;
-  jobId?: string;
+export interface UpsertRoutedLaunchJobInput {
   occurrenceId: string;
   runId: string;
   runDir: string;
   chainPath: string;
   targetAgentIds: string[];
   environment?: Record<string, string | undefined>;
+  /**
+   * Env keys whose VALUES came from the secrets store (issue #142 round 3).
+   * Persistence filters by provenance, not just the key allowlist: a secret
+   * mapped to an allowlisted name (e.g. MENTIKO_DEBUG) must never be written
+   * into the persisted job environment — whatever its env var name. The
+   * launcher child re-derives the same list from the never-persisted
+   * MENTIKO_LAUNCH_SECRET_ENV_KEYS marker so its idempotent re-persist
+   * computes the identical job.
+   */
+  excludeEnvKeys?: string[];
   now?: Date;
-}): RoutedLaunchJob {
+}
+
+/**
+ * Pure form of persistRoutedLaunchJob: fold a queued routed launch job into a
+ * run record without touching the filesystem. Lets a caller persist the job as
+ * part of a larger atomic run.json transition (the resume route marks the run
+ * running and records its launch intent in one write) instead of two writes
+ * with a recoverable gap between them. Identity semantics are identical to
+ * persistRoutedLaunchJob: an existing job with the same id must have the same
+ * identity and is kept as-is.
+ */
+export function upsertRoutedLaunchJobRecord(
+  run: RunRecord,
+  input: UpsertRoutedLaunchJobInput,
+): { run: RunRecord; job: RoutedLaunchJob } {
   const targetAgentIds = normalizeTargetIds(input.targetAgentIds);
   const expectedId = routedLaunchJobId({
     occurrenceId: input.occurrenceId,
     runId: input.runId,
     targetAgentIds,
   });
-  if (input.jobId && input.jobId !== expectedId) {
-    throw new Error(`routed launch job id mismatch: expected ${expectedId}`);
-  }
   const at = (input.now || new Date()).toISOString();
   const candidate: RoutedLaunchJob = {
     version: 1,
@@ -118,25 +145,40 @@ export function persistRoutedLaunchJob(input: {
     runDir: input.runDir,
     chainPath: input.chainPath,
     targets: targetAgentIds.map((agentId) => ({ agentId })),
-    environment: persistedEnvironment(input.environment || {}),
+    environment: persistedEnvironment(input.environment || {}, new Set(input.excludeEnvKeys || [])),
     status: "queued",
     attemptCount: 0,
     createdAt: at,
     updatedAt: at,
   };
+  const jobs = launchJobMap(run);
+  const existing = jobs[expectedId];
+  if (existing) {
+    assertSameLaunchIdentity(existing, candidate);
+    return { run, job: existing };
+  }
+  return { run: withLaunchJobs(run, { ...jobs, [expectedId]: candidate }), job: candidate };
+}
+
+export function persistRoutedLaunchJob(input: {
+  runJsonPath: string;
+  jobId?: string;
+} & UpsertRoutedLaunchJobInput): RoutedLaunchJob {
+  const expectedId = routedLaunchJobId({
+    occurrenceId: input.occurrenceId,
+    runId: input.runId,
+    targetAgentIds: normalizeTargetIds(input.targetAgentIds),
+  });
+  if (input.jobId && input.jobId !== expectedId) {
+    throw new Error(`routed launch job id mismatch: expected ${expectedId}`);
+  }
   let persisted: RoutedLaunchJob | undefined;
   updateRunJson(input.runJsonPath, (run) => {
     if (!run) throw new Error(`run.json not found: ${input.runJsonPath}`);
     if (run.id !== input.runId) throw new Error(`routed launch job run id mismatch: ${input.runId}`);
-    const jobs = launchJobMap(run);
-    const existing = jobs[expectedId];
-    if (existing) {
-      assertSameLaunchIdentity(existing, candidate);
-      persisted = existing;
-      return run;
-    }
-    persisted = candidate;
-    return withLaunchJobs(run, { ...jobs, [expectedId]: candidate });
+    const result = upsertRoutedLaunchJobRecord(run, input);
+    persisted = result.job;
+    return result.run;
   });
   if (!persisted) throw new Error(`routed launch job was not persisted: ${expectedId}`);
   return persisted;
@@ -294,6 +336,7 @@ export function blockRoutedLaunchJob(input: {
   jobId: string;
   ownerId: string;
   reason: string;
+  terminalCode?: ResumeLaunchTerminalCode;
   now?: Date;
 }): boolean {
   const at = (input.now || new Date()).toISOString();
@@ -307,6 +350,7 @@ export function blockRoutedLaunchJob(input: {
       blockedAt: at,
       updatedAt: at,
       lastError: input.reason,
+      ...(input.terminalCode ? { terminalCode: input.terminalCode } : {}),
     };
   }));
 }
@@ -318,6 +362,125 @@ export function routedLaunchJobIsAccepted(job: RoutedLaunchJob): boolean {
 export function routedLaunchJobIsReclaimable(job: RoutedLaunchJob, now = new Date()): boolean {
   return job.status === "queued"
     || (job.status === "leased" && Date.parse(job.lease?.expiresAt || "") <= now.getTime());
+}
+
+/**
+ * Liveness bound for accepted resume dispatch (issue #142 round 3): a queued
+ * job nobody claims, or one that keeps requeueing on nonterminal launch
+ * errors, must END instead of pinning the run in progress forever. Same order
+ * as the scanner's preparing bound (10 minutes) and the reaper's handoff
+ * windows; the attempt ceiling covers fast requeue loops that never age.
+ */
+export const RESUME_LAUNCH_DISPATCH_BOUND_MS = 10 * 60_000;
+export const RESUME_LAUNCH_ATTEMPT_CEILING = 5;
+export const RESUME_LAUNCH_DISPATCH_BOUND_REASON = "accepted resume launch job exceeded its dispatch bound";
+export const RESUME_LAUNCH_CREDENTIALS_UNAVAILABLE_REASON =
+  "accepted resume launch job was blocked: its credentials could not be rebuilt";
+
+/** The fixed, secret-free run/task reason for a typed terminal code. */
+export function resumeLaunchTerminalReason(code: ResumeLaunchTerminalCode): string {
+  return code === "resume_dispatch_bound"
+    ? RESUME_LAUNCH_DISPATCH_BOUND_REASON
+    : RESUME_LAUNCH_CREDENTIALS_UNAVAILABLE_REASON;
+}
+
+export function routedLaunchJobPastDispatchBound(job: RoutedLaunchJob, now = new Date()): boolean {
+  if (job.status === "completed" || job.status === "blocked") return false;
+  if (job.status === "leased" && Date.parse(job.lease?.expiresAt || "") > now.getTime()) return false;
+  return (now.getTime() - Date.parse(job.createdAt) >= RESUME_LAUNCH_DISPATCH_BOUND_MS)
+    || job.attemptCount >= RESUME_LAUNCH_ATTEMPT_CEILING;
+}
+
+/**
+ * The ONE durable signal that an accepted resume dispatch ended without
+ * launching (issue #142 round 5): the launch job bound to the run's accepted
+ * resume attempt (resumeAttempt.launchJobId) is `blocked` with a typed
+ * terminal code. Whoever blocks the job (the worker on a credential failure
+ * or a blown requeue ceiling, the reaper on a never-claimed job) writes only
+ * that; the reaper alone turns it into the guarded task pause and the run
+ * stop. A run-level reason is never the signal, so a failed or skipped run
+ * stop cannot hide the outcome, and an unrelated job or stop reason can never
+ * fake it.
+ */
+export function acceptedResumeTerminalJob(
+  run: RunRecord,
+): { jobId: string; code: ResumeLaunchTerminalCode; detail?: string } | undefined {
+  const resumeAttempt = objectValue(run.resumeAttempt);
+  if (!resumeAttempt || resumeAttempt.outcome !== "accepted") return undefined;
+  const boundJobId = typeof resumeAttempt.launchJobId === "string" ? resumeAttempt.launchJobId : undefined;
+  if (!boundJobId) return undefined;
+  const job = launchJobMap(run)[boundJobId];
+  if (!job || job.status !== "blocked") return undefined;
+  if (job.terminalCode !== "resume_dispatch_bound" && job.terminalCode !== "resume_credentials_unavailable") {
+    return undefined;
+  }
+  return {
+    jobId: boundJobId,
+    code: job.terminalCode,
+    ...(typeof job.lastError === "string" && job.lastError ? { detail: job.lastError } : {}),
+  };
+}
+
+/**
+ * Where the dispatch of the run's accepted resume attempt stands, for every
+ * reaper that might otherwise stop the run or treat its stop as an ordinary
+ * execution failure (issue #142 round 7):
+ * - "pending": the bound launch job is still queued or leased. The dispatch
+ *   path (worker, then the run reaper's bound) owns it; nobody else stops
+ *   the run for having no live session.
+ * - "terminal": the bound job is blocked with a typed terminal code. The run
+ *   reaper owns the stop and the guarded task pause; the stop is not an
+ *   execution failure to retry or summarize.
+ * - undefined: no accepted attempt, no bound job (older head), or the job
+ *   completed or was blocked for an ordinary reason: ordinary rules apply.
+ */
+export function acceptedResumeDispatchState(run: RunRecord): "pending" | "terminal" | undefined {
+  const resumeAttempt = objectValue(run.resumeAttempt);
+  if (!resumeAttempt || resumeAttempt.outcome !== "accepted") return undefined;
+  const boundJobId = typeof resumeAttempt.launchJobId === "string" ? resumeAttempt.launchJobId : undefined;
+  if (!boundJobId) return undefined;
+  const job = launchJobMap(run)[boundJobId];
+  if (!job) return undefined;
+  if (job.status === "queued" || job.status === "leased") return "pending";
+  return acceptedResumeTerminalJob(run) ? "terminal" : undefined;
+}
+
+/**
+ * Block ONLY the launch job bound to the run's accepted resume attempt once
+ * it is past its dispatch bound (never claimed for its whole life, or
+ * requeued past the attempt ceiling). Pure fold for the caller's run.json
+ * lock; every decision is re-derived against the record passed in, so a job
+ * claimed or completed meanwhile is left alone (an unexpired lease is never
+ * past the bound). It never stops the run and never looks at other jobs:
+ * the reaper, which knows the live PTY sessions, decides the run stop.
+ * An accepted record without a bound job id (older head) is left alone.
+ * Returns the updated record, or undefined when nothing changed.
+ */
+export function blockPastBoundResumeLaunchJob(
+  run: RunRecord,
+  input: { now?: Date } = {},
+): RunRecord | undefined {
+  const now = input.now || new Date();
+  const resumeAttempt = objectValue(run.resumeAttempt);
+  if (!resumeAttempt || resumeAttempt.outcome !== "accepted") return undefined;
+  const boundJobId = typeof resumeAttempt.launchJobId === "string" ? resumeAttempt.launchJobId : undefined;
+  if (!boundJobId) return undefined;
+  const jobs = launchJobMap(run);
+  const boundJob = jobs[boundJobId];
+  if (!boundJob || !routedLaunchJobPastDispatchBound(boundJob, now)) return undefined;
+  const at = now.toISOString();
+  return withLaunchJobs(run, {
+    ...jobs,
+    [boundJobId]: {
+      ...boundJob,
+      status: "blocked" as const,
+      lease: undefined,
+      blockedAt: at,
+      updatedAt: at,
+      lastError: RESUME_LAUNCH_DISPATCH_BOUND_REASON,
+      terminalCode: "resume_dispatch_bound" as const,
+    },
+  });
 }
 
 export function startRoutedLaunchJobHeartbeat(input: {
@@ -338,9 +501,12 @@ export function startRoutedLaunchJobHeartbeat(input: {
   return () => clearInterval(interval);
 }
 
-function persistedEnvironment(env: Record<string, string | undefined>): Record<string, string> {
+function persistedEnvironment(
+  env: Record<string, string | undefined>,
+  excludeEnvKeys: Set<string>,
+): Record<string, string> {
   return Object.fromEntries(Object.entries(env)
-    .filter(([key, value]) => PERSISTED_ENV_KEYS.has(key) && typeof value === "string")
+    .filter(([key, value]) => PERSISTED_ENV_KEYS.has(key) && !excludeEnvKeys.has(key) && typeof value === "string")
     .sort(([left], [right]) => left.localeCompare(right))) as Record<string, string>;
 }
 

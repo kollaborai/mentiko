@@ -416,7 +416,8 @@
         "updatedAt": { "type": "string", "format": "date-time" },
         "completedAt": { "type": "string", "format": "date-time" },
         "blockedAt": { "type": "string", "format": "date-time" },
-        "lastError": { "type": "string" }
+        "lastError": { "type": "string" },
+        "terminalCode": { "type": "string", "enum": ["resume_dispatch_bound", "resume_credentials_unavailable"] }
       }
     },
     "stuckEvent": {

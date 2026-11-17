@@ -876,11 +876,15 @@ export function ChainAssignWorkflow({
       analysis_status: undefined,
     };
 
-    await fetchWithNamespace(`/api/tasks/${encodeURIComponent(task.id)}${wsParam}`, {
+    const res = await fetchWithNamespace(`/api/tasks/${encodeURIComponent(task.id)}${wsParam}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ metadata: JSON.stringify(metadata) }),
     });
+    if (!res.ok) {
+      setErrorMessage(`Failed to clear the previous analysis (${res.status}).`);
+      return;
+    }
 
     setAnalysisJob(null);
     setErrorMessage(null);
@@ -1075,7 +1079,8 @@ export function ChainAssignWorkflow({
               // Explicit recovery: clear ONLY the generation pause/rejection
               // condition (nulls, not undefined -- the server merge keeps
               // undefined keys). Attempt history in the rejection ledger and
-              // run records is preserved.
+              // run records is preserved. The retry reset also bumps
+              // resume_series and clears the recorded resume error (#142).
               const metadata = {
                 ...task.chainBinding,
                 generation_job_id: null,
@@ -1085,13 +1090,20 @@ export function ChainAssignWorkflow({
                 generation_rejection_job_id: null,
                 generation_rejection_fingerprints: null,
                 generation_last_error: null,
+                last_run_error: null,
+                resume_last_error: null,
                 auto_run_retries: 0,
+                resume_series: (Number(task.metadata?.resume_series) || 0) + 1,
               };
-              await fetchWithNamespace(`/api/tasks/${encodeURIComponent(task.id)}${wsParam}`, {
+              const res = await fetchWithNamespace(`/api/tasks/${encodeURIComponent(task.id)}${wsParam}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ metadata: JSON.stringify(metadata) }),
               });
+              if (!res.ok) {
+                setErrorMessage(`Failed to clear the generation stop (${res.status}); the task was not reset.`);
+                return;
+              }
               setGenerationJob(null);
               setErrorMessage(null);
               setStep("idle");
@@ -1147,12 +1159,18 @@ export function ChainAssignWorkflow({
                 analysis_status: null,
                 generation_job_id: null,
                 generation_status: null,
+                resume_last_error: null,
+                resume_series: (Number(task.metadata?.resume_series) || 0) + 1,
               };
-              await fetchWithNamespace(`/api/tasks/${encodeURIComponent(task.id)}${wsParam}`, {
+              const res = await fetchWithNamespace(`/api/tasks/${encodeURIComponent(task.id)}${wsParam}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ metadata: JSON.stringify(metadata) }),
               });
+              if (!res.ok) {
+                setErrorMessage(`Failed to reset the stale job state (${res.status}).`);
+                return;
+              }
               setAnalysisJob(null);
               setGenerationJob(null);
               setStaleJobId(null);
