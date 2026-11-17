@@ -41,7 +41,7 @@ export async function reconstructResumeLaunchEnvironment(
   const nsId = job.environment.NAMESPACE_ID;
   const orgId = job.environment.ORG_ID;
   if (!nsId || !orgId) {
-    throw new Error(
+    throw new UnresolvedResumeCredentialError(
       `resume launch job ${job.id} persists no NAMESPACE_ID/ORG_ID identity; `
       + "cannot reconstruct scoped credentials for run "
       + `${job.runId}. Re-resume the run from the route so a canonical job is recorded.`,
@@ -89,9 +89,11 @@ export async function reconstructResumeLaunchEnvironment(
     }
   } catch (error) {
     if (error instanceof UnresolvedResumeCredentialError) throw error;
-    throw new Error(
-      `resume launch job ${job.id} could not resolve its agent profile from `
-      + `${job.chainPath}: ${error instanceof Error ? error.message : String(error)}`,
+    // Never carry the underlying message: a parser or IO error can quote the
+    // text it choked on, and this reason is persisted on the job (#142 r5).
+    throw new UnresolvedResumeCredentialError(
+      `resume launch job ${job.id} could not read its agent profile reference from `
+      + `${job.chainPath} (${error instanceof Error ? error.name : "error"})`,
     );
   }
 

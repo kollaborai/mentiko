@@ -40,7 +40,7 @@ jest.mock("@/lib/secrets/secrets-store", () => ({
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { reconstructResumeLaunchEnvironment } from "@/lib/runner-v2/resume-launch-credentials";
+import { reconstructResumeLaunchEnvironment, UnresolvedResumeCredentialError } from "@/lib/runner-v2/resume-launch-credentials";
 import type { RoutedLaunchJob } from "@/lib/runner-v2/launch-job";
 
 const TEST_ROOT = join("/tmp", `mentiko-resume-creds-142-${randomUUID()}`);
@@ -111,5 +111,15 @@ describe("reconstructResumeLaunchEnvironment fail-closed validation", () => {
   it("blocks when the job persists no namespace/org identity", async () => {
     const job = { ...jobWithChain({}), environment: {} };
     await expect(reconstructResumeLaunchEnvironment(job)).rejects.toThrow(/persists no NAMESPACE_ID\/ORG_ID/);
+  });
+
+  it("a malformed chain file never leaks the text it choked on into the reason (#142 round 5)", async () => {
+    const job = jobWithChain({});
+    // Node quotes the offending input in JSON parse errors
+    writeFileSync(job.chainPath, "SECRET_CANARY_VALUE");
+    const error = await reconstructResumeLaunchEnvironment(job).then(() => undefined, (e: unknown) => e as Error);
+    expect(error).toBeInstanceOf(UnresolvedResumeCredentialError);
+    expect(error!.message).not.toContain("SECRET_CANARY_VALUE");
+    expect(error!.message).toContain("could not read its agent profile reference");
   });
 });
