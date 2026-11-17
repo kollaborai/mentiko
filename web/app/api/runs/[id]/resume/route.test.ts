@@ -464,7 +464,7 @@ describe("POST /api/runs/[id]/resume (route-owned attempts)", () => {
     expect(jobs).toHaveLength(1);
     expect(jobs[0].id).toBe(body.data.launchJobId);
     expect(jobs[0].status).toBe("queued");
-    expect(jobs[0].occurrenceId).toMatch(/^resume:run-resume-1:\d+$/);
+    expect(jobs[0].occurrenceId).toMatch(/^resume:run-resume-1:[0-9a-f-]{36}$/);
     expect(jobs[0].targets).toEqual([{ agentId: "reviewer" }]);
     expect(jobs[0].chainPath).toBe(join(runsDir, "chain.json"));
     // round 4: the acceptance binds its launch job by id in the SAME write, so

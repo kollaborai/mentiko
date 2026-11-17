@@ -441,7 +441,9 @@ export const POST = withErrorHandling(async (
     // A fresh occurrence id per resume attempt gives the durable launch job a
     // fresh identity (same shape as the fan-group occurrence ids in adapters.ts),
     // so a retried resume never collides with the previous attempt's job.
-    const occurrenceId = `resume:${runId}:${Date.now()}`;
+    // Derived from the attempt id (#142 round 5), never the clock: two
+    // acceptances in the same millisecond can no longer share a job id.
+    const occurrenceId = `resume:${runId}:${attempt.id}`;
     const webOrigin = resolveInternalWebOrigin(new URL(req.url).origin);
     // The launch base env is fixed BEFORE the acceptance transition: the routed
     // launch job persisted inside that transition derives its identity from the
