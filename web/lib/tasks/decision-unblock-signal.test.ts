@@ -27,7 +27,12 @@ beforeEach(() => {
 });
 
 function signal(metadata: Record<string, unknown>) {
-  return readLinkedDecisionSignal({ namespaceId: "default", orgId: "default", metadata });
+  return readLinkedDecisionSignal({
+    namespaceId: "default",
+    orgId: "default",
+    parentTaskId: "TASK-008",
+    metadata,
+  });
 }
 
 // TASK-008 shape: created from an approved decision plan, then gated on a new
