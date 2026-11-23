@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, existsSync, readFileSync } from 'fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import * as net from 'net';
@@ -112,7 +112,7 @@ async function holdSpecificPort(registry: Holder[], port: number): Promise<Holde
 }
 
 describe('process-manager-ports', () => {
-  let holders: Holder[] = [];
+  const holders: Holder[] = [];
   afterEach(async () => { await killHolders(holders); });
 
   it('describes a foreign port holder and never lists it as ours', async () => {
@@ -147,6 +147,7 @@ describe('process-manager-ports', () => {
     // jest's worker env ignores process.env.PATH mutations for spawned shells,
     // so simulate the shell's contract directly: the inspection script prints
     // the marker on stderr and exits 3 when neither lsof nor fuser exists.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { execSync } = require('child_process');
     const real = execSync as (...a: unknown[]) => string;
     const fake = jest.fn(() => {
@@ -155,6 +156,7 @@ describe('process-manager-ports', () => {
       e.stderr = 'port inspection unavailable\n';
       throw e;
     });
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const spy = jest.spyOn(require('child_process'), 'execSync').mockImplementation(fake as never);
     try {
       expect(() => portHolderPids(12345)).toThrow(/no port inspection utility/);
@@ -269,7 +271,7 @@ describe('process-manager foreign holder behavior', () => {
       const cfgPath = join(cfgDir, 'processes.dev.json');
       const holder = await holdSpecificPort(holders, foreignPort);
 
-      require('fs').writeFileSync(cfgPath, JSON.stringify({
+      writeFileSync(cfgPath, JSON.stringify({
         version: 1,
         processes: [
           {
@@ -347,7 +349,7 @@ describe('process-manager foreign holder behavior', () => {
     try {
       const port = await freeEphemeralPort();
       const cfgPath = join(cfgDir, 'processes.dev.json');
-      require('fs').writeFileSync(cfgPath, JSON.stringify({
+      writeFileSync(cfgPath, JSON.stringify({
         version: 1,
         processes: [
           {
