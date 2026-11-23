@@ -1060,7 +1060,7 @@ export function ChainAssignWorkflow({
     return (
       <div className="space-y-2" data-testid="generation-stopped">
         <div className="text-[10px] text-red-400">
-          {GENERATION_STOP_LABELS[stopReason] || "Automatic retries stopped intentionally after a repeated deterministic rejection."}
+          {errorMessage || GENERATION_STOP_LABELS[stopReason] || "Automatic retries stopped intentionally after a repeated deterministic rejection."}
         </div>
         {rejection && (
           <div className="text-[10px] text-foreground/40 whitespace-pre-wrap">
@@ -1095,11 +1095,21 @@ export function ChainAssignWorkflow({
                 resume_attempt_run_id: null,
                 auto_run_retries: 0,
               };
-              await fetchWithNamespace(`/api/tasks/${encodeURIComponent(task.id)}${wsParam}`, {
+              const res = await fetchWithNamespace(`/api/tasks/${encodeURIComponent(task.id)}${wsParam}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ metadata: JSON.stringify(metadata) }),
               });
+              if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                const message =
+                  typeof data.error === "string"
+                    ? data.error
+                    : data.error?.message || `Failed to clear generation stop (${res.status})`;
+                setErrorMessage(message);
+                setShowErrorDetails(true);
+                return;
+              }
               setGenerationJob(null);
               setErrorMessage(null);
               setStep("idle");
