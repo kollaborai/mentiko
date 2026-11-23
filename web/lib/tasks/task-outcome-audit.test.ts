@@ -102,7 +102,7 @@ beforeEach(() => {
     const task = taskGet("default", taskId, "default");
     if (!task) return { ok: false };
     const next = mutate(task.metadata ?? {}, task);
-    if (next) taskUpdate("default", taskId, { metadata: next });
+    if (next) taskUpdate("default", taskId, { metadata: next }, "default");
     return { ok: true, task: { ...task, metadata: next ?? task.metadata ?? {} } };
   });
   getTemplate.mockReturnValue({ content: "COMPLETION AUDIT\n{{WORKSPACE_CONTEXT}}" });
