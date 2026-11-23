@@ -93,6 +93,7 @@ export function TaskDetailHeader({
   const reportedFailure = [
     task.metadata?.generation_last_error,
     task.metadata?.generation_error,
+    task.metadata?.resume_last_error,
     task.chainBinding?.last_run_blocked_reason,
     task.chainBinding?.last_run_error,
   ].find((value): value is string => typeof value === "string" && value.trim().length > 0);
