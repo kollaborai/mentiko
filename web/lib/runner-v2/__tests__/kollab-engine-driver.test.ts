@@ -592,8 +592,8 @@ describe("marker line boundaries (P1: tokens are fragments)", () => {
 });
 
 describe("stream abort and drain tracking (P1: idle timeout must cancel the stream)", () => {
-  it("idle timeout aborts a stalled SSE stream, stop() leaves no open sockets", async () => {
-    const sockets = new Set<Socket>();
+  it("idle timeout aborts the stalled SSE response before stop returns", async () => {
+    let streamClosed = false;
     const server = createServer((req, res) => {
       if (req.url === "/sessions" && req.method === "POST") {
         res.writeHead(200, { "Content-Type": "application/json" });
@@ -602,6 +602,7 @@ describe("stream abort and drain tracking (P1: idle timeout must cancel the stre
       }
       if (req.url === "/sessions/sess-1/message") {
         // headers + one event, then stall forever
+        res.on("close", () => { streamClosed = true; });
         res.writeHead(200, { "Content-Type": "text/event-stream" });
         res.write('data: {"type":"token","text":"started\\n"}\n\n');
         return; // never ends
@@ -620,10 +621,6 @@ describe("stream abort and drain tracking (P1: idle timeout must cancel the stre
       res.end();
     });
     server.keepAliveTimeout = 300;
-    server.on("connection", (socket) => {
-      sockets.add(socket);
-      socket.on("close", () => sockets.delete(socket));
-    });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     const localFixture = { ...fixture, env: { KOLLABOR_ENGINE_URL: baseUrl, KOLLAB_CONFIG_DIR: fixture.configDir } };
@@ -644,10 +641,10 @@ describe("stream abort and drain tracking (P1: idle timeout must cancel the stre
     // stream stalls: idle timeout (200ms) must abort the read, not hang it
     await waitFor(() => (driver["drains"].get(sessionId) ?? []).length === 0, 3_000);
     await driver.stop(sessionId);
-    await waitFor(() => sockets.size === 0, 3_000);
-    expect(sockets.size).toBe(0);
+    await waitFor(() => streamClosed, 3_000);
+    expect(streamClosed).toBe(true);
+    server.closeIdleConnections(); // control requests may leave pooled keep-alive sockets
     await new Promise<void>((resolve) => server.close(() => resolve()));
-    for (const socket of sockets) socket.destroy();
   });
 
   it("idle abort does NOT flush a trailing partial AGENT_COMPLETE token (P1: idle != end of turn)", async () => {
@@ -657,7 +654,7 @@ describe("stream abort and drain tracking (P1: idle timeout must cancel the stre
     // turn, and later text could still supply a suffix. (The event file may
     // still complete the run per PTY event-first semantics — assert the
     // marker state specifically.)
-    const sockets = new Set<Socket>();
+    let streamClosed = false;
     const server = createServer((req, res) => {
       if (req.url === "/sessions" && req.method === "POST") {
         res.writeHead(200, { "Content-Type": "application/json" });
@@ -665,6 +662,7 @@ describe("stream abort and drain tracking (P1: idle timeout must cancel the stre
         return;
       }
       if (req.url === "/sessions/sess-1/message") {
+        res.on("close", () => { streamClosed = true; });
         res.writeHead(200, { "Content-Type": "text/event-stream" });
         // partial marker line: no trailing newline, then stall forever
         res.write('data: {"type":"token","text":"AGENT_COMPLETE"}\n\n');
@@ -684,10 +682,6 @@ describe("stream abort and drain tracking (P1: idle timeout must cancel the stre
       res.end();
     });
     server.keepAliveTimeout = 300;
-    server.on("connection", (socket) => {
-      sockets.add(socket);
-      socket.on("close", () => sockets.delete(socket));
-    });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     const localFixture = { ...fixture, env: { KOLLABOR_ENGINE_URL: baseUrl, KOLLAB_CONFIG_DIR: fixture.configDir } };
@@ -715,10 +709,10 @@ describe("stream abort and drain tracking (P1: idle timeout must cancel the stre
     const observation = await driver.observe(sessionId);
     expect(observation.latched).toBe(true);
     await driver.stop(sessionId);
-    await waitFor(() => sockets.size === 0, 3_000);
-    expect(sockets.size).toBe(0);
+    await waitFor(() => streamClosed, 3_000);
+    expect(streamClosed).toBe(true);
+    server.closeIdleConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));
-    for (const socket of sockets) socket.destroy();
   });
 });
 
