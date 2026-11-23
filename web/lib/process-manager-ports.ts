@@ -43,9 +43,9 @@ export const PORT_INSPECTION_MISSING = 'port inspection unavailable';
 export function portHolderPids(port: number): number[] {
   const cmd =
     `if command -v lsof >/dev/null 2>&1; then ` +
-    `lsof -nP -iTCP:${port} -sTCP:LISTEN -t 2>/dev/null; ` +
+    `lsof -nP -iTCP:${port} -sTCP:LISTEN -t; ` +
     `elif command -v fuser >/dev/null 2>&1; then ` +
-    `fuser -n tcp ${port} 2>/dev/null; ` +
+    `fuser -n tcp ${port}; ` +
     `else echo "${PORT_INSPECTION_MISSING}" >&2; exit 3; fi`;
   let out: string;
   try {
@@ -55,10 +55,11 @@ export function portHolderPids(port: number): number[] {
     if (e.status === 3 || String(e.stderr || '').includes(PORT_INSPECTION_MISSING)) {
       throw new Error(`no port inspection utility (lsof or fuser) available to check port ${port}`);
     }
-    // lsof/fuser exit nonzero when nothing matches the port: empty result.
-    // fuser cannot filter to listeners; tenant images should include lsof so
-    // connected clients are never mistaken for the server.
-    return [];
+    const stderr = String(e.stderr || '').trim();
+    // lsof and fuser exit 1 with no diagnostic when the port has no holder.
+    // Any diagnostic or other exit status means inspection itself failed.
+    if (e.status === 1 && !stderr) return [];
+    throw new Error(`port inspection failed for port ${port}${stderr ? `: ${stderr}` : ''}`);
   }
   if (!out) return [];
   return out
