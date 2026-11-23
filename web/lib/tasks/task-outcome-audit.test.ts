@@ -801,4 +801,35 @@ describe("recoverTaskOutcomeAudit", () => {
       metadata: expect.objectContaining({ summarized_run_fingerprints: [] }),
     }, "default");
   });
+
+  it("repairs a missing failure count for a failure already recorded on this job", async () => {
+    taskGet.mockReturnValue({
+      id: "TASK-107",
+      metadata: {
+        task_outcome_summary_job_id: "job-summary",
+        task_outcome_summary_status: "failed",
+        task_outcome_summary_source_run_id: "run-execution",
+      },
+    });
+    getJob.mockReturnValue({
+      id: "job-summary",
+      type: "task_run_summary",
+      status: "failed",
+      taskId: "TASK-107",
+      runId: "run-summary",
+      input: { sourceRunId: "run-execution" },
+    });
+    existsSync.mockReturnValue(false);
+
+    await recoverTaskOutcomeAudit({
+      request: {} as Request,
+      namespaceId: "default",
+      orgId: "default",
+      taskId: "TASK-107",
+    });
+
+    expect(taskUpdate).toHaveBeenCalledWith("default", "TASK-107", {
+      metadata: expect.objectContaining({ task_outcome_summary_failures: 1 }),
+    }, "default");
+  });
 });
