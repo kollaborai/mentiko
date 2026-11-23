@@ -195,6 +195,41 @@ describe("importGeneratedTaskTree workspace_id stamping", () => {
       expect(taskGet(ORG, id, NS)!.metadata).not.toEqual(expect.objectContaining({ auto_run: true }));
     }
   });
+
+  it("skips a generated depends_on edge that would form a cycle instead of rolling back the tree (issue #113)", () => {
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const result = importGeneratedTaskTree({
+        namespaceId: NS,
+        orgId: ORG,
+        generated: {
+          title: "Cyclic generated plan",
+          subtasks: [
+            { title: "First", depends_on: [1] }, // First -> Second
+            { title: "Second", depends_on: [0] }, // Second -> First: cycle
+          ],
+        },
+        createdBy: "test",
+        generationJobId: "job-cyclic",
+      });
+
+      // the whole tree still imports
+      expect(result.created).toBe(true);
+      expect(result.createdTaskIds).toHaveLength(3); // parent + two subtasks
+      const [parent, first, second] = result.createdTaskIds;
+      // the first edge landed, the cyclic one was skipped with a warning
+      const firstDeps = taskGet(ORG, first, NS)!.dependencies!.map((d) => d.depends_on_id);
+      const secondDeps = taskGet(ORG, second, NS)!.dependencies!.map((d) => d.depends_on_id);
+      expect(firstDeps).toEqual([second]);
+      expect(secondDeps).toEqual([]);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining(`skipped cyclic dependency ${second} -> ${first}`),
+      );
+      expect(taskGet(ORG, parent, NS)).toBeTruthy();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
 });
 
 describe("processTaskGenerationResult — agent-as-gate route handling", () => {

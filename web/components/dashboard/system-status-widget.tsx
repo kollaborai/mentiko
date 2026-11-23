@@ -111,39 +111,53 @@ function buildServices(
     });
   }
 
-  // background worker (scheduler + reconciler)
-  if (daemon) {
+  // background worker (scheduler + reconciler). Prefer the health signal
+  // (real pid/heartbeat liveness from checkBackgroundWorker); the daemon's
+  // own self-report is only the fallback — it can claim "running" while the
+  // registered pid is dead (issue #136).
+  const workerCheck = c.background_worker;
+  if (workerCheck || daemon) {
+    const daemonUp = daemon?.status === "running";
     services.push({
       label: "worker",
-      status: daemon.status === "running" ? "pass" : "warn",
-      detail:
-        daemon.status === "running" && daemon.uptime
+      status: workerCheck
+        ? workerCheck.status
+        : daemonUp
+          ? "pass"
+          : "warn",
+      detail: workerCheck
+        ? workerCheck.status === "pass" && daemon?.uptime
           ? `up ${dot} ${formatUptime(daemon.uptime)}`
-          : daemon.note || "stopped",
+          : workerCheck.message || "check failed"
+        : daemonUp && daemon?.uptime
+          ? `up ${dot} ${formatUptime(daemon.uptime)}`
+          : daemon?.note || "stopped",
       icon: ClockFilled,
     });
-    services.push({
-      label: "chain watcher",
-      status: daemon.chainWatcher?.status === "running"
-        ? daemon.chainWatcher.lastError ? "warn" : "pass"
-        : "warn",
-      detail: daemon.chainWatcher?.lastError
-        || (daemon.chainWatcher?.status === "running"
-          ? `${daemon.chainWatcher.checkCount || 0} checks`
-          : "stopped"),
-      icon: ClockFilled,
-    });
-    services.push({
-      label: "watchdog",
-      status: daemon.watchdog?.status === "running"
-        ? daemon.watchdog.transportAvailable === false || daemon.watchdog.lastError ? "warn" : "pass"
-        : "warn",
-      detail: daemon.watchdog?.lastError
-        || (daemon.watchdog?.lastCheck
-          ? `${daemon.watchdog.checkCount || 0} checks`
-          : daemon.watchdog?.status || "not checked"),
-      icon: ClockFilled,
-    });
+    if (daemon) {
+      services.push({
+        label: "chain watcher",
+        status: daemon.chainWatcher?.status === "running"
+          ? daemon.chainWatcher.lastError ? "warn" : "pass"
+          : "warn",
+        detail: daemon.chainWatcher?.lastError
+          || (daemon.chainWatcher?.status === "running"
+            ? `${daemon.chainWatcher.checkCount || 0} checks`
+            : "stopped"),
+        icon: ClockFilled,
+      });
+      services.push({
+        label: "watchdog",
+        status: daemon.watchdog?.status === "running"
+          ? daemon.watchdog.transportAvailable === false || daemon.watchdog.lastError ? "warn" : "pass"
+          : "warn",
+        detail: daemon.watchdog?.lastError
+          || (daemon.watchdog?.lastCheck
+            ? `${daemon.watchdog.checkCount || 0} checks`
+            : daemon.watchdog?.status || "not checked"),
+        icon: ClockFilled,
+      });
+    }
   }
 
   // disk

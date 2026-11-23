@@ -10,8 +10,7 @@ import * as http from 'http';
 import * as os from 'os';
 import * as crypto from 'crypto';
 import type {
-  ProcessConfig, ProcessesFile, ReadinessConfig,
-  IPCRequest,
+  ProcessConfig, ProcessesFile, ReadinessConfig, IPCRequest, ProcessStatus,
 } from './pm-types';
 import {
   buildManagedProcessEnv,
@@ -22,7 +21,9 @@ import {
   shouldReplaceUnavailableDevContainerRoot,
 } from './process-manager-env';
 import { registerKollabMentikoMcpServer } from './kollabor-mcp-settings';
-import { formatReadinessTimeout, resolveReadinessTimeout, resolveRestartDelay } from './process-manager-readiness';
+import {
+  formatReadinessTimeout, resolveReadinessTimeout, resolveRestartDelay, reportedProcessStatus,
+} from './process-manager-readiness';
 import {
   pmStateDir, writePidFile, removePidFile, readPidFiles,
   pidAlive, recordedPidStillOurs, portHeldByOthers,
@@ -285,9 +286,18 @@ function scheduleRestart(m: ManagedProcess) {
   if (shuttingDown) return;
   const restart = m.config.restart;
   if (restart && !restart.enabled) { m.status = 'stopped'; return; }
+  // one restart timer per managed object: a crash while an earlier timer is
+  // still pending must replace it, never stack a second one (codex rev2 P1).
+  if (m.restartTimer) { clearTimeout(m.restartTimer); m.restartTimer = null; }
   const nextRestart = resolveRestartDelay(restart, m.restarts);
-  const max = nextRestart?.maxRestarts ?? restart?.maxRestarts ?? 10;
-  if (!nextRestart) {
+  if (!nextRestart) { m.status = 'stopped'; return; }
+  const max = nextRestart.maxRestarts;
+  if (nextRestart.exhausted && (m.config.critical || m.config.daemonize)) {
+    // issue #136: critical services still give up (a stack/container restart is
+    // their recovery path), and daemonized services keep exactly origin/main
+    // semantics (give up on an exhausted budget; daemon liveness supervision is
+    // a follow-up). Only non-daemonized, non-critical services keep retrying
+    // below, so they never reach a permanent off state.
     m.status = 'failed';
     logErr(`${m.config.name} exceeded max restarts (${max}/${max}), giving up`);
     if (m.config.critical) { logErr(`critical process ${m.config.name} failed, shutting down`); exitCode = 1; shutdown(); }
@@ -295,7 +305,9 @@ function scheduleRestart(m: ManagedProcess) {
   }
   const delay = nextRestart.delayMs;
   m.restarts++;
-  log(`${m.config.name} restarting in ${delay}ms (attempt ${m.restarts}/${max})`);
+  log(nextRestart.exhausted
+    ? `${m.config.name} restart budget exhausted (${max}), still retrying in ${delay}ms (capped backoff, attempt ${m.restarts})`
+    : `${m.config.name} restarting in ${delay}ms (attempt ${m.restarts}/${max})`);
   m.restartTimer = setTimeout(async () => {
     m.restartTimer = null;
     if (!shuttingDown) await startOne(m.config);
@@ -312,7 +324,10 @@ async function startOne(config: ProcessConfig, options: StartOptions = {}): Prom
     clearTimeout(prev.restartTimer);
     prev.restartTimer = null;
   }
-  if (prev?.status === 'ready' && (prev.child || prev.pid)) {
+  // daemonized services keep exactly origin/main semantics here (issue #136:
+  // daemon liveness supervision is a follow-up); the verified-liveness check
+  // applies only to non-daemonized services.
+  if (prev?.status === 'ready' && (prev.config.daemonize ? (prev.child || prev.pid) : hasLiveProcess(prev))) {
     log(`${config.name} already ready, skipping duplicate start`);
     return prev;
   }
@@ -320,6 +335,9 @@ async function startOne(config: ProcessConfig, options: StartOptions = {}): Prom
   // held by anything this manager did not record, refuse to start and say why.
   // If the port cannot even be inspected, that is also a refusal — absence of
   // tooling must not read as "port is free" (fail closed).
+  // This failure is intentionally terminal (no retry): retrying cannot make a
+  // foreign process go away, and critical services stop the manager so the
+  // container/stack restart is the recovery path.
   const heldPort = readinessPort(config.readiness);
   if (heldPort !== null) {
     const ownPids = new Set<number>([process.pid]);
@@ -359,7 +377,19 @@ async function startOne(config: ProcessConfig, options: StartOptions = {}): Prom
   m.stoppedByUser = prev?.stoppedByUser ?? false;
   managed.set(config.name, m);
   const ready = await waitReady(config.name, config.readiness);
-  if (ready) {
+  // codex rev2 P1: a fast-exiting process can restart (replacing this
+  // ManagedProcess with a newer generation) while this readiness wait is
+  // still pending. The stale wait must not touch state or schedule timers on
+  // the obsolete generation — that would let two generations both spawn
+  // children. Abandon it entirely.
+  if (managed.get(config.name) !== m) {
+    log(`${config.name} readiness wait finished on an obsolete generation, ignoring`);
+    return m;
+  }
+  // daemonized services keep exactly origin/main readiness semantics (the
+  // successful probe declares them ready; daemon liveness is a follow-up);
+  // the live-process requirement applies only to non-daemonized services.
+  if (ready && (config.daemonize || m.child || m.pid)) {
     m.status = 'ready';
     const r = config.readiness;
     const detail = !r ? '' : r.type === 'socket' && r.path ? ` (socket at ${expandEnv(r.path)})`
@@ -372,27 +402,36 @@ async function startOne(config: ProcessConfig, options: StartOptions = {}): Prom
       adoptDaemonPid(m, 'daemon forked before readiness');
     }
   } else if (!shuttingDown) {
-    const timeoutMs = resolveReadinessTimeout(config.readiness);
-    logErr(formatReadinessTimeout(config.name, config.readiness, timeoutMs, expandEnv));
-    await killProc(m);
-    m.status = 'crashed';
-    if (options.abortCriticalReadinessTimeout && config.critical) {
-      const retry = config.restart?.retryOnStartup
-        ? resolveRestartDelay(config.restart, m.restarts)
-        : null;
-      if (retry) {
-        m.restarts++;
-        log(`${config.name} retrying startup in ${retry.delayMs}ms after readiness timeout (attempt ${m.restarts}/${retry.maxRestarts})`);
-        await sleep(retry.delayMs);
-        if (shuttingDown) return m;
-        return startOne(config, options);
-      }
-      m.status = 'failed';
-      logErr(`${config.name} failed readiness during startup after ${m.restarts} retries (max ${config.restart?.maxRestarts ?? 0})`);
-      exitCode = 1;
-      await shutdown();
+    if (ready) {
+      // issue #136: the child died while the readiness probe was running.
+      // handleExit already ran (it scheduled a restart); never report ready
+      // for a dead process and do not schedule a second restart timer.
+      logErr(`${config.name} exited during readiness probe, not ready`);
+      m.status = 'crashed';
+      if (!m.restartTimer) scheduleRestart(m);
     } else {
-      scheduleRestart(m);
+      const timeoutMs = resolveReadinessTimeout(config.readiness);
+      logErr(formatReadinessTimeout(config.name, config.readiness, timeoutMs, expandEnv));
+      await killProc(m);
+      m.status = 'crashed';
+      if (options.abortCriticalReadinessTimeout && config.critical) {
+        const retry = config.restart?.retryOnStartup
+          ? resolveRestartDelay(config.restart, m.restarts)
+          : null;
+        if (retry && !retry.exhausted) {
+          m.restarts++;
+          log(`${config.name} retrying startup in ${retry.delayMs}ms after readiness timeout (attempt ${m.restarts}/${retry.maxRestarts})`);
+          await sleep(retry.delayMs);
+          if (shuttingDown) return m;
+          return startOne(config, options);
+        }
+        m.status = 'failed';
+        logErr(`${config.name} failed readiness during startup after ${m.restarts} retries (max ${config.restart?.maxRestarts ?? 0})`);
+        exitCode = 1;
+        await shutdown();
+      } else {
+        scheduleRestart(m);
+      }
     }
   }
   return m;
@@ -489,6 +528,15 @@ async function killProc(m: ManagedProcess) {
 
 function stateDir(): string {
   return pmStateDir(os.homedir());
+}
+
+// codex rev2 P2: liveness for status/list must be verified, not inferred from
+// references. A daemonized child handle is null by design; a discovered daemon
+// pid can die with no exit event ever reaching us. Only a live pid (or a live
+// child handle, which carries its own exit event) counts.
+function hasLiveProcess(m: ManagedProcess): boolean {
+  if (m.child) return true;
+  return m.pid > 0 && pidAlive(m.pid);
 }
 
 function waitExit(m: ManagedProcess, timeout: number): Promise<boolean> {
@@ -660,19 +708,32 @@ async function handleIpc(raw: string, conn: net.Socket) {
   try {
     switch (req.cmd) {
       case 'status': {
-        const procs = Array.from(managed.values()).map(m => ({
-          name: m.config.name, pid: m.pid, status: m.status, restarts: m.restarts,
-          uptime: m.status === 'ready' ? Date.now() - m.startedAt : 0,
-          lastExit: m.lastExit, lastExitCode: m.lastExitCode,
-        }));
+        const procs = Array.from(managed.values()).map(m => {
+          // issue #136: never report "ready" for a non-daemonized service with
+          // no live process. Daemonized services report exactly what main
+          // reports (their liveness supervision is a follow-up).
+          const status = m.config.daemonize
+            ? (m.status as ProcessStatus)
+            : reportedProcessStatus(m.status as ProcessStatus, hasLiveProcess(m));
+          return {
+            name: m.config.name, pid: m.pid, status, restarts: m.restarts,
+            uptime: status === 'ready' ? Date.now() - m.startedAt : 0,
+            lastExit: m.lastExit, lastExitCode: m.lastExitCode,
+          };
+        });
         ok({ processes: procs, uptime: Date.now() - bootTime, version: 1 });
         break;
       }
       case 'list': {
-        ok({ processes: Array.from(managed.values()).map(m => ({
-          name: m.config.name, status: m.status, pid: m.pid,
-          uptime: m.status === 'ready' ? Date.now() - m.startedAt : 0, restarts: m.restarts,
-        }))});
+        ok({ processes: Array.from(managed.values()).map(m => {
+          const status = m.config.daemonize
+            ? (m.status as ProcessStatus)
+            : reportedProcessStatus(m.status as ProcessStatus, hasLiveProcess(m));
+          return {
+            name: m.config.name, status, pid: m.pid,
+            uptime: status === 'ready' ? Date.now() - m.startedAt : 0, restarts: m.restarts,
+          };
+        })});
         break;
       }
       case 'stop': {

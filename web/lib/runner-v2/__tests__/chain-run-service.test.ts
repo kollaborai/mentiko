@@ -15,6 +15,8 @@ process.env.PORT = "3000";
 
 import { isRunnerV2Enabled } from "@/lib/runner-v2/flags";
 import { startRunnerV2Launch } from "@/lib/runner-v2/controller";
+import { execAuditLog } from "@/lib/api/audit-exec";
+import { getSessionUser } from "@/lib/auth/auth-bridge";
 
 jest.mock("child_process", () => ({
   ...jest.requireActual("child_process"),
@@ -50,7 +52,13 @@ jest.mock("@/lib/api/audit-exec", () => ({
 }));
 
 jest.mock("@/lib/auth/auth-bridge", () => ({
-  getSessionUser: jest.fn(() => Promise.resolve({ id: "user-1", role: "admin" })),
+  getSessionUser: jest.fn(() => Promise.resolve({
+    id: "session-user-1",
+    sessionId: "session-1",
+    role: "admin",
+    namespaceId: "default",
+    orgId: "default",
+  })),
 }));
 
 jest.mock("@/lib/agents/agent-loader", () => ({
@@ -134,6 +142,8 @@ const mockSpawn = spawn as jest.MockedFunction<typeof spawn>;
 const mockSpawnSync = spawnSync as jest.MockedFunction<typeof spawnSync>;
 const mockIsRunnerV2Enabled = isRunnerV2Enabled as jest.MockedFunction<typeof isRunnerV2Enabled>;
 const mockStartRunnerV2Launch = startRunnerV2Launch as jest.MockedFunction<typeof startRunnerV2Launch>;
+const mockExecAuditLog = execAuditLog as jest.MockedFunction<typeof execAuditLog>;
+const mockGetSessionUser = getSessionUser as jest.MockedFunction<typeof getSessionUser>;
 let currentRunsDir = "";
 
 declare global {
@@ -224,6 +234,48 @@ describe("chain-run-service runner-v2 guard", () => {
     }));
     expect(mockIsRunnerV2Enabled).not.toHaveBeenCalled();
     expect(mockSpawn).not.toHaveBeenCalled();
+  });
+
+  it("records the session actor on both lifecycle events and the run record", async () => {
+    await startMinimalRun("run-session-actor");
+
+    const run = JSON.parse(readFileSync(join(currentRunsDir, "run-session-actor", "run.json"), "utf8"));
+    expect(run).toMatchObject({
+      user_id: "session-user-1",
+      session_id: "session-1",
+      org_role: "admin",
+    });
+    expect(mockExecAuditLog).toHaveBeenNthCalledWith(
+      1,
+      "chain_start",
+      expect.any(String),
+      expect.objectContaining({
+        user_id: "session-user-1",
+        session_id: "session-1",
+        org_role: "admin",
+      }),
+      expect.objectContaining({ userId: "session-user-1" }),
+    );
+    expect(mockExecAuditLog).toHaveBeenNthCalledWith(
+      2,
+      "chain_complete",
+      expect.any(String),
+      expect.objectContaining({
+        user_id: "session-user-1",
+        session_id: "session-1",
+        org_role: "admin",
+      }),
+      expect.objectContaining({ userId: "session-user-1" }),
+    );
+  });
+
+  it("refuses to start and writes no start event when no session actor resolves", async () => {
+    mockGetSessionUser.mockResolvedValueOnce(null);
+
+    await expect(startMinimalRun("run-without-actor")).rejects.toThrow("Session user required");
+
+    expect(mockExecAuditLog).not.toHaveBeenCalled();
+    expect(() => readFileSync(join(currentRunsDir, "run-without-actor", "run.json"), "utf8")).toThrow();
   });
 
   it("uses the internal HTTP origin for a run started through the public tenant URL", async () => {

@@ -675,7 +675,7 @@ export async function getAuth() {
                       "auth_login",
                       "user logged in",
                       { user_id: user.id },
-                      { source: "auth", ip: process.env.AUDIT_IP }
+                      { source: "auth", ip: process.env.AUDIT_IP, userId: user.id }
                     ).catch((err) => {
                       console.error("[auth] audit-login failed:", err);
                     });
@@ -727,7 +727,7 @@ export async function getAuth() {
                       "auth_logout",
                       "user logged out",
                       { user_id: user.id },
-                      { source: "auth" }
+                      { source: "auth", userId: user.id }
                     ).catch((err) => {
                       console.error("[auth] audit-logout failed:", err);
                     });

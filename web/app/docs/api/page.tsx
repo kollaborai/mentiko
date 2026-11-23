@@ -251,7 +251,7 @@ const endpoints: ApiEndpoint[] = [
     description: "create agent profile",
     body: [
       { name: "name", type: "string", required: true, description: "profile name" },
-      { name: "cli", type: "string", required: true, description: "claude|codex|kollab|aider" },
+      { name: "cli", type: "string", required: true, description: "claude|codex|kollab" },
       { name: "model", type: "string", required: false, description: "model identifier" },
       { name: "env", type: "object", required: false, description: "environment variables" },
     ],
@@ -278,7 +278,7 @@ const endpoints: ApiEndpoint[] = [
     description: "update agent profile",
     body: [
       { name: "name", type: "string", required: false, description: "profile name" },
-      { name: "cli", type: "string", required: false, description: "claude|codex|kollab|aider" },
+      { name: "cli", type: "string", required: false, description: "claude|codex|kollab" },
       { name: "model", type: "string", required: false, description: "model identifier" },
     ],
     response: { success: true, profile: {} },
@@ -1322,9 +1322,10 @@ const endpoints: ApiEndpoint[] = [
     method: "GET",
     path: "/api/health",
     auth: false,
-    description: "health check for probes",
+    description: "health check for probes (503 only when the platform itself is not ready; a down background worker degrades status but keeps the endpoint ready)",
     response: {
       status: "healthy",
+      readiness: "healthy",
       timestamp: "string",
       uptime_seconds: 0,
       checks: {},

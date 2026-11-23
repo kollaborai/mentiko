@@ -3,13 +3,20 @@ import {
   updateDecision,
   withDecisionResolutionLock,
 } from "@/lib/decisions/decision-storage";
-import { taskAddDep, taskCreate, taskGet, taskUpdate } from "@/lib/tasks/task-store";
+import { TaskDependencyCycleError, selectFollowUpTaskIds, taskAddDep, taskCreate, taskGet, taskUpdate } from "@/lib/tasks/task-store";
 import { isTaskWorkMode } from "@/lib/tasks/work-mode";
 import { applyLifecycleEvent, type LifecycleEffectDeps } from "@/lib/orchestration/task-lifecycle-service";
 import { hydrateLifecycleState } from "@/lib/orchestration/task-lifecycle-hydrate";
 import type { TaskLifecycleState } from "@/lib/orchestration/task-lifecycle-types";
 import type { TaskRecord } from "@/lib/tasks/task-store-types";
-import type { Decision, ExecutionPlan, Option, TailoredOption } from "@/lib/decisions/decision-types";
+import type {
+  Decision,
+  DecisionActorIdentity,
+  DecisionResolutionChannel,
+  ExecutionPlan,
+  Option,
+  TailoredOption,
+} from "@/lib/decisions/decision-types";
 import { BadRequest, NotFound } from "@/lib/api-errors";
 import { triggerAutoRunScan } from "@/lib/runs/auto-run-service";
 import {
@@ -34,7 +41,8 @@ export interface ResolveDecisionToTasksInput {
   notes?: string;
   workspaceId?: string;
   workspacePath?: string;
-  selectedBy?: string;
+  actor: DecisionActorIdentity;
+  channel: DecisionResolutionChannel;
 }
 
 export interface ResolveDecisionToTasksResult {
@@ -163,14 +171,48 @@ async function applyResolutionLifecycle(input: {
   workspaceId?: string;
   workspacePath?: string;
 }): Promise<void> {
-  const { namespaceId, orgId, parentTask, decisionTaskId, followUpTaskIds, workspaceId, workspacePath } = input;
+  const { namespaceId, orgId, parentTask, decisionTaskId, workspaceId, workspacePath } = input;
+  // Issue #113: decide which follow-ups the parent can actually wait on
+  // BEFORE the reducer runs. Waiting on the parent itself, or on a task that
+  // already (transitively) depends on the parent, can never complete — the
+  // reducer would persist those ids into followup_task_ids /
+  // blocked_by_task_ids and deadlock the lifecycle. If nothing valid remains,
+  // the reducer's empty-list branch resumes the parent instead.
+  const validFollowUpTaskIds = selectFollowUpTaskIds({
+    orgId,
+    parentTaskId: parentTask.id,
+    candidates: input.followUpTaskIds,
+    namespaceId,
+  });
+  // Issue #113 P1: insert each edge FIRST and keep only the ids whose edge
+  // was actually accepted. Another writer can land the reverse edge (follow-up
+  // -> parent) after selection and before this insert; taskAddDep then rejects
+  // ours, and persisting that id would park the parent behind a follow-up that
+  // can never complete. The lifecycle state below is computed from the
+  // ACCEPTED edges only, so followup_task_ids / blocked_by_task_ids always
+  // match the persisted dependency graph.
+  const acceptedFollowUpTaskIds: string[] = [];
+  for (const followUpTaskId of validFollowUpTaskIds) {
+    try {
+      taskAddDep(orgId, parentTask.id, followUpTaskId, namespaceId, workspaceId);
+      acceptedFollowUpTaskIds.push(followUpTaskId);
+    } catch (error) {
+      if (error instanceof TaskDependencyCycleError) {
+        console.warn(
+          `[decision-resolution] dropped follow-up ${followUpTaskId}: edge ${parentTask.id} -> ${followUpTaskId} was rejected (${error.message})`,
+        );
+        continue;
+      }
+      throw error;
+    }
+  }
   const deps: LifecycleEffectDeps = {
     startOutcomeSummary: async () => undefined,
     createDecisionGate: async () => undefined,
     blockOnDecision: () => undefined,
-    createFollowupDependencies: (depOrgId, taskId, followUpTaskId, depNamespaceId, depWorkspaceId) => {
-      taskAddDep(depOrgId, taskId, followUpTaskId, depNamespaceId, depWorkspaceId);
-    },
+    // Edges were already inserted above; the reducer effect is informational
+    // here and must not insert (and fail) a second time.
+    createFollowupDependencies: () => undefined,
     resumeOriginalTask: () => undefined,
     closeTask: () => undefined,
     clearDecisionGate: () => undefined,
@@ -186,7 +228,7 @@ async function applyResolutionLifecycle(input: {
       type: "decision.resolved",
       taskId: parentTask.id,
       decisionTaskId,
-      followUpTaskIds,
+      followUpTaskIds: acceptedFollowUpTaskIds,
     },
     context: {
       request: {} as Request,
@@ -234,8 +276,13 @@ async function resolveDecisionToTasksUnlocked({
   notes,
   workspaceId,
   workspacePath,
-  selectedBy = "user",
+  actor,
+  channel,
 }: ResolveDecisionToTasksInput): Promise<ResolveDecisionToTasksResult> {
+  if (!actor.user_id.trim()) {
+    throw new BadRequest("Session user required to resolve decision");
+  }
+
   const decision = getDecision(namespaceId, orgId, decisionId, workspacePath);
   const resolvedWorkspacePath = workspacePath ?? decision?.workspacePath;
   const taskWorkspaceId = workspaceId ?? resolvedWorkspacePath;
@@ -322,6 +369,7 @@ async function resolveDecisionToTasksUnlocked({
         orgId,
         {
           workspace_id: taskWorkspaceId,
+          created_by: actor.user_id,
           title: planTask.title,
           description: [
             planTask.description,
@@ -373,6 +421,7 @@ async function resolveDecisionToTasksUnlocked({
       orgId,
       {
         workspace_id: taskWorkspaceId,
+        created_by: actor.user_id,
         title: `${decision.title || decision.prompt}: ${option.name}`,
         description: [
           ...descriptionParts,
@@ -397,6 +446,7 @@ async function resolveDecisionToTasksUnlocked({
         orgId,
         {
           workspace_id: taskWorkspaceId,
+          created_by: actor.user_id,
           title: planTask.title,
           description: [
             planTask.description,
@@ -448,6 +498,7 @@ async function resolveDecisionToTasksUnlocked({
       orgId,
       {
         workspace_id: taskWorkspaceId,
+        created_by: actor.user_id,
         title: `${decision.title || decision.prompt}: ${option.name}`,
         description: descriptionParts.join("\n"),
         issue_type: "task",
@@ -523,8 +574,10 @@ async function resolveDecisionToTasksUnlocked({
       status: "approved",
       resolution: {
         selectedOptionId,
-        selectedBy,
+        selectedBy: actor.user_id,
         selectedAt: resolvedAt,
+        actor,
+        channel,
         notes,
         taskId: epicId,
         ...(allTaskIds.length > 1 ? { taskIds: allTaskIds } : {}),

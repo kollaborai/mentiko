@@ -17,7 +17,11 @@ import {
   bindRoutedLaunchJobAttempt,
   routedLaunchJobLeaseOwned,
 } from "@/lib/runner-v2/launch-job";
-import { classifyCliReadiness, type CliReadinessResult } from "@/lib/runner-v2/readiness-policy";
+import {
+  applyBuiltinCliStartupHold,
+  classifyCliReadiness,
+  type CliReadinessResult,
+} from "@/lib/runner-v2/readiness-policy";
 import { composerState, confirmComposerSubmission } from "@/lib/runner-v2/composer-submit";
 import {
   findTranscriptJsonlByInstructionPath,
@@ -834,12 +838,16 @@ async function waitForBootstrapReadiness(
       });
       throw new Error("runner-v2 bootstrap command echoed without starting agent CLI");
     }
-    const readiness = classifyCliReadiness({
-      readiness: readinessPolicy.readiness,
-      profileMissing: readinessPolicy.profileMissing,
+    const readiness = applyBuiltinCliStartupHold(
+      readinessPolicy.cli,
       output,
-      failClosed,
-    });
+      classifyCliReadiness({
+        readiness: readinessPolicy.readiness,
+        profileMissing: readinessPolicy.profileMissing,
+        output,
+        failClosed,
+      }),
+    );
     if (readiness.status === "ready") return;
     if (
       isRecoverableReadinessStatus(readiness.status)
@@ -866,11 +874,26 @@ async function waitForBootstrapReadiness(
       });
       throw new BootstrapReadinessBlockedError(`runner-v2 typed bootstrap readiness ${readiness.status}: ${readiness.reason}`);
     }
-    // unknown / not-yet-ready: v1 legacy proceeds immediately (return 0);
-    // fail-closed keeps polling through the grace window and blocks at the deadline.
+    // Built-in cli startup hold (#123): keep polling in BOTH modes until the
+    // live footer clears — a plain unknown would let the default fail-open
+    // mode proceed immediately and defeat the hold. At the deadline each mode
+    // keeps its own unknown behavior: fail-closed falls through to the
+    // deadline block below, default mode proceeds after the loop.
+    if (readiness.startupHold) {
+      await sleep(pollMs);
+      continue;
+    }
+    // unrelated unknown / not-yet-ready: v1 legacy proceeds immediately
+    // (return 0); fail-closed keeps polling through the grace window and
+    // blocks at the deadline.
     if (!failClosed) return;
     await sleep(pollMs);
   }
+  // The loop falls through only in fail-closed mode (default returns on the
+  // first plain unknown) or when a startup hold outlives the deadline in
+  // default mode; the hold must not make default mode stricter than today,
+  // so it proceeds instead of blocking.
+  if (!failClosed) return;
   // fail-closed deadline: nothing ever proved readiness. Mirror v1's post-loop
   // mark_state_blocked + mark_run_agent_blocked (return 1) — write artifacts,
   // keep the session alive, submit no instructions.
@@ -953,9 +976,13 @@ class BootstrapReadinessBlockedError extends Error {}
 function resolvePlanReadinessPolicy(plan: AgentBootstrapPlan): {
   readiness?: AgentProfileReadinessConfig | null;
   profileMissing?: boolean;
+  cli?: string;
 } {
   if (plan.profileReadiness) {
-    return { readiness: plan.profileReadiness };
+    // Inline readiness came from the same profile file; read its cli for the
+    // built-in startup holds rather than trusting plan.cli (a chain agent can
+    // leave cli unset while its profile is codex).
+    return { readiness: plan.profileReadiness, cli: readProfileCli(plan.profilePath) ?? plan.cli };
   }
   // No resolvable profile path -> v1 cli_readiness_check treats a missing profile
   // as "unknown" (profileMissing), never a prompt-shape guess.
@@ -965,10 +992,21 @@ function resolvePlanReadinessPolicy(plan: AgentBootstrapPlan): {
   try {
     const profile = JSON.parse(readFileSync(plan.profilePath, "utf8")) as {
       readiness?: AgentProfileReadinessConfig;
+      cli?: string;
     };
-    return { readiness: profile.readiness ?? null };
+    return { readiness: profile.readiness ?? null, cli: profile.cli ?? plan.cli };
   } catch {
     return { profileMissing: true };
+  }
+}
+
+function readProfileCli(profilePath?: string): string | undefined {
+  if (!profilePath || !existsSync(profilePath)) return undefined;
+  try {
+    const profile = JSON.parse(readFileSync(profilePath, "utf8")) as { cli?: string };
+    return typeof profile.cli === "string" && profile.cli.trim() ? profile.cli : undefined;
+  } catch {
+    return undefined;
   }
 }
 

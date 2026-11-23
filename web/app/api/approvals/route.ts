@@ -50,10 +50,14 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   const orgId = await getOrgIdFromRequest(request);
 
   const body = await request.json();
-  const { chainId, runId, agentName, stepName, action, description, method, timeoutMinutes } = body as Partial<ApprovalRequest> & { timeoutMinutes?: number };
+  const { chainId, runId, agentName, stepName, action, description, method, timeoutMinutes, approvers } = body as Partial<ApprovalRequest> & { timeoutMinutes?: number };
 
   if (!chainId || !runId || !agentName || !action) {
     throw new BadRequest("chainId, runId, agentName, action required", { fields: ["chainId", "runId", "agentName", "action"] });
+  }
+
+  if (approvers !== undefined && (!Array.isArray(approvers) || approvers.some((id) => typeof id !== "string" || !id.trim()))) {
+    throw new BadRequest("approvers must be a list of non-empty user ids", { field: "approvers" });
   }
 
   const now = new Date().toISOString();
@@ -74,6 +78,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     action,
     description: description ?? action,
     metadata: {},
+    ...(approvers ? { approvers } : {}),
   };
 
   await createApprovalRequest(namespaceId, orgId, approval);

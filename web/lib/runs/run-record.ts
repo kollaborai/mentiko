@@ -95,6 +95,10 @@ export interface RunRecord {
   chainId?: string;
   goal: string;
   started: string;
+  /** Session actor that initiated the run, separate from the process OS user. */
+  user_id?: string;
+  session_id?: string;
+  org_role?: string;
   status: RunStatus;
   sessions?: string[];
   agents: RunAgentRecord[];
@@ -120,6 +124,9 @@ export interface RunListRecord {
   chainId?: string;
   goal: string;
   started: string;
+  user_id?: string;
+  session_id?: string;
+  org_role?: string;
   completed?: string;
   status: RunStatus;
   status_message?: string;
@@ -448,6 +455,9 @@ export function projectRunRecordForList(
     ...(record.chainId !== undefined ? { chainId: record.chainId } : {}),
     goal: record.goal,
     started: record.started,
+    ...(record.user_id !== undefined ? { user_id: record.user_id } : {}),
+    ...(record.session_id !== undefined ? { session_id: record.session_id } : {}),
+    ...(record.org_role !== undefined ? { org_role: record.org_role } : {}),
     ...(record.completed !== undefined ? { completed: record.completed } : {}),
     status: record.status,
     ...(record.status_message !== undefined ? { status_message: record.status_message } : {}),

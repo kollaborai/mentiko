@@ -645,7 +645,7 @@ describe("recoverTaskOutcomeAudit", () => {
     }));
   });
 
-  it("does not mutate when the failed summary artifact is not a valid audit payload", async () => {
+  it("does not import an invalid artifact but marks the summary failed on the task", async () => {
     taskGet.mockReturnValue({
       id: "TASK-107",
       metadata: {
@@ -670,9 +670,103 @@ describe("recoverTaskOutcomeAudit", () => {
       namespaceId: "default",
       orgId: "default",
       taskId: "TASK-107",
-    })).resolves.toEqual({ status: "not_recoverable" });
+    })).resolves.toEqual({ status: "failed", jobId: "job-summary", sourceRunId: "run-execution" });
     expect(updateJob).not.toHaveBeenCalled();
-    expect(taskUpdate).not.toHaveBeenCalled();
+    expect(taskUpdate).toHaveBeenCalledWith("default", "TASK-107", {
+      metadata: expect.objectContaining({
+        task_outcome_summary_status: "failed",
+        task_outcome_summary_failures: 1,
+        task_outcome_summary_error: "Task outcome summary failed",
+      }),
+    }, "default");
     expect(applyCompletionAudit).not.toHaveBeenCalled();
+  });
+
+  it("propagates a monitor-escalated summary failure with no artifact so the task leaves summarizing", async () => {
+    const escalationError = "monitor: no real progress after 5 nudges; escalating instead of nudging an unresponsive session indefinitely";
+    taskGet.mockReturnValue({
+      id: "TASK-107",
+      issue_type: "task",
+      status: "open",
+      metadata: {
+        lifecycle_phase: "summarizing",
+        task_outcome_summary_status: "running",
+        task_outcome_summary_job_id: "job-summary",
+        task_outcome_summary_source_run_id: "run-execution",
+        task_outcome_summary_run_fingerprint: "completed:f1",
+        summarized_run_fingerprints: ["run-execution::completed:f1"],
+      },
+    });
+    getJob.mockReturnValue({
+      id: "job-summary",
+      type: "task_run_summary",
+      status: "failed",
+      taskId: "TASK-107",
+      runId: "run-summary",
+      chainId: "run-summary-generation",
+      error: escalationError,
+      input: { sourceRunId: "run-execution", runFingerprint: "completed:f1" },
+    });
+    existsSync.mockReturnValue(false);
+
+    const result = await recoverTaskOutcomeAudit({
+      request: {} as Request,
+      namespaceId: "default",
+      orgId: "default",
+      taskId: "TASK-107",
+    });
+
+    expect(result).toEqual({ status: "failed", jobId: "job-summary", sourceRunId: "run-execution" });
+    expect(updateJob).not.toHaveBeenCalled();
+    expect(taskUpdate).toHaveBeenCalledWith("default", "TASK-107", {
+      metadata: expect.objectContaining({
+        lifecycle_phase: "summarizing",
+        task_outcome_summary_status: "failed",
+        task_outcome_summary_job_id: "job-summary",
+        task_outcome_summary_run_id: "run-summary",
+        task_outcome_summary_chain_id: "run-summary-generation",
+        task_outcome_summary_source_run_id: "run-execution",
+        task_outcome_summary_failures: 1,
+        task_outcome_summary_run_fingerprint: undefined,
+        summarized_run_fingerprints: [],
+        task_outcome_summary: undefined,
+        task_outcome_summary_completed_at: undefined,
+        task_outcome_summary_error: escalationError,
+      }),
+    }, "default");
+    expect(applyCompletionAudit).not.toHaveBeenCalled();
+  });
+
+  it("does not double-count a failure already recorded for the same failed job", async () => {
+    taskGet.mockReturnValue({
+      id: "TASK-107",
+      metadata: {
+        task_outcome_summary_job_id: "job-summary",
+        task_outcome_summary_status: "failed",
+        task_outcome_summary_source_run_id: "run-execution",
+        task_outcome_summary_failures: 2,
+      },
+    });
+    getJob.mockReturnValue({
+      id: "job-summary",
+      type: "task_run_summary",
+      status: "failed",
+      taskId: "TASK-107",
+      runId: "run-summary",
+      input: { sourceRunId: "run-execution" },
+    });
+    existsSync.mockReturnValue(false);
+
+    await expect(recoverTaskOutcomeAudit({
+      request: {} as Request,
+      namespaceId: "default",
+      orgId: "default",
+      taskId: "TASK-107",
+    })).resolves.toEqual({ status: "failed", jobId: "job-summary", sourceRunId: "run-execution" });
+    expect(taskUpdate).toHaveBeenCalledWith("default", "TASK-107", {
+      metadata: expect.objectContaining({
+        task_outcome_summary_failures: 2,
+      }),
+    }, "default");
   });
 });

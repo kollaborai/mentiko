@@ -59,7 +59,6 @@ describe("agent provider catalog", () => {
     expect(getTerminalAuthCommand("codex")).toBe("codex login --device-auth");
     expect(getTerminalAuthCommand("antigravity")).toBe("agy");
     expect(getTerminalAuthCommand("kollab")).toBe("kollab --login openai");
-    expect(getTerminalAuthCommand("aider")).toBe("aider --help");
   });
 
   it("includes every provider credential in quick secret presets", () => {

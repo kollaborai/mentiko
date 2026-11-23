@@ -15,6 +15,12 @@ export type { AuditLogMetadata };
 export interface AuditExecOptions {
   source?: string;
   ip?: string;
+  /**
+   * Authenticated application actor, set only by trusted server-side code
+   * from the session; never copy it from request JSON. Without it the entry
+   * is attributed to the service principal.
+   */
+  userId?: string;
   timeoutMs?: number;
   namespaceId?: string;
 }
@@ -32,6 +38,7 @@ export async function execAuditLog(
     metadata,
     source: options.source ?? "web",
     ip: sanitizeIp(options.ip),
+    userId: options.userId,
   });
   return entry.id;
 }

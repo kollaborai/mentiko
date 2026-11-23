@@ -217,6 +217,48 @@ describe("monitor-v2 live IO", () => {
     }
   });
 
+  it("submits a Codex nudge while the initial instruction is still unsent", async () => {
+    const f = fixture();
+    const transcript = join(f.root, "codex-transcript.jsonl");
+    const instruction = `Read ${join(f.runDir, "artifacts", "writer-instructions.md")}`;
+    const nudge = "continue only the current assigned task";
+    // The bootstrap attempt is stuck with its initial pointer still in the
+    // composer; it has not appeared as a user message in the transcript.
+    writeFileSync(transcript, `${JSON.stringify({
+      type: "session_meta",
+      timestamp: new Date().toISOString(),
+      payload: { cwd: f.workspace },
+    })}\n`);
+    updateRunJson(f.runJsonPath, (run) => ({
+      ...(run as RunRecord),
+      runnerV2: {
+        attempts: [{
+          id: "run-123:writer:1", runId: "run-123", agentId: "writer",
+          phase: "stuck", instructionLedger: [], recoveryDecisionCount: 0,
+          createdAt: new Date(Date.now() - 60_000).toISOString(),
+          updatedAt: new Date().toISOString(), transitions: [],
+        }],
+      },
+    }));
+    ptyMock.capture.mockResolvedValue(`› ${instruction}`);
+    ptyMock.sendKeys.mockResolvedValue(undefined);
+    ptyMock.sendRaw.mockImplementation(async () => {
+      appendFileSync(transcript, codexUserMessageRecord(nudge));
+    });
+
+    await liveIo(f, {
+      MENTIKO_TRANSCRIPT_JSONL: transcript,
+      MENTIKO_MONITOR_NUDGE_SUBMIT_POLL_MS: "1",
+      MENTIKO_MONITOR_NUDGE_SUBMIT_DEADLINE_MS: "500",
+    }).sendNudge("writer-run-123", nudge);
+
+    expect(readFileSync(transcript, "utf8")).toContain(
+      JSON.stringify({ type: "user_message", message: nudge }),
+    );
+    expect(ptyMock.sendKeys).toHaveBeenCalledWith("writer-run-123", nudge);
+    expect(ptyMock.sendRaw).toHaveBeenCalledWith("writer-run-123", "\r");
+  });
+
   it("accepts only a current, contract-compatible core generation artifact", () => {
     const f = fixture();
     mkdirSync(join(f.runDir, "artifacts"), { recursive: true });
@@ -748,7 +790,7 @@ describe("selectTranscriptFromCapture — decoy-UUID resilience (durable-marker 
     const transcriptRoot = join(f.root, "transcripts");
     mkdirSync(transcriptRoot, { recursive: true });
     const instructionPath = join(f.runDir, "artifacts", "writer-instructions.md");
-    // Filename carries no uuid either -- e.g. a codex/aider-style session log,
+    // Filename carries no uuid either -- e.g. a codex-style session log,
     // or a claude session with no status line configured to print the uuid.
     const transcriptPath = join(transcriptRoot, "session-log.jsonl");
     const attemptAt = new Date(Date.now() - 30_000).toISOString();

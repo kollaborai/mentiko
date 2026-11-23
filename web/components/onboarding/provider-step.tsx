@@ -15,7 +15,6 @@ import { BusyButton } from "@/components/onboarding/setup-footer";
 import { ClaudeAuth } from "@/components/onboarding/cli-auth/claude-auth";
 import { CodexAuth } from "@/components/onboarding/cli-auth/codex-auth";
 import { AntigravityAuth } from "@/components/onboarding/cli-auth/antigravity-auth";
-import { AiderAuth } from "@/components/onboarding/cli-auth/aider-auth";
 import { KollabAuth } from "@/components/onboarding/cli-auth/kollab-auth";
 import { cn } from "@/lib/utils";
 
@@ -219,8 +218,8 @@ export function ProviderStep({
     const bundleProvider = getBundleProviderForTool(toolId);
     const tool = CLI_TOOLS.find((t) => t.id === toolId);
     if (!bundleProvider) {
-      // Spec's "no verifiable readiness path" case (currently true for Aider,
-      // which has no profile bundle in the catalog).
+      // Spec's "no verifiable readiness path" case (a tool with no profile
+      // bundle in the catalog).
       setUnverifiedNotice(
         `${tool?.name ?? toolId} can be configured, but Mentiko cannot prove it is ready here. Credentials were saved; choose another tool to unlock Check and Run, or continue exploring.`,
       );
@@ -486,8 +485,6 @@ export function ProviderStep({
               <CodexAuth {...sharedAdapterProps} onSave={handleSave} initialAuthMethod={INITIAL_AUTH_METHOD.codex} />
             ) : activeToolId === "antigravity" ? (
               <AntigravityAuth {...sharedAdapterProps} onSave={handleSave} initialAuthMethod={INITIAL_AUTH_METHOD.antigravity} />
-            ) : activeToolId === "aider" ? (
-              <AiderAuth {...sharedAdapterProps} onSave={handleSave} />
             ) : activeToolId === "kollab" ? (
               <KollabAuth {...sharedAdapterProps} onSave={handleSave} />
             ) : null}

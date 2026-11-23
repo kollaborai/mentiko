@@ -43,6 +43,26 @@ jest.mock("@/lib/tasks/task-store", () => ({
   taskAddDep: (...args: unknown[]) => mockTaskAddDep(...args),
   taskUpdate: (...args: unknown[]) => mockTaskUpdate(...args),
   taskGet: (...args: unknown[]) => mockTaskGet(...args),
+  // mirrors the real selectFollowUpTaskIds filter (valid string ids that
+  // exist per taskGet, excluding the parent and duplicates); the cycle
+  // check needs the real db and is not modeled here.
+  selectFollowUpTaskIds: (input: {
+    orgId: string;
+    parentTaskId: string;
+    candidates: readonly unknown[];
+    namespaceId?: string;
+  }) => {
+    const seen = new Set<string>();
+    const valid: string[] = [];
+    for (const candidate of input.candidates) {
+      if (typeof candidate !== "string" || candidate.length === 0) continue;
+      if (candidate === input.parentTaskId || seen.has(candidate)) continue;
+      seen.add(candidate);
+      if (!mockTaskGet(input.orgId, candidate, input.namespaceId)) continue;
+      valid.push(candidate);
+    }
+    return valid;
+  },
 }));
 
 // scan_unblocked_auto_run_tasks fires a real fetch() to localhost in prod (see
@@ -53,7 +73,17 @@ jest.mock("@/lib/runs/auto-run-service", () => ({
   triggerAutoRunScan: (...args: unknown[]) => mockTriggerAutoRunScan(...args),
 }));
 
-import { resolveDecisionToTasks } from "@/lib/decisions/decision-resolution";
+import { resolveDecisionToTasks as resolveDecisionToTasksWithActor } from "@/lib/decisions/decision-resolution";
+
+const TEST_ACTOR = { user_id: "session-user-1", session_id: "session-1", org_role: "owner" as const };
+type ResolveInput = Parameters<typeof resolveDecisionToTasksWithActor>[0];
+function resolveDecisionToTasks(input: Omit<ResolveInput, "actor" | "channel"> & Partial<Pick<ResolveInput, "actor" | "channel">>) {
+  return resolveDecisionToTasksWithActor({
+    ...input,
+    actor: input.actor ?? TEST_ACTOR,
+    channel: input.channel ?? "human",
+  });
+}
 
 function makeDecision() {
   return {
@@ -169,7 +199,6 @@ describe("resolveDecisionToTasks", () => {
       selectedOptionId: "opt-a",
       workspaceId: "/repo/app",
       workspacePath: "/repo/app",
-      selectedBy: "user",
     });
 
     expect(mockTaskCreate).toHaveBeenCalledTimes(2);
@@ -220,7 +249,6 @@ describe("resolveDecisionToTasks", () => {
       selectedOptionId: "opt-a",
       workspaceId: "/repo/app",
       workspacePath: "/repo/app",
-      selectedBy: "user",
     });
 
     expect(mockGetDecision).toHaveBeenCalledWith(
@@ -287,7 +315,6 @@ describe("resolveDecisionToTasks", () => {
       orgId: "default",
       decisionId: "decision-1",
       selectedOptionId: "opt-a",
-      selectedBy: "agent",
     });
 
     expect(mockTaskCreate.mock.calls[0][1]).toEqual(expect.objectContaining({
@@ -317,7 +344,6 @@ describe("resolveDecisionToTasks", () => {
       selectedOptionId: "opt-a",
       workspaceId: "/repo/app",
       workspacePath: "/repo/app",
-      selectedBy: "user",
     })).rejects.toThrow("Decision parent task not found");
 
     expect(mockTaskCreate).not.toHaveBeenCalled();
@@ -339,7 +365,6 @@ describe("resolveDecisionToTasks", () => {
       selectedOptionId: "opt-a",
       workspaceId: "/repo/app",
       workspacePath: "/repo/app",
-      selectedBy: "user",
     })).rejects.toThrow("Decision parent task belongs to another workspace");
 
     expect(mockTaskCreate).not.toHaveBeenCalled();

@@ -77,7 +77,6 @@ these are the options and when to suggest each:
              set up: https://antigravity.google/docs/cli-overview
              env: GEMINI_API_KEY or GOOGLE_CLOUD_PROJECT
 
-  aider      OSS pair programmer. works with any OpenAI-compatible API.
              good for local models or cost-conscious setups.
              env: depends on backend
 

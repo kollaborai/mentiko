@@ -56,6 +56,8 @@ export function portHolderPids(port: number): number[] {
       throw new Error(`no port inspection utility (lsof or fuser) available to check port ${port}`);
     }
     // lsof/fuser exit nonzero when nothing matches the port: empty result.
+    // fuser cannot filter to listeners; tenant images should include lsof so
+    // connected clients are never mistaken for the server.
     return [];
   }
   if (!out) return [];

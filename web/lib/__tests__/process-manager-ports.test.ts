@@ -132,14 +132,15 @@ describe('process-manager-ports', () => {
 
   it('lists only LISTENING sockets — a connected client is not a holder', async () => {
     const holder = await startHolder(holders);
-    // open a client connection from this (test) process to the held port
+    const client = spawn(process.execPath, ['-e', `const c=require('net').connect(${holder.port},'127.0.0.1',()=>{console.log('connected');setInterval(()=>{},1000)});`], { stdio: ['ignore', 'pipe', 'inherit'] });
+    holders.push({ child: client, port: holder.port });
     await new Promise<void>((resolve, reject) => {
-      const c = net.connect({ host: '127.0.0.1', port: holder.port });
-      c.once('connect', () => { setTimeout(() => { c.destroy(); resolve(); }, 200); });
-      c.once('error', reject);
+      client.stdout!.once('data', () => resolve());
+      client.once('exit', (code) => reject(new Error(`client helper exited (${code})`)));
     });
-    expect(portHolderPids(holder.port)).not.toContain(process.pid);
-    expect(portHolderPids(holder.port)).toContain(holder.child.pid);
+    const pids = portHolderPids(holder.port);
+    expect(pids).toContain(holder.child.pid);
+    expect(pids).not.toContain(client.pid);
   });
 
   it('fails closed when no port inspection utility exists', () => {

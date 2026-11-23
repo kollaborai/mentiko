@@ -1,0 +1,345 @@
+# CI — the merge gate ported from kollab's branch-protection model (issue #121).
+#
+# Three jobs whose display names are exactly `ci/tests`, `ci/standards-check`,
+# `ci/security-scan`: the names branch protection will require. Existing
+# workflows (auth-coverage, engine-tests, build-*, smoke-test, publish-mcp,
+# trigger-platform-build) keep their own triggers and are untouched.
+#
+# Suite exclusions live in the jest step below, each named with its failure
+# reason; see the linked issue before removing one.
+
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  # A push performed with GITHUB_TOKEN cannot trigger another workflow; this
+  # lets CI run on main after bot-driven merges.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  web_tests:
+    name: ci/tests (web jest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      # full history + tags: lib/__tests__/release-version-guard.test.ts
+      # resolves the latest stable vX.Y.Z tag, which is undefined on a
+      # shallow, tag-less checkout.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # npm 12 (bundled with Node 24+) blocks install scripts; Node 22's npm
+      # still runs them, and better-sqlite3 needs its postinstall build.
+      - name: Install web dependencies
+        run: npm ci --no-audit --no-fund
+
+      # Test-level exclusions, named by full test name (a broad keyword
+      # pattern would silently exclude future tests that merely contain it):
+      # - kollab-engine-driver.test.ts "idle timeout aborts a stalled SSE
+      #   stream, stop() leaves no open sockets" and "idle abort does NOT
+      #   flush a trailing partial AGENT_COMPLETE token (P1: idle != end of
+      #   turn)" — real-socket SSE tests with 200ms idle timeouts; their
+      #   waitFor deadlines are not met reliably on a loaded 2-core runner.
+      #   Fake timers cannot make them deterministic (they drive a real HTTP
+      #   server and real sockets). Excluded by exact name below until they
+      #   are restructured; every other test in the suite still runs.
+      # NOTE: a negated positional pattern, not --testPathIgnorePatterns —
+      # the CLI flag replaces jest.config's testPathIgnorePatterns wholesale,
+      # which drags the e2e/ playwright specs and test helpers into the run.
+      - name: Run jest suite
+        run: npm test -- --ci "^(?!.*kollab-engine-driver)"
+      - name: Run jest suite (kollab-engine-driver without the two timing-sensitive idle tests)
+        run: |
+          npm test -- --ci lib/runner-v2/__tests__/kollab-engine-driver.test.ts \
+            --testNamePattern '^(?!.*idle timeout aborts a stalled SSE stream, stop\(\) leaves no open sockets$|.*idle abort does NOT flush a trailing partial AGENT_COMPLETE token \(P1: idle != end of turn\)$)'
+
+  root-tests:
+    name: ci/tests (root)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # tests/runner-typed-bundle-parity.test.mjs rebuilds the runner bundles
+      # with esbuild from web/, so web deps must be installed.
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci --no-audit --no-fund
+
+      # tests/mentiko-mcp-dispatch.test.mjs bundles dispatch.ts with the
+      # package's own esbuild (same as jest.global-setup.js does for jest).
+      - name: Install mentiko-mcp package dependencies
+        working-directory: lib/mentiko-mcp
+        run: npm ci --no-audit --no-fund
+
+      # scheduler's cmd_next delegates cron parsing to python croniter.
+      - name: Install croniter
+        run: python3 -m pip install croniter==6.0.0
+
+      # Root contract tests under tests/*.test.mjs are plain node scripts:
+      # they exit non-zero on failure.
+      #
+      # Excluded by name:
+      # - tests/session-transport.test.mjs — needs a live pty-manager daemon,
+      #   which only exists inside the mentiko-base image; no workflow in
+      #   this repo runs this exact suite elsewhere (known coverage gap,
+      #   follow-up of #121).
+      # - tests/chain-runner-activity-start.test.mjs — asserts activity
+      #   delegation markers inside lib/chain-runner.sh that no longer exist;
+      #   the delegation now lives in lib/agent-activity-capture.sh and is
+      #   covered by tests/agent-activity-capture-shell-boundary.test.mjs.
+      # tests/job-runner.test.mjs ran excluded while #138 (job worker EPIPE
+      # on a closed stdin) was open; the fix landed, so the full suite runs.
+      - name: Run root .mjs contract tests
+        run: |
+          set -euo pipefail
+          exclude="tests/session-transport.test.mjs tests/chain-runner-activity-start.test.mjs"
+          status=0
+          for f in tests/*.test.mjs; do
+            skip=0
+            for x in $exclude; do [ "$f" = "$x" ] && skip=1; done
+            if [ "$skip" = 1 ]; then
+              echo "SKIP $f (excluded, see workflow comment)"
+              continue
+            fi
+            if node "$f"; then
+              echo "PASS $f"
+            else
+              echo "FAIL $f"
+              status=1
+            fi
+          done
+          exit $status
+
+      # tests/bash/*.sh unit suites (bash 5 + jq, both on ubuntu-latest).
+      #
+      # Excluded by name — pre-typed-era source contracts that drifted when
+      # chain-runner.sh moved to the typed runtime; the functions they grep
+      # for (substitute_placeholders, _monitor_v2_script) no longer exist in
+      # lib/. These exact suites are NOT run by the engine-tests workflow
+      # (it runs its own engine harnesses, not these files) — the coverage
+      # gap is known and is a follow-up of #121:
+      # - tests/bash/test-bug022-durable-completion.sh
+      # - tests/bash/test-monitor-completion.sh
+      # - tests/bash/test-chain-runner-placeholders.sh
+      # - tests/bash/test-chain-runner-ref-resolution.sh
+      # - tests/bash/test-secret-decryption.sh (better-sqlite3 native addon
+      #   path; fails outside the mentiko-base image)
+      - name: Run tests/bash unit suites
+        run: |
+          set -euo pipefail
+          exclude="tests/bash/test-bug022-durable-completion.sh tests/bash/test-monitor-completion.sh tests/bash/test-chain-runner-placeholders.sh tests/bash/test-chain-runner-ref-resolution.sh tests/bash/test-secret-decryption.sh"
+          status=0
+          for f in tests/bash/*.sh; do
+            skip=0
+            for x in $exclude; do [ "$f" = "$x" ] && skip=1; done
+            if [ "$skip" = 1 ]; then
+              echo "SKIP $f (excluded, see workflow comment)"
+              continue
+            fi
+            if bash "$f"; then
+              echo "PASS $f"
+            else
+              echo "FAIL $f"
+              status=1
+            fi
+          done
+          exit $status
+
+  # Aggregate keeps the exact required "ci/tests" check name expected by
+  # branch protection. It runs on EVERY outcome (if: always()) and succeeds
+  # only when both test jobs' results are exactly "success" — a cancelled,
+  # skipped, failed or stale leg fails the aggregate, so a required check
+  # can never go green by not running.
+  required_tests:
+    name: ci/tests
+    needs: [web_tests, root-tests]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail unless every required test job passed
+        env:
+          WEB_RESULT: ${{ needs.web_tests.result }}
+          ROOT_RESULT: ${{ needs.root-tests.result }}
+        run: |
+          case "$WEB_RESULT:$ROOT_RESULT" in
+            success:success) echo "ci/tests: all required test jobs succeeded"; exit 0 ;;
+            *) echo "ci/tests: web jest '$WEB_RESULT'; root .mjs '$ROOT_RESULT'"; exit 1 ;;
+          esac
+
+  standards-check:
+    name: ci/standards-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Typecheck
+        run: npx tsc --noEmit -p .
+
+      # Advisory for now: main carries ~53 pre-existing eslint errors
+      # (mostly no-explicit-any) that predate CI. tsc is the blocking gate;
+      # lint blocks once that debt is paid down (issue #121 follow-up).
+      - name: Lint (advisory)
+        run: npm run lint
+        continue-on-error: true
+
+  security-scan:
+    name: ci/security-scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Gitleaks
+        env:
+          GITLEAKS_VERSION: "8.30.1"
+          # sha256 of gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz,
+          # recorded in this file when the version was pinned. The digest is
+          # NOT fetched from the release at run time — a checksum pulled from
+          # the same release as the binary pins nothing.
+          GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+        run: |
+          cd "$RUNNER_TEMP"
+          curl -fsSLO "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/gitleaks-bin"
+          tar -xzf "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" -C "$RUNNER_TEMP/gitleaks-bin" gitleaks
+          echo "$RUNNER_TEMP/gitleaks-bin" >> "$GITHUB_PATH"
+
+      # The scan gates what a change ADDS, not full history: main already
+      # carries pre-existing generic-api-key findings (triage list kept out
+      # of band; they live in the secrets/crypto subsystem and its test
+      # fixtures), so whole-file text scans of PR-modified files would fail
+      # every PR that touches those files. Two gitleaks-native scans over
+      # the same base..HEAD range, each fail-closed — any non-zero gitleaks
+      # exit fails the job (1 = leaks found; anything else = scanner
+      # error), and an unresolvable range fails the job: a gate that
+      # silently passes on a range it could not inspect is decorative.
+      #
+      # (a) HISTORY scan (text additions): `gitleaks git` over every
+      #     commit in merge-base..HEAD, merge diffs included — the `-m`
+      #     log option makes git emit a merge commit's patch against EACH
+      #     parent, so content introduced only in a merge resolution is
+      #     scanned even when a later commit removes it (plain `git log
+      #     -p` omits merge diffs). Only diff content lines are scanned,
+      #     never pre-existing lines, so triaged findings stay quiet.
+      # (b) BLOB scan (every added blob, text and binary): every blob
+      #     object the range introduces is staged under its object sha as
+      #     an extensionless file and the staging directory is dir-scanned
+      #     once. `git rev-list --objects base..HEAD` covers any commit in
+      #     the range, merge resolutions included, and blobs that a later
+      #     commit removed. A sha file name matches none of gitleaks'
+      #     default path ignores (package-lock.json, yarn.lock, *.png,
+      #     *.svg, *.bin, ...) and no extension, so text or plaintext
+      #     saved at an ignored path cannot escape either scan — scan (a)
+      #     runs the default config, which globally allowlists those
+      #     paths. Whole-blob scanning re-reads unchanged lines, so
+      #     main's triaged pre-existing findings resurface here; the
+      #     reviewed, literal-tight allowlist in
+      #     .github/workflows/config/gitleaks-blobs.toml suppresses
+      #     exactly those literals (default rules otherwise unchanged).
+      #     A blob that cannot be extracted fails the job.
+      - name: Run Gitleaks (history + all added blobs, vs merge base)
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          empty_tree="4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+          base=""
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            # base tip at event time can lag; fetch the branch tip and diff
+            # against the true merge base with HEAD.
+            git fetch --no-tags origin "$PR_BASE_REF"
+            base="$(git merge-base FETCH_HEAD HEAD)"
+          elif [ "$EVENT_NAME" = "push" ]; then
+            if [[ "$PUSH_BEFORE" =~ ^0+$ ]]; then
+              # first push on a new branch: the empty tree covers the root
+              # commit too (git accepts a tree sha as a range base).
+              base="$empty_tree"
+            else
+              git cat-file -e "$PUSH_BEFORE" 2>/dev/null \
+                || git fetch --no-tags origin "$PUSH_BEFORE"
+              base="$(git merge-base "$PUSH_BEFORE" HEAD)"
+            fi
+          else
+            # manual dispatch: scan the last commit's changes
+            base="$(git rev-parse --verify -q HEAD^ || echo "$empty_tree")"
+          fi
+          if [ -z "$base" ] || ! git cat-file -e "$base" 2>/dev/null; then
+            echo "::error::secret scan range unresolvable; failing closed"
+            exit 1
+          fi
+          echo "scan range: $base..$(git rev-parse HEAD)"
+
+          # (a) history scan: every commit in the range; -m adds a merge
+          #     commit's diff against each parent.
+          echo "history scan: $(git rev-list --count "$base..HEAD") commits (merge diffs included)"
+          gitleaks git --log-opts="-m -p -U0 $base..HEAD" --redact --verbose
+
+          # (b) blob scan: every blob the range introduces, at any commit,
+          #     text and binary, staged under its sha with no extension so
+          #     gitleaks can skip it by neither path nor extension.
+          blobdir="$RUNNER_TEMP/blob-staging"
+          mkdir -p "$blobdir"
+          git rev-list --objects "$base..HEAD" \
+            | git cat-file --batch-check='%(objectname) %(objecttype) %(rest)' \
+            | while read -r sha type path; do
+                [ "$type" = "blob" ] || continue
+                git cat-file blob "$sha" > "$blobdir/$sha" \
+                  || { echo "::error::cannot extract blob $sha"; exit 1; }
+              done
+          if [ -n "$(command ls -A "$blobdir")" ]; then
+            gitleaks dir --redact --no-banner \
+              --config .github/workflows/config/gitleaks-blobs.toml "$blobdir"
+          else
+            echo "blob scan: range introduces no blobs; nothing to scan"
+          fi
