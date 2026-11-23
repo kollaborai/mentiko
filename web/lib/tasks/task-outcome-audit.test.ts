@@ -769,4 +769,36 @@ describe("recoverTaskOutcomeAudit", () => {
       }),
     }, "default");
   });
+
+  it("removes a legacy bare lifecycle fingerprint when retrying a failed summary", async () => {
+    taskGet.mockReturnValue({
+      id: "TASK-107",
+      metadata: {
+        task_outcome_summary_job_id: "job-summary",
+        task_outcome_summary_status: "running",
+        task_outcome_summary_source_run_id: "run-execution",
+        summarized_run_fingerprints: ["completed:f1"],
+      },
+    });
+    getJob.mockReturnValue({
+      id: "job-summary",
+      type: "task_run_summary",
+      status: "failed",
+      taskId: "TASK-107",
+      runId: "run-summary",
+      input: { sourceRunId: "run-execution", runFingerprint: "completed:f1" },
+    });
+    existsSync.mockReturnValue(false);
+
+    await recoverTaskOutcomeAudit({
+      request: {} as Request,
+      namespaceId: "default",
+      orgId: "default",
+      taskId: "TASK-107",
+    });
+
+    expect(taskUpdate).toHaveBeenCalledWith("default", "TASK-107", {
+      metadata: expect.objectContaining({ summarized_run_fingerprints: [] }),
+    }, "default");
+  });
 });
