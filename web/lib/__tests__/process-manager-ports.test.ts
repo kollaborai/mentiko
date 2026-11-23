@@ -166,6 +166,21 @@ describe('process-manager-ports', () => {
     }
   });
 
+  it('fails closed when port inspection reports a permission error', () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const spy = jest.spyOn(require('child_process'), 'execSync').mockImplementation(() => {
+      const e = new Error('lsof: permission denied inspecting sockets') as Error & { status: number; stderr: string };
+      e.status = 2;
+      e.stderr = 'lsof: permission denied inspecting sockets';
+      throw e;
+    });
+    try {
+      expect(() => portHolderPids(12345)).toThrow(/port inspection failed/);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('pid identity: OS start time match is ownership, anything else is not', async () => {
     const holder = await startHolder(holders);
     const pid = holder.child.pid!;
