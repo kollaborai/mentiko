@@ -5,6 +5,7 @@ const getDecision = jest.fn();
 
 jest.mock("@/lib/tasks/task-store", () => ({
   taskGet: (...args: unknown[]) => taskGet(...args),
+  selectFollowUpTaskIds: ({ candidates }: { candidates: string[] }) => candidates,
   taskAddDep: jest.fn(),
   taskUpdate: jest.fn(),
 }));
