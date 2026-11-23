@@ -35,14 +35,17 @@ let raceCounterFile: string;
 
 // one script, two modes, so the forked daemon keeps the same command line the
 // discovery pgrep pattern is built from (cmd + args[0]). "fork" mode spawns
-// the "run" mode daemon in the parent's process group and exits 0 during
-// readiness; "run" mode owns the socket and outlives us. Staying in the
-// parent's group lets the manager prove ownership after the parent exits.
+// the "run" mode daemon and exits 0 during readiness; "run" mode owns the
+// socket and outlives us. The manager-provided group marker keeps the daemon
+// in the launcher's group so the manager can prove ownership after exit.
 const FORK_SCRIPT = `
 const { spawn } = require("child_process");
 const [mode, sock, pidFile] = process.argv.slice(2);
 if (mode === "fork") {
-  const child = spawn(process.execPath, [__filename, "run", sock, pidFile], { stdio: "ignore" });
+  const child = spawn(process.execPath, [__filename, "run", sock, pidFile], {
+    stdio: "ignore",
+    detached: process.env.MENTIKO_PM_KEEP_DAEMON_GROUP !== "1",
+  });
   child.unref();
   process.exit(0);
 }
