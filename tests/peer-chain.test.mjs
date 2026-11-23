@@ -130,8 +130,8 @@ test("errors when specified profile not found", () => {
   const r = runPeerChainFail(["agent-a", "agent-b", "--profile", "nonexistent"]);
   assert(r !== null, "expected failure");
   assert(
-    r.stdout.includes("not found") || r.stderr.includes("not found"),
-    `missing profile not found error: ${r.stdout}${r.stderr}`
+    r.stdout.includes("does not exist") || r.stderr.includes("does not exist"),
+    `missing profile error: ${r.stdout}${r.stderr}`
   );
 });
 

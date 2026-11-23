@@ -10,12 +10,13 @@
 import { execFileSync } from "child_process";
 import { existsSync, rmSync } from "fs";
 import { createRequire } from "module";
+import { tmpdir } from "os";
 import { join } from "path";
 
 const REPO_ROOT = join(import.meta.dirname, "..");
 const DISPATCH_FILE = join(REPO_ROOT, "lib", "mentiko-mcp", "dispatch.ts");
 const ESBUILD_BIN = join(REPO_ROOT, "lib", "mentiko-mcp", "node_modules", ".bin", "esbuild");
-const OUT_FILE = join("/private/tmp", `mentiko-mcp-dispatch-test-${process.pid}.cjs`);
+const OUT_FILE = join(tmpdir(), `mentiko-mcp-dispatch-test-${process.pid}.cjs`);
 
 const require = createRequire(import.meta.url);
 let passed = 0;

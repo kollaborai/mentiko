@@ -24,6 +24,9 @@ export interface TaskRecord {
   created_by: string;
   updated_at: string;
   closed_at: string | null;
+  /** Monotonic write counter, bumped exactly once by every tasks-row UPDATE
+   *  through the tasks_revision_bump trigger (issue #141). */
+  revision?: number;
   dependencies?: TaskDep[];
   dependents?: TaskDep[];
   dependency_count?: number;

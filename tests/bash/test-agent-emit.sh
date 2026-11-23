@@ -163,12 +163,13 @@ FA="$(find "$DA" -name '*.event' | head -1)"
 FB="$(find "$DB" -name '*.event' | head -1)"
 assert_eq "$(basename "$FA")" "$(basename "$FB")" \
   "mentiko emit and typed writer produce identical filename"
-# bodies differ only on the volatile timestamp: line
-if diff <(grep -v '^timestamp:' "$FA") <(grep -v '^timestamp:' "$FB") >/dev/null; then
+# bodies differ only on the volatile identity lines: timestamp: and
+# occurrence_id: (each emission mints a fresh uuid)
+if diff <(grep -vE '^(timestamp|occurrence_id):' "$FA") <(grep -vE '^(timestamp|occurrence_id):' "$FB") >/dev/null; then
   pass "mentiko emit and typed writer produce identical body (minus timestamp)"
 else
   fail "mentiko emit and typed writer bodies diverge"
-  diff <(grep -v '^timestamp:' "$FA") <(grep -v '^timestamp:' "$FB") || true
+  diff <(grep -vE '^(timestamp|occurrence_id):' "$FA") <(grep -vE '^(timestamp|occurrence_id):' "$FB") || true
 fi
 
 # -------------------------------------------------------------------

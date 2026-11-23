@@ -64,7 +64,10 @@ describe("watcher/watchdog TypeScript ownership binding", () => {
     expect(worker).toContain('shutdown("uncaughtException", 1)');
     expect(worker).toContain('shutdown("unhandledRejection", 1)');
     expect(worker).toContain('shutdown("startupFailure", 1)');
-    expect(worker).toMatch(/await runWatchdog\("startup"\);/);
+    // #137 (worker supervision) made startup watchdog fire-and-forget so a
+    // hung startup scan cannot block worker boot; the binding follows the
+    // runtime (issue #145).
+    expect(worker).toMatch(/void runWatchdog\("startup"\);/);
     expect(worker).toMatch(/watchdogInterval = setInterval\(\(\) => \{\s*void runWatchdog\("periodic"\);\s*\}, WATCHDOG_INTERVAL_MS\);/);
     expect(worker).toMatch(/await stopChainWatcherService\(\);/);
   });

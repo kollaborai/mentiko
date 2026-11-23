@@ -357,9 +357,9 @@ test("profiler-get returns text format when requested", () => {
 test("profiler-get returns error for non-existent session", () => {
   resetTmp();
 
-  const result = runBash('profiler-get nonexistent-session; echo "exit=$?"');
-  assert(result.stdout.includes("exit=1"), `should fail: ${result.stdout}`);
-  assert(result.stdout.includes("profile not found"), `should report not found: ${result.stdout}`);
+  const result = runBash('profiler-get nonexistent-session');
+  assert(result.status === 1, `should fail: ${result.status}`);
+  assert(result.stderr.includes("nonexistent-session.json"), `should name the missing profile: ${result.stderr}`);
 });
 
 test("profiler-record-tokens tracks API call and updates totals", () => {
@@ -561,7 +561,7 @@ test("profiler-compare shows comparison table", () => {
   assert(result.stdout.includes("1300"), `should show token count for B: ${result.stdout}`);
 });
 
-test("profiler-compare skips non-existent sessions", () => {
+test("profiler-compare fails on non-existent sessions", () => {
   resetTmp();
 
   runBash([
@@ -569,10 +569,11 @@ test("profiler-compare skips non-existent sessions", () => {
     'profiler-end sess-072 complete',
   ].join('\n'));
 
+  // The typed runtime owns profile reads and fails closed on a missing
+  // record instead of silently skipping it.
   const result = runBash('profiler-compare sess-072 nonexistent-session');
-  assert(result.status === 0, `should succeed: status=${result.status}`);
-  assert(result.stdout.includes("sess-072"), `should show existing session: ${result.stdout}`);
-  assert(!result.stdout.includes("nonexistent-session"), `should skip missing session: ${result.stdout}`);
+  assert(result.status === 1, `should fail: ${result.status}`);
+  assert(result.stderr.includes("nonexistent-session.json"), `should name the missing session: ${result.stderr}`);
 });
 
 test("profiler-aggregate with no profiles shows 0 counts", () => {
