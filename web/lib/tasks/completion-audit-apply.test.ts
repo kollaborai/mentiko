@@ -42,6 +42,13 @@ jest.mock("@/lib/notifications/notification-server", () => ({
 
 jest.mock("@/lib/decisions/decision-storage", () => ({
   updateDecision: (...a: unknown[]) => updateDecision(...a),
+  withDecisionCreationClaim: (
+    _ns: unknown,
+    _org: unknown,
+    _key: unknown,
+    _ws: unknown,
+    fn: () => Promise<unknown>,
+  ) => fn(),
 }));
 
 // Covers the `await import("@/lib/decisions/decision-chain-dispatch")` inside
@@ -290,6 +297,60 @@ describe("applyCompletionAudit", () => {
       "default",
     );
     expect(taskAddDep).toHaveBeenCalledWith("default", "TASK-42", "DEC-1", "default", "/repo");
+  });
+
+  it("summary failure: an exhausted summary creates a human decision and blocks the task on it", async () => {
+    const task = makeTask();
+    const reason = "The outcome summary for run run-abc failed 2 times, so this task has no audit verdict.";
+
+    const result = await applyCompletionAudit({
+      ...makeInput(
+        task,
+        { verdict: "decision", reason, decision: { prompt: "Review the run, then either retry the task or close it by hand." } },
+        { lifecycle_phase: "summarizing" },
+      ),
+      runFingerprint: "completed:t1",
+      summaryFailureReason: reason,
+    });
+
+    expect(result.action).toBe("decision_created");
+    expect(createTaskDecision).toHaveBeenCalledTimes(1);
+    expect(taskClose).not.toHaveBeenCalled();
+    expect(taskMergeMeta).toHaveBeenCalledWith(
+      "default",
+      "TASK-42",
+      expect.objectContaining({
+        lifecycle_phase: "decision_blocked",
+        decision_subtask_id: "DEC-1",
+        gated_run_fingerprints: ["run-abc::completed:t1"],
+        last_run_decision_required: true,
+      }),
+      "default",
+    );
+    expect(taskAddDep).toHaveBeenCalledWith("default", "TASK-42", "DEC-1", "default", "/repo");
+  });
+
+  it("summary failure: an earlier applied audit of the same run does not skip the escalation", async () => {
+    const task = makeTask();
+    const reason = "The outcome summary for run run-abc failed 2 times, so this task has no audit verdict.";
+
+    const result = await applyCompletionAudit({
+      ...makeInput(
+        task,
+        { verdict: "decision", reason, decision: { prompt: "Review the run." } },
+        {
+          lifecycle_phase: "summarizing",
+          completion_audit_run_id: "run-abc",
+          completion_audit_run_fingerprint: "completed:t1",
+          completion_audit_apply_status: "applied",
+        },
+      ),
+      runFingerprint: "completed:t1",
+      summaryFailureReason: reason,
+    });
+
+    expect(result.action).toBe("decision_created");
+    expect(createTaskDecision).toHaveBeenCalledTimes(1);
   });
 
   it("decision: skips duplicate completion-audit DEC tasks for the same parent/source run/fingerprint", async () => {
@@ -675,7 +736,7 @@ describe("applyCompletionAudit", () => {
     expect(taskUpdate).toHaveBeenCalledWith("default", "TASK-42", { status: "blocked" }, "default");
   });
 
-  it("decision: persists parent lifecycle metadata before dependency and research side effects", async () => {
+  it("decision: lands the dependency and blocked status before the applied marker and research (issue #120 bug E)", async () => {
     const task = makeTask();
     const audit: CompletionAudit = {
       verdict: "decision",
@@ -694,9 +755,11 @@ describe("applyCompletionAudit", () => {
     });
     expect(lifecycleMergeOrder).toBeGreaterThanOrEqual(0);
 
+    // The applied marker must not be persisted before the dependency and the
+    // blocked status exist: a throw in between left decisions unrepairable.
     const mergeCallOrder = taskMergeMeta.mock.invocationCallOrder[lifecycleMergeOrder];
-    expect(mergeCallOrder).toBeLessThan(taskAddDep.mock.invocationCallOrder[0]);
-    expect(mergeCallOrder).toBeLessThan(taskUpdate.mock.invocationCallOrder[0]);
+    expect(mergeCallOrder).toBeGreaterThan(taskAddDep.mock.invocationCallOrder[0]);
+    expect(mergeCallOrder).toBeGreaterThan(taskUpdate.mock.invocationCallOrder[0]);
     expect(mergeCallOrder).toBeLessThan(startDecisionResearch.mock.invocationCallOrder[0]);
   });
 
