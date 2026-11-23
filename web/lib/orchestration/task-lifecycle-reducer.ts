@@ -2,7 +2,7 @@
 //
 // reduceTaskLifecycle(state, event) -> { state, effects }. It never reads
 // storage, never mutates its input, and never performs side effects. The service
-// adapter applies the returned effects. Every one of the 12 declared events has an
+// adapter applies the returned effects. Every declared event has an
 // explicit transition (C5: no dead states, no unhandled events).
 //
 // Contract: docs/orchestration/task-lifecycle-reducer-spec.md
@@ -266,6 +266,22 @@ export function reduceTaskLifecycle(
 
       // verdict === "decision"
       return createDecisionGate(state, event.sourceRunId, event.fingerprint);
+    }
+
+    // -----------------------------------------------------------------------
+    // Summary failure (no dead end: retry the summary, then a human decision)
+    // -----------------------------------------------------------------------
+    case "summary.failed": {
+      const failed = { ...state, lastError: event.reason };
+      if (event.exhausted) {
+        return createDecisionGate(failed, event.sourceRunId, event.fingerprint);
+      }
+      return {
+        state: { ...failed, phase: "summarizing" },
+        effects: [
+          { type: "start_outcome_summary", taskId: state.taskId, sourceRunId: event.sourceRunId, fingerprint: event.fingerprint },
+        ],
+      };
     }
 
     // -----------------------------------------------------------------------

@@ -125,6 +125,7 @@ export type TaskLifecycleEvent =
   | { type: "execution.completed"; taskId: string; runId: string; fingerprint: string }
   | { type: "execution.failed"; taskId: string; runId: string; fingerprint: string; reason: string; nonRetryable?: boolean }
   | { type: "summary.completed"; taskId: string; summaryRunId: string; sourceRunId: string; verdict: "close" | "retry" | "decision"; followUpTaskIds?: string[]; decisionTaskId?: string }
+  | { type: "summary.failed"; taskId: string; sourceRunId: string; fingerprint: string; reason: string; exhausted: boolean }
   | { type: "decision.created"; taskId: string; decisionTaskId: string; sourceRunId: string; fingerprint: string }
   | { type: "decision.resolved"; taskId: string; decisionTaskId: string; followUpTaskIds: string[] }
   | { type: "followups.completed"; taskId: string; followUpTaskIds: string[] }
