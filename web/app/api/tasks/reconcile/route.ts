@@ -45,7 +45,7 @@ import {
 } from "@/lib/tasks/task-run-locator";
 import { hasLivePendingHandoff } from "@/lib/runner-v2/handoff-liveness";
 import { isConcurrencyCapBlockedReason } from "@/lib/runner-v2/concurrency-admission";
-import { isDecisionGateReleased } from "@/lib/tasks/decision-gate-release";
+import { isDecisionGateReleased, releaseDecisionGateMetadata } from "@/lib/tasks/decision-gate-release";
 import { unblockTaskViaResolvedDecision } from "@/lib/tasks/decision-unblock";
 import { updateRunJsonRecord } from "@/lib/runner-v2/run-state";
 import { acceptedResumeDispatchState } from "@/lib/runner-v2/launch-job";
@@ -89,25 +89,41 @@ function isReconcilerNoOp(newStatus: string): boolean {
 // execution chain. The audit helper owns idempotency by run terminal
 // fingerprint; reconcile must not suppress a later terminal audit from a stale
 // completion_audit_run_id alone.
+function summaryFailuresExhausted(meta: Record<string, unknown>): boolean {
+  const summaryFailures = typeof meta.task_outcome_summary_failures === "number"
+    ? meta.task_outcome_summary_failures
+    : 0;
+  return (
+    meta.task_outcome_summary_status === "failed"
+    && meta.task_outcome_summary_source_run_id === meta.last_run_id
+    && summaryFailures >= OUTCOME_SUMMARY_FAILURE_LIMIT
+  );
+}
+
+// Only a task parked in `summarizing` behind a TERMINAL execution run may be
+// escalated; a running run belongs to the running sweep alone.
+function isExhaustedSummaryEscalationCandidate(meta: Record<string, unknown>): boolean {
+  return (
+    meta.lifecycle_phase === "summarizing"
+    && typeof meta.last_run_id === "string"
+    && typeof meta.last_run_status === "string"
+    && TERMINAL_RUN_STATUSES.has(meta.last_run_status)
+    && summaryFailuresExhausted(meta)
+  );
+}
+
 function shouldAuditCompletedAutoRun(meta: Record<string, unknown>, autoRunEnabled: boolean): boolean {
   const generatedTaskHasExecutionChain =
     !meta.generation_job_id ||
     typeof meta.chain_id === "string" ||
     typeof meta.chain_name === "string" ||
     typeof meta.last_run_chain === "string";
-  const summaryFailures = typeof meta.task_outcome_summary_failures === "number"
-    ? meta.task_outcome_summary_failures
-    : 0;
-  const exhaustedCurrentSummary =
-    meta.task_outcome_summary_status === "failed"
-    && meta.task_outcome_summary_source_run_id === meta.last_run_id
-    && summaryFailures >= OUTCOME_SUMMARY_FAILURE_LIMIT;
 
   return (
     autoRunEnabled &&
     !!meta.last_run_id &&
     generatedTaskHasExecutionChain &&
-    !exhaustedCurrentSummary
+    !summaryFailuresExhausted(meta)
   );
 }
 
@@ -200,6 +216,15 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     return meta?.lifecycle_phase === "summarizing"
       && meta.task_outcome_summary_status === "running"
       && typeof meta.task_outcome_summary_job_id === "string";
+  });
+  // A summary that failed past its limit is never retried, so nothing else
+  // moves the task: hand it to a human decision instead of leaving it (and
+  // every task that depends on it) parked in `summarizing`.
+  const exhaustedOutcomeSummaryTasks = issues.filter((issue) => {
+    if (DONE_TASK_STATUSES.has(issue.status)) return false;
+    const meta = parseMetadata(issue.metadata);
+    return !!meta
+      && isExhaustedSummaryEscalationCandidate(meta);
   });
   // FEAT-001 stall class: a task parked at decision_blocked whose LINKED
   // decision has since resolved out-of-band (the approval's lifecycle pass
@@ -299,6 +324,7 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     followupBlockedTasks.length === 0 &&
     auditedExecutionMetadataRepairTasks.length === 0 &&
     stalledOutcomeSummaryTasks.length === 0 &&
+    exhaustedOutcomeSummaryTasks.length === 0 &&
     decisionBlockedTasks.length === 0
   ) {
     return apiSuccess({ reconciled: results.length, results, failed: failed.length, errors: failed });
@@ -339,6 +365,51 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
       }
     } catch (error) {
       failed.push({ taskId: issue.id, error: `Failed to recover outcome summary: ${(error as Error).message}` });
+    }
+  }
+
+  for (const issue of exhaustedOutcomeSummaryTasks) {
+    try {
+      // Re-read: an earlier sweep in this pass, or another reconciler, may
+      // have moved the task since the list snapshot was taken.
+      const fresh = taskGet(orgId, issue.id, namespaceId);
+      const meta = parseMetadata(fresh?.metadata);
+      if (!fresh || !meta || DONE_TASK_STATUSES.has(fresh.status) || !isExhaustedSummaryEscalationCandidate(meta)) {
+        continue;
+      }
+      const runId = String(meta.last_run_id);
+      const failures = Number(meta.task_outcome_summary_failures);
+      const error = typeof meta.task_outcome_summary_error === "string" && meta.task_outcome_summary_error
+        ? meta.task_outcome_summary_error
+        : "no error was recorded";
+      const reason = `The outcome summary for run ${runId} failed ${failures} times, so this task has no audit verdict. Last error: ${error}`;
+      const outcome = await applyCompletionAudit({
+        request,
+        namespaceId,
+        orgId,
+        task: fresh,
+        audit: {
+          verdict: "decision",
+          reason,
+          decision: { prompt: "Review the run, then either retry the task or close it by hand." },
+        },
+        runId,
+        runFingerprint: currentRunTerminalFingerprint(namespaceId, orgId, runId),
+        workspacePath: typeof issue.workspace_id === "string" ? issue.workspace_id : undefined,
+        metadata: meta,
+        summaryFailureReason: reason,
+      });
+      results.push({
+        taskId: issue.id,
+        runId,
+        previousStatus: "summarizing",
+        newStatus: outcome.decisionTaskId ? "summary_escalated" : "summary_escalation_skipped",
+        reason: outcome.decisionTaskId
+          ? `summary failure limit reached; ${outcome.action} ${outcome.decisionTaskId}`
+          : `summary failure limit reached but no decision is linked: ${outcome.detail || outcome.action}`,
+      });
+    } catch (error) {
+      failed.push({ taskId: issue.id, error: `Failed to escalate exhausted outcome summary: ${(error as Error).message}` });
     }
   }
 
@@ -755,6 +826,14 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     const verdict = meta.last_audit_verdict as "close" | "decision";
     try {
       const safeId = validateTaskId(issue.id);
+      // Issue #120 bug B, same-pass ordering: the followups.completed sweep
+      // above runs before this loop and can release this task's decision gate
+      // after the selector snapshot was taken. Re-read the durable record and
+      // honor the release instead of re-applying the audited verdict over it.
+      if (verdict === "decision") {
+        const freshMeta = parseMetadata(taskGet(orgId, safeId, namespaceId)?.metadata);
+        if (freshMeta && isDecisionGateReleased(freshMeta, runId)) continue;
+      }
       const sourceTerminalMetadata = verdict === "decision"
         ? readAuditedSourceTerminalMetadata(safeId, runId, meta)
         : undefined;
@@ -960,14 +1039,27 @@ function makeLifecycleDeps(input: {
     blockOnDecision: () => undefined,
     createFollowupDependencies: () => undefined,
     resumeOriginalTask: ({ lifecycleState }) => {
+      // Issue #120 bug B: a decision that resolved WITH follow-ups parks the
+      // parent in followup_blocked still carrying the audited run's execution
+      // bookkeeping (last_run_id, completed status, run scope, applied audit).
+      // Resuming without releasing it left auto-run refusing the completed
+      // execution and the provenance-repair sweep re-gating the task. Same
+      // release the no-follow-up path applies in decision-unblock.ts /
+      // decision-resolution.ts: one write, keyed on the run whose gate is spent.
+      const sourceRunId = (typeof input.metadata.last_run_id === "string" && input.metadata.last_run_id)
+        || (typeof input.metadata.completion_audit_run_id === "string" && input.metadata.completion_audit_run_id)
+        || undefined;
+      const baseMetadata = {
+        ...metadataWithLifecycleState(input.metadata, lifecycleState),
+        last_run_decision_required: false,
+        decision_subtask_id: undefined,
+        followup_task_ids: [],
+      };
       taskUpdate(input.orgId, input.taskId, {
         status: "open",
-        metadata: {
-          ...metadataWithLifecycleState(input.metadata, lifecycleState),
-          last_run_decision_required: false,
-          decision_subtask_id: undefined,
-          followup_task_ids: [],
-        },
+        metadata: sourceRunId
+          ? releaseDecisionGateMetadata(baseMetadata, { taskId: input.taskId, sourceRunId })
+          : baseMetadata,
       }, input.namespaceId);
     },
     closeTask: () => undefined,

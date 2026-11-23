@@ -203,6 +203,37 @@ export async function withDecisionResolutionLock<T>(
   }
 }
 
+/**
+ * Exclusive claim for decision-CREATION work that has no decision id yet
+ * (issue #120 bug E). Same mkdir-backed claim protocol and async retry loop
+ * as withDecisionResolutionLock, keyed by a caller-derived stable key
+ * (task + source run + fingerprint) instead of an existing decision file.
+ * Cross-process safe; a crashed holder's claim is retired by owner liveness.
+ */
+export async function withDecisionCreationClaim<T>(
+  nsId: string,
+  orgId: string,
+  claimKey: string,
+  workspacePath: string | undefined,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const claimPath = path.join(getDecisionsDir(nsId, orgId, workspacePath), `.claims.${claimKey}`);
+  const deadline = Date.now() + RESOLUTION_CLAIM_WAIT_MS;
+  while (true) {
+    try {
+      return await withExclusiveFileClaim(claimPath, fn, {
+        waitTimeoutMs: 0,
+        freshMs: RESOLUTION_CLAIM_FRESH_MS,
+      });
+    } catch (error) {
+      if (!(error instanceof ExclusiveFileClaimBusyError) || Date.now() >= deadline) {
+        throw error;
+      }
+      await sleep(RESOLUTION_CLAIM_RETRY_MS);
+    }
+  }
+}
+
 export function createDecision(
   nsId: string,
   orgId: string,
