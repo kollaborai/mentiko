@@ -206,6 +206,9 @@ async function waitReady(_name: string, r: ReadinessConfig | undefined): Promise
 
 function spawnChild(config: ProcessConfig): ManagedProcess {
   const env = buildManagedProcessEnv(config);
+  // Keep a daemonized service's own fork in this spawned process group so
+  // ownership remains provable after its launcher exits.
+  if (config.daemonize) env.MENTIKO_PM_KEEP_DAEMON_GROUP = '1';
   const child: ChildProcess = spawn(config.cmd, expandManagedProcessArgs(config.args || [], process.env), {
     env: env as unknown as NodeJS.ProcessEnv,
     cwd: config.cwd || process.cwd(),
