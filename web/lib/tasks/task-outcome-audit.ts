@@ -9,7 +9,7 @@ import { resolveTemplate } from "@/lib/system/template-resolver";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createJob, getJob, listJobs, updateJob } from "@/lib/runs/job-store";
-import { taskGet, taskUpdate, validateTaskId } from "@/lib/tasks/task-store";
+import { taskGet, taskMutateMetadata, taskUpdate, validateTaskId } from "@/lib/tasks/task-store";
 import {
   currentRunArtifacts,
   currentRunSummary,
@@ -126,42 +126,49 @@ export async function recoverTaskOutcomeAudit(
     const failureAlreadyRecorded =
       metadata.task_outcome_summary_job_id === job.id
       && metadata.task_outcome_summary_status === "failed";
-    const previousFailures = typeof metadata.task_outcome_summary_failures === "number"
-      ? metadata.task_outcome_summary_failures
-      : 0;
-    taskUpdate(input.orgId, taskId, {
-      metadata: {
-        ...metadata,
-        task_outcome_summary_status: "failed",
-        task_outcome_summary_job_id: job.id,
-        task_outcome_summary_run_id: job.runId,
-        task_outcome_summary_chain_id: job.chainId,
-        task_outcome_summary_failures: failureAlreadyRecorded ? previousFailures : previousFailures + 1,
-        task_outcome_summary_run_fingerprint: undefined,
-        summarized_run_fingerprints: withoutLifecycleFingerprint(
-          metadata,
-          sourceRunId,
-          eligibility.fingerprint,
-        ),
-        task_outcome_summary: undefined,
-        task_outcome_summary_completed_at: undefined,
-        task_outcome_summary_error: job.error || "Task outcome summary failed",
+    const failureApplied = updateRecoveredSummaryMetadata(
+      input,
+      metadata,
+      job.id,
+      sourceRunId,
+      "failed",
+      undefined,
+      (current) => {
+        const previousFailures = typeof current.task_outcome_summary_failures === "number"
+          ? current.task_outcome_summary_failures
+          : failureAlreadyRecorded ? 1 : 0;
+        return {
+          task_outcome_summary_status: "failed",
+          task_outcome_summary_job_id: job.id,
+          task_outcome_summary_run_id: job.runId,
+          task_outcome_summary_chain_id: job.chainId,
+          task_outcome_summary_failures: failureAlreadyRecorded ? previousFailures : previousFailures + 1,
+          task_outcome_summary_run_fingerprint: undefined,
+          summarized_run_fingerprints: withoutLifecycleFingerprint(
+            current,
+            sourceRunId,
+            eligibility.fingerprint,
+          ),
+          task_outcome_summary: undefined,
+          task_outcome_summary_completed_at: undefined,
+          task_outcome_summary_error: job.error || "Task outcome summary failed",
+        };
       },
-    }, input.namespaceId);
+    );
+    if (!failureApplied) return { status: "superseded", jobId, sourceRunId };
     return { status: "failed", jobId, sourceRunId };
   }
 
   const result = { output: JSON.stringify(payload) };
-  updateJob(job.id, {
-    status: "complete",
-    result,
-    error: undefined,
-    completedAt: new Date().toISOString(),
-  }, input.namespaceId);
-
-  taskUpdate(input.orgId, taskId, {
-    metadata: {
-      ...metadata,
+  const summaryCompletedAt = new Date().toISOString();
+  const completionApplied = updateRecoveredSummaryMetadata(
+    input,
+    metadata,
+    job.id,
+    sourceRunId,
+    "complete",
+    eligibility.fingerprint,
+    () => ({
       task_outcome_summary_status: "complete",
       task_outcome_summary_job_id: job.id,
       task_outcome_summary_run_id: job.runId,
@@ -169,9 +176,17 @@ export async function recoverTaskOutcomeAudit(
       task_outcome_summary_source_run_id: sourceRunId,
       task_outcome_summary_run_fingerprint: eligibility.fingerprint,
       task_outcome_summary: payload,
-      task_outcome_summary_completed_at: new Date().toISOString(),
+      task_outcome_summary_completed_at: summaryCompletedAt,
       task_outcome_summary_error: undefined,
-    },
+    }),
+  );
+  if (!completionApplied) return { status: "superseded", jobId, sourceRunId };
+
+  updateJob(job.id, {
+    status: "complete",
+    result,
+    error: undefined,
+    completedAt: summaryCompletedAt,
   }, input.namespaceId);
 
   const freshTask = taskGet(input.orgId, taskId, input.namespaceId);
@@ -189,6 +204,32 @@ export async function recoverTaskOutcomeAudit(
     metadata: metadataRecord(freshTask.metadata),
   });
   return { status: "recovered", jobId, sourceRunId };
+}
+
+function updateRecoveredSummaryMetadata(
+  input: { namespaceId: string; orgId: string; taskId: string },
+  expectedMetadata: Record<string, unknown>,
+  jobId: string,
+  sourceRunId: string,
+  nextStatus: string,
+  nextFingerprint: unknown,
+  update: (current: Record<string, unknown>) => Record<string, unknown>,
+): boolean {
+  const result = taskMutateMetadata(input.orgId, input.taskId, (current) => {
+    if (
+      current.task_outcome_summary_job_id !== jobId
+      || current.task_outcome_summary_status !== expectedMetadata.task_outcome_summary_status
+      || current.task_outcome_summary_source_run_id !== sourceRunId
+      || current.task_outcome_summary_run_fingerprint !== expectedMetadata.task_outcome_summary_run_fingerprint
+    ) return null;
+    return { ...current, ...update(current) };
+  }, input.namespaceId);
+  if (!result.ok || !result.task) return false;
+  const metadata = metadataRecord(result.task.metadata);
+  return metadata.task_outcome_summary_job_id === jobId
+    && metadata.task_outcome_summary_source_run_id === sourceRunId
+    && metadata.task_outcome_summary_status === nextStatus
+    && metadata.task_outcome_summary_run_fingerprint === nextFingerprint;
 }
 
 /**
@@ -410,7 +451,8 @@ function withoutLifecycleFingerprint(
   const key = taskLifecycleRunFingerprintKey(sourceRunId, runFingerprint);
   return Array.isArray(metadata.summarized_run_fingerprints)
     ? metadata.summarized_run_fingerprints.filter(
-        (value): value is string => typeof value === "string" && value.length > 0 && value !== key,
+        (value): value is string =>
+          typeof value === "string" && value.length > 0 && value !== key && value !== runFingerprint,
       )
     : [];
 }
