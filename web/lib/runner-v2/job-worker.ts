@@ -421,6 +421,9 @@ const jobPath = jobPaths.jobPath;
 
 // read job input
 let job;
+// Task jobs deliberately persist status "running" for the server-side import
+// (/api/jobs/[id]/complete). The exit handler must not clobber that handoff.
+let persistedForServerImport = false;
 try {
   const content = readFileSync(jobPath, "utf-8");
   job = parseJobRecord(content);
@@ -614,7 +617,30 @@ child.stdout.on("data", (data) => {
 child.stderr.on("data", (data) => { stderr += data.toString(); });
 
 // write prompt to stdin (no shell interpolation = no escaping bugs)
-child.stdin.write(prompt);
+// A failed write (EPIPE / ERR_STREAM_DESTROYED) means the CLI never received
+// its prompt (#138): the job must end failed even if the CLI exits 0 with
+// parseable output — output without the delivered prompt is a false success.
+// The failure is recorded here and acted on in the close handler, so the
+// worker never crashes on it. Any other stdin error still fails the worker
+// through uncaughtException.
+let promptDeliveryFailure: string | null = null;
+child.stdin.on("error", (err) => {
+  if (err && (err.code === "EPIPE" || err.code === "ERR_STREAM_DESTROYED")) {
+    promptDeliveryFailure = err.code ?? "EPIPE";
+    sysLog("warn", `job stdin closed early: ${jobId}`, `${err.code}: CLI exited before reading the full prompt`);
+    return;
+  }
+  throw err;
+});
+try {
+  child.stdin.write(prompt);
+} catch (err: any) {
+  if (err && (err.code === "EPIPE" || err.code === "ERR_STREAM_DESTROYED")) {
+    promptDeliveryFailure = err.code ?? "EPIPE";
+  } else {
+    throw err;
+  }
+}
 child.stdin.end();
 
 child.on("error", async (err) => {
@@ -623,6 +649,10 @@ child.on("error", async (err) => {
 });
 
 child.on("close", async (code) => {
+  if (promptDeliveryFailure) {
+    await failJob(job, `prompt delivery failed: ${promptDeliveryFailure}`);
+    process.exit(1);
+  }
   if (code !== 0) {
     // claude -p sends errors (e.g. "Credit balance is too low") to stdout, not stderr
     const errDetail = stderr.slice(0, 500) || stdout.slice(0, 500) || `${resolvedCli} exited with code ${code}`;
@@ -719,13 +749,19 @@ child.on("close", async (code) => {
   // materializes the task tree. The callback still receives an explicit
   // terminal status; that route publishes `complete` only after import and
   // optional auto-run handoff finish.
-  const callbackStatus = job.type === "task" ? "complete" : job.status;
+  // The callback announces completion: task jobs stay "running" on disk for
+  // the server-side import, but every successful run reports "complete".
+  const callbackStatus = "complete";
   job.status = job.type === "task" ? "running" : "complete";
   job.completedAt = job.status === "complete" ? new Date().toISOString() : undefined;
   job.result = result;
 
   try {
     persistJob(job);
+    // Set only after the write succeeds: a failed write must fall through to
+    // the exit handler's last-resort failure record instead of leaving a
+    // "running" task job stranded with no import callback.
+    persistedForServerImport = job.type === "task";
   } catch (writeErr) {
     console.error("Failed to write completed job:", writeErr.message);
     process.exit(1);
@@ -765,7 +801,7 @@ process.on("unhandledRejection", async (err) => {
 
 // last-resort: if process exits without completing, mark job failed synchronously
 process.on("exit", (code) => {
-  if (job.status === "running") {
+  if (job.status === "running" && !persistedForServerImport) {
     job.status = "failed";
     job.completedAt = new Date().toISOString();
     job.error = job.error || `process exited unexpectedly (code ${code})`;

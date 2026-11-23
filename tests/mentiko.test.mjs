@@ -37,7 +37,10 @@ const results = { ...BASE_ASSERT };
 function logCallFixtureFiles(scriptName) {
   const script = join(FAKE_BIN, "bash");
   const nodeScript = join(FAKE_BIN, "node");
-  const bashBody = `#!/usr/bin/env bash
+  // /bin/bash, not /usr/bin/env bash: fake-bin is first on PATH and contains
+  // a shim named "bash", so an env shebang would resolve to that shim and
+  // recurse into itself forever.
+  const bashBody = `#!/bin/bash
 set -euo pipefail
 script="$1"
 name="\${script##*/}"
@@ -49,7 +52,7 @@ case "$name" in
 esac
 exec /bin/bash "$@"
 `;
-  const nodeBody = `#!/usr/bin/env bash
+  const nodeBody = `#!/bin/bash
 set -euo pipefail
 script="$1"
 name="\${script##*/}"
@@ -239,12 +242,16 @@ test("rejects audit clear without explicit confirmation", () => {
 });
 
 test("emits event file using provided event/source arguments", () => {
-  const res = runMentiko(["emit", "task.completed", "agent-01"]);
+  // Run scope is the emit default and requires a run id; the typed emitter
+  // writes <run-id>-<source>-<event>.event and prints "event emitted: <event>".
+  const res = runMentiko(["emit", "task.completed", "agent-01"], {
+    MENTIKO_RUN_ID: "run-cli-test",
+  });
   const eventsDir = join(MENTIKO_GLOBAL_ROOT, "namespaces", "default", "events");
-  const eventFile = join(eventsDir, "agent-01-task.completed.event");
-  assert(res.status === 0, `expected status 0, got ${res.status}`);
+  const eventFile = join(eventsDir, "run-cli-test-agent-01-task.completed.event");
+  assert(res.status === 0, `expected status 0, got ${res.status}: ${res.stderr}`);
   assert(
-    res.stdout.includes("emitted: task.completed from agent-01"),
+    res.stdout.includes("event emitted: task.completed"),
     `missing emit output: ${res.stdout}`
   );
   assert(existsSync(eventFile), `expected event file: ${eventFile}`);

@@ -1,8 +1,9 @@
-import { existsSync, readdirSync, statfsSync } from "fs";
+import { existsSync, readdirSync, statfsSync, statSync } from "fs";
 import { getHeapStatistics } from "v8";
 import { join } from "path";
 import config from "@/lib/config";
 import { ping as redisPing, redisConfigured } from "@/lib/system/redis";
+import type { BackgroundWorkerStatePaths } from "@/lib/system/background-worker-state";
 
 // detect runtime environment for conditional checks
 // /.dockerenv is created by Docker in every container - most reliable signal
@@ -280,15 +281,77 @@ export async function checkAuditQueue(): Promise<{ status: CheckStatus; message:
   }
 }
 
+// issue #136: the background worker is the task board's heartbeat. Signals:
+// the registered owner pid's liveness, plus the status-file mtime the worker
+// refreshes on every 5s heartbeat tick.
+const WORKER_HEARTBEAT_STALE_MS = 120_000;
+
+export async function checkBackgroundWorker(
+  paths?: BackgroundWorkerStatePaths,
+): Promise<HealthCheckResult> {
+  try {
+    const workerState = await import("@/lib/system/background-worker-state");
+    const { claimProcessMatchesIdentity } = await import("@/lib/runner-v2/file-claim");
+    const statePaths = paths ?? workerState.getBackgroundWorkerPaths();
+    const owner = workerState.readBackgroundWorkerOwner(statePaths);
+    const status = workerState.readBackgroundWorkerStatusFile(statePaths);
+    if (!owner) {
+      return {
+        status: "warn",
+        message: status?.status === "stopped"
+          ? "background worker stopped"
+          : "background worker not registered",
+      };
+    }
+    if (!claimProcessMatchesIdentity(owner.pid, owner.processIdentity)) {
+      // pid existence alone is not identity: a recycled pid (or one rewritten
+      // by another actor) must not pass for a live worker (codex rev2 P2).
+      return {
+        status: "fail",
+        message: `background worker pid ${owner.pid} is not the registered process (stale owner, last status: ${status?.status ?? "unknown"})`,
+      };
+    }
+    if (status?.status === "stopped") {
+      return {
+        status: "fail",
+        message: `background worker status reports stopped while pid ${owner.pid} is registered`,
+      };
+    }
+    const heartbeatAge = Date.now() - statSync(statePaths.statusFile).mtimeMs;
+    if (heartbeatAge > WORKER_HEARTBEAT_STALE_MS) {
+      return {
+        status: "warn",
+        message: `background worker heartbeat stale (${Math.round(heartbeatAge / 1000)}s old, pid ${owner.pid} alive)`,
+      };
+    }
+    // issue #136: a job held past its overrun threshold stops only that job;
+    // while any is overrunning, the worker is degraded, not healthy.
+    const overrunning = status?.overrunningJobs ?? [];
+    if (overrunning.length > 0) {
+      return {
+        status: "warn",
+        message: `background worker degraded: job${overrunning.length > 1 ? "s" : ""} overrunning: ${overrunning.join(", ")} (pid ${owner.pid})`,
+      };
+    }
+    return { status: "pass", message: `background worker running (pid ${owner.pid})` };
+  } catch (err) {
+    return {
+      status: "warn",
+      message: `background worker check unavailable: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+}
+
 /** Every platform health check, keyed exactly as /api/health reports them. */
 export async function runAllHealthChecks(mode: RuntimeMode = detectMode()): Promise<HealthChecks> {
-  const [ptyCheck, sessionsCheck, dbCheck, authCheck, redisCheck, auditCheck] = await Promise.all([
+  const [ptyCheck, sessionsCheck, dbCheck, authCheck, redisCheck, auditCheck, workerCheck] = await Promise.all([
     checkPtyDaemon(),
     checkActiveSessions(),
     checkDatabase(),
     checkAuth(),
     checkRedis(),
     checkAuditQueue(),
+    checkBackgroundWorker(),
   ]);
 
   return {
@@ -303,6 +366,7 @@ export async function runAllHealthChecks(mode: RuntimeMode = detectMode()): Prom
     runs: checkRecentRuns(),
     redis: redisCheck,
     audit_queue: auditCheck,
+    background_worker: workerCheck,
   };
 }
 
@@ -313,4 +377,24 @@ export function overallHealthStatus(checks: HealthChecks): "healthy" | "degraded
   if (hasFail) return "unhealthy";
   if (hasWarn) return "degraded";
   return "healthy";
+}
+
+/**
+ * Checks excluded from the platform readiness verdict (codex rev2 P1, issue
+ * #136). The background worker starts AFTER the platform (processes.json:
+ * worker dependsOn platform), and the pm's critical platform readiness probe
+ * polls /api/health and fails the platform on 503. A stale dead worker owner
+ * from a previous run must not fail the platform that is about to start the
+ * replacement worker. The worker check stays in `checks` and in the monitor
+ * digest's full roll-up — it is only excluded from the readiness decision.
+ */
+const PLATFORM_READINESS_EXCLUDE = new Set(["background_worker"]);
+
+/** Readiness verdict for the platform process itself, used for the HTTP status code. */
+export function readinessHealthStatus(checks: HealthChecks): "healthy" | "degraded" | "unhealthy" {
+  const scoped: HealthChecks = {};
+  for (const [key, value] of Object.entries(checks)) {
+    if (!PLATFORM_READINESS_EXCLUDE.has(key)) scoped[key] = value;
+  }
+  return overallHealthStatus(scoped);
 }

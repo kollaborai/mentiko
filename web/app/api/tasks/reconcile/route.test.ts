@@ -45,6 +45,19 @@ jest.mock("@/lib/tasks/task-store", () => ({
   // decision-unblock's create_followup_dependencies effect uses this when a
   // resolved decision carries follow-up plan tasks.
   taskAddDep: jest.fn(),
+  // decision-unblock filters follow-ups through this before the reducer; keep
+  // the real policy shape (dedupe, drop the parent) without the DB behind it.
+  selectFollowUpTaskIds: jest.fn(({ parentTaskId, candidates }: { parentTaskId: string; candidates: readonly unknown[] }) => {
+    const seen = new Set<string>();
+    const valid: string[] = [];
+    for (const candidate of candidates) {
+      if (typeof candidate !== "string" || candidate.length === 0) continue;
+      if (candidate === parentTaskId || seen.has(candidate)) continue;
+      seen.add(candidate);
+      valid.push(candidate);
+    }
+    return valid;
+  }),
   validateTaskId: (id: string) => id,
 }));
 

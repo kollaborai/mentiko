@@ -43,6 +43,26 @@ jest.mock("@/lib/tasks/task-store", () => ({
   taskAddDep: (...args: unknown[]) => mockTaskAddDep(...args),
   taskUpdate: (...args: unknown[]) => mockTaskUpdate(...args),
   taskGet: (...args: unknown[]) => mockTaskGet(...args),
+  // mirrors the real selectFollowUpTaskIds filter (valid string ids that
+  // exist per taskGet, excluding the parent and duplicates); the cycle
+  // check needs the real db and is not modeled here.
+  selectFollowUpTaskIds: (input: {
+    orgId: string;
+    parentTaskId: string;
+    candidates: readonly unknown[];
+    namespaceId?: string;
+  }) => {
+    const seen = new Set<string>();
+    const valid: string[] = [];
+    for (const candidate of input.candidates) {
+      if (typeof candidate !== "string" || candidate.length === 0) continue;
+      if (candidate === input.parentTaskId || seen.has(candidate)) continue;
+      seen.add(candidate);
+      if (!mockTaskGet(input.orgId, candidate, input.namespaceId)) continue;
+      valid.push(candidate);
+    }
+    return valid;
+  },
 }));
 
 // scan_unblocked_auto_run_tasks fires a real fetch() to localhost in prod (see

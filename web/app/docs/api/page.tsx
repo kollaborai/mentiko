@@ -1322,9 +1322,10 @@ const endpoints: ApiEndpoint[] = [
     method: "GET",
     path: "/api/health",
     auth: false,
-    description: "health check for probes",
+    description: "health check for probes (503 only when the platform itself is not ready; a down background worker degrades status but keeps the endpoint ready)",
     response: {
       status: "healthy",
+      readiness: "healthy",
       timestamp: "string",
       uptime_seconds: 0,
       checks: {},

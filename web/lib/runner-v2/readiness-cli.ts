@@ -16,7 +16,11 @@ import {
   loadAgentProfile,
   resolveDefaultProfile,
 } from "@/lib/runner-v2/agent-profile";
-import { classifyCliReadiness, type CliReadinessResult } from "@/lib/runner-v2/readiness-policy";
+import {
+  applyBuiltinCliStartupHold,
+  classifyCliReadiness,
+  type CliReadinessResult,
+} from "@/lib/runner-v2/readiness-policy";
 
 type Command = "classify" | "wait" | "result" | "result-field";
 type ProcessResult = { status: number | null; stdout: string };
@@ -75,11 +79,13 @@ export function runReadinessCli(argv: string[], write: (line: string) => void = 
     assertRegularInput(capturePath, "capture");
     let result: CliReadinessResult;
     try {
-      result = classifyCliReadiness({
-        readiness: loadAgentProfile(profilePath).profile.readiness,
-        output: readFileSync(capturePath, "utf8"),
+      const profile = loadAgentProfile(profilePath).profile;
+      const output = readFileSync(capturePath, "utf8");
+      result = applyBuiltinCliStartupHold(profile.cli, output, classifyCliReadiness({
+        readiness: profile.readiness,
+        output,
         failClosed: optional(values, "--fail-closed") === "true",
-      });
+      }));
     } catch {
       result = { status: "unknown", reason: "readiness profile unreadable" };
     }
@@ -140,11 +146,12 @@ export function waitForReadiness(input: ReadinessWaitInput): { result: CliReadin
     const capture = run(input.ptyCommand, ["capture", input.session, "120"]);
     const output = capture.status === 0 ? capture.stdout : "";
     if (input.capturePath) writeCaptureAtomically(input.capturePath, output);
-    const result = classifyCliReadiness({
-      readiness: loadAgentProfile(input.profilePath).profile.readiness,
+    const profile = loadAgentProfile(input.profilePath).profile;
+    const result = applyBuiltinCliStartupHold(profile.cli, output, classifyCliReadiness({
+      readiness: profile.readiness,
       output,
       failClosed: input.failClosed,
-    });
+    }));
 
     if (result.status === "ready") return { result, exitCode: 0 };
     if (isRecoverable(result.status) && canAttemptRecovery(input.recovery, recoveryAttempts)) {
@@ -154,6 +161,15 @@ export function waitForReadiness(input: ReadinessWaitInput): { result: CliReadin
     if (isTerminal(result.status)) {
       writeStartupRecoveryArtifacts(input.recovery, result, output);
       return { result, exitCode: 2 };
+    }
+    // Built-in cli startup hold (#123): keep polling in BOTH modes until the
+    // live footer clears — a plain unknown would let the legacy fail-open
+    // mode return immediately and defeat the hold. At the deadline each mode
+    // keeps its own unknown behavior (legacy proceeds below, fail-closed
+    // times out below).
+    if (result.startupHold && now() - started < input.maxWaitSecs * 1_000) {
+      sleep(input.pollSecs * 1_000);
+      continue;
     }
     if (!input.failClosed) return { result: { status: "ready", reason: "legacy readiness policy permits unresolved startup" }, exitCode: 0 };
     if (now() - started >= input.maxWaitSecs * 1_000) {
