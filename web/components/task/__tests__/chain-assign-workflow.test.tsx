@@ -554,4 +554,33 @@ describe("ChainAssignWorkflow", () => {
       mockFetchWithNamespace.mock.calls.some(([url]) => url === "/api/tasks/auto-run"),
     ).toBe(false);
   });
+
+  it("keeps the generation stop visible when Clear & Start Over PATCH fails", async () => {
+    mockFetchWithNamespace.mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: async () => ({ error: "task store unavailable" }),
+    });
+    render(
+      <ChainAssignWorkflow
+        task={makeTask({
+          chain_id: "",
+          auto_run: true,
+          generation_stop_reason: "deterministic_duplicate",
+          auto_run_retries: 3,
+        })}
+        onAssignChain={jest.fn()}
+        onCancel={jest.fn()}
+        onMetadataUpdate={jest.fn()}
+      />
+    );
+
+    const reset = await screen.findByTestId("clear-generation-stop-btn");
+    fireEvent.click(reset);
+
+    await waitFor(() => {
+      expect(screen.getByText("task store unavailable")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("clear-generation-stop-btn")).toBeInTheDocument();
+  });
 });
