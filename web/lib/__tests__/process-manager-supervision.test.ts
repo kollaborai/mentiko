@@ -34,14 +34,15 @@ let daemonForkPidFile: string;
 let raceCounterFile: string;
 
 // one script, two modes, so the forked daemon keeps the same command line the
-// discovery pgrep pattern is built from (cmd + args[0]) — exactly how the real
-// pty-mgr daemonizes. "fork" mode spawns the detached "run" mode daemon and
-// exits 0 during readiness; "run" mode owns the socket and outlives us.
+// discovery pgrep pattern is built from (cmd + args[0]). "fork" mode spawns
+// the "run" mode daemon in the parent's process group and exits 0 during
+// readiness; "run" mode owns the socket and outlives us. Staying in the
+// parent's group lets the manager prove ownership after the parent exits.
 const FORK_SCRIPT = `
 const { spawn } = require("child_process");
 const [mode, sock, pidFile] = process.argv.slice(2);
 if (mode === "fork") {
-  const child = spawn(process.execPath, [__filename, "run", sock, pidFile], { detached: true, stdio: "ignore" });
+  const child = spawn(process.execPath, [__filename, "run", sock, pidFile], { stdio: "ignore" });
   child.unref();
   process.exit(0);
 }
