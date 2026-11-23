@@ -98,6 +98,13 @@ import { recoverTaskOutcomeAudit, startTaskOutcomeAudit } from "./task-outcome-a
 
 beforeEach(() => {
   jest.clearAllMocks();
+  taskMutateMetadata.mockImplementation((_orgId, taskId, mutate) => {
+    const task = taskGet("default", taskId, "default");
+    if (!task) return { ok: false };
+    const next = mutate(task.metadata ?? {}, task);
+    if (next) taskUpdate("default", taskId, { metadata: next });
+    return { ok: true, task: { ...task, metadata: next ?? task.metadata ?? {} } };
+  });
   getTemplate.mockReturnValue({ content: "COMPLETION AUDIT\n{{WORKSPACE_CONTEXT}}" });
   createJob.mockReturnValue({ id: "job-audit" });
   listJobs.mockReturnValue([]);
