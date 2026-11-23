@@ -14,7 +14,7 @@ const bootstrap = readFileSync(join(root, "web", "lib", "runner-v2", "bootstrap-
 execFileSync("bash", ["-n", join(root, "lib", "chain-runner.sh")]);
 assert.match(shell, /exec node "\$SCRIPT_DIR\/runner-v2-direct-run\.js" "\$@"/);
 assert.doesNotMatch(shell, /source |function |\bjq\b|--parallel|transport_new_session|run\.json/);
-assert.match(cli, /graph\)\s+exec node "\$LIB_DIR\/runner-chain-graph\.js"/s);
+assert.match(cli, /graph\)\s+if \[\[ \$# -lt 1 \]\]; then\s+echo "usage: mentiko graph <chain\.json>"\s+exit 1\s+fi\s+exec node "\$LIB_DIR\/runner-chain-graph\.js"/s);
 assert.match(direct, /--task/);
 assert.match(direct, /--dry-run/);
 assert.match(direct, /--parallel was retired/);
