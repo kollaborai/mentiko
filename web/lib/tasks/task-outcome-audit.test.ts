@@ -9,6 +9,7 @@ const getJob = jest.fn();
 const updateJob = jest.fn();
 const taskGet = jest.fn();
 const taskUpdate = jest.fn();
+const taskMutateMetadata = jest.fn();
 const currentRunTerminalFingerprint = jest.fn();
 const currentRunStatus = jest.fn();
 const currentRunSummary = jest.fn();
@@ -44,6 +45,7 @@ jest.mock("node:fs", () => ({
 jest.mock("@/lib/tasks/task-store", () => ({
   taskGet: (...args: unknown[]) => taskGet(...args),
   taskUpdate: (...args: unknown[]) => taskUpdate(...args),
+  taskMutateMetadata: (...args: unknown[]) => taskMutateMetadata(...args),
   validateTaskId: (taskId: string) => taskId,
 }));
 
@@ -96,6 +98,13 @@ import { recoverTaskOutcomeAudit, startTaskOutcomeAudit } from "./task-outcome-a
 
 beforeEach(() => {
   jest.clearAllMocks();
+  taskMutateMetadata.mockImplementation((_orgId, taskId, mutate) => {
+    const task = taskGet("default", taskId, "default");
+    if (!task) return { ok: false };
+    const next = mutate(task.metadata ?? {}, task);
+    if (next) taskUpdate("default", taskId, { metadata: next }, "default");
+    return { ok: true, task: { ...task, metadata: next ?? task.metadata ?? {} } };
+  });
   getTemplate.mockReturnValue({ content: "COMPLETION AUDIT\n{{WORKSPACE_CONTEXT}}" });
   createJob.mockReturnValue({ id: "job-audit" });
   listJobs.mockReturnValue([]);
@@ -768,5 +777,121 @@ describe("recoverTaskOutcomeAudit", () => {
         task_outcome_summary_failures: 2,
       }),
     }, "default");
+  });
+
+  it("removes a legacy bare lifecycle fingerprint when retrying a failed summary", async () => {
+    taskGet.mockReturnValue({
+      id: "TASK-107",
+      metadata: {
+        task_outcome_summary_job_id: "job-summary",
+        task_outcome_summary_status: "running",
+        task_outcome_summary_source_run_id: "run-execution",
+        summarized_run_fingerprints: ["completed:f1"],
+      },
+    });
+    getJob.mockReturnValue({
+      id: "job-summary",
+      type: "task_run_summary",
+      status: "failed",
+      taskId: "TASK-107",
+      runId: "run-summary",
+      input: { sourceRunId: "run-execution", runFingerprint: "completed:f1" },
+    });
+    existsSync.mockReturnValue(false);
+
+    await recoverTaskOutcomeAudit({
+      request: {} as Request,
+      namespaceId: "default",
+      orgId: "default",
+      taskId: "TASK-107",
+    });
+
+    expect(taskUpdate).toHaveBeenCalledWith("default", "TASK-107", {
+      metadata: expect.objectContaining({ summarized_run_fingerprints: [] }),
+    }, "default");
+  });
+
+  it("repairs a missing failure count for a failure already recorded on this job", async () => {
+    taskGet.mockReturnValue({
+      id: "TASK-107",
+      metadata: {
+        task_outcome_summary_job_id: "job-summary",
+        task_outcome_summary_status: "failed",
+        task_outcome_summary_source_run_id: "run-execution",
+      },
+    });
+    getJob.mockReturnValue({
+      id: "job-summary",
+      type: "task_run_summary",
+      status: "failed",
+      taskId: "TASK-107",
+      runId: "run-summary",
+      input: { sourceRunId: "run-execution" },
+    });
+    existsSync.mockReturnValue(false);
+
+    await recoverTaskOutcomeAudit({
+      request: {} as Request,
+      namespaceId: "default",
+      orgId: "default",
+      taskId: "TASK-107",
+    });
+
+    expect(taskUpdate).toHaveBeenCalledWith("default", "TASK-107", {
+      metadata: expect.objectContaining({ task_outcome_summary_failures: 1 }),
+    }, "default");
+  });
+
+  it("does not overwrite a newer summary job while recovering an older failed job", async () => {
+    const liveTask: Record<string, any> = {
+      id: "TASK-107",
+      revision: 1,
+      metadata: {
+        task_outcome_summary_job_id: "job-summary",
+        task_outcome_summary_status: "running",
+        task_outcome_summary_source_run_id: "run-execution",
+        task_outcome_summary_run_fingerprint: "completed:f1",
+      },
+    };
+    taskGet.mockImplementation(() => liveTask);
+    taskUpdate.mockImplementation((_orgId, _taskId, fields) => {
+      liveTask.metadata = fields.metadata;
+    });
+    taskMutateMetadata.mockImplementation((_orgId, _taskId, mutate) => {
+      const next = mutate(liveTask.metadata, liveTask);
+      if (next) taskUpdate("default", "TASK-107", { metadata: next });
+      return { ok: true };
+    });
+    getJob.mockReturnValue({
+      id: "job-summary",
+      type: "task_run_summary",
+      status: "failed",
+      taskId: "TASK-107",
+      runId: "run-summary",
+      input: { sourceRunId: "run-execution", runFingerprint: "completed:f1" },
+    });
+    existsSync.mockImplementation(() => {
+      liveTask.metadata = {
+        task_outcome_summary_job_id: "job-new",
+        task_outcome_summary_status: "running",
+        task_outcome_summary_source_run_id: "run-new",
+        task_outcome_summary_run_fingerprint: "completed:f2",
+      };
+      return false;
+    });
+
+    await recoverTaskOutcomeAudit({
+      request: {} as Request,
+      namespaceId: "default",
+      orgId: "default",
+      taskId: "TASK-107",
+    });
+
+    expect(liveTask.metadata).toEqual({
+      task_outcome_summary_job_id: "job-new",
+      task_outcome_summary_status: "running",
+      task_outcome_summary_source_run_id: "run-new",
+      task_outcome_summary_run_fingerprint: "completed:f2",
+    });
   });
 });

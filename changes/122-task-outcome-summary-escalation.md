@@ -1,0 +1,1 @@
+Tasks no longer remain blocked in summary processing after the outcome summary fails repeatedly: reconcile routes an exhausted failure for a terminal run to a human decision. Decision gates now resolve only from their linked decision task, and completion-audit decision creation is serialized and repairable.

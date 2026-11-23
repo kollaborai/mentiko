@@ -83,6 +83,17 @@ export type TaskLifecycleEvent =
       followUpTaskIds?: string[];
       decisionTaskId?: string;
     }
+  | {
+      // The outcome-summary run failed, was escalated, or never answered.
+      // `exhausted` is the caller's verdict that the summary failure limit is
+      // spent; the reducer then hands the task to a human instead of retrying.
+      type: "summary.failed";
+      taskId: string;
+      sourceRunId: string;
+      fingerprint: string;
+      reason: string;
+      exhausted: boolean;
+    }
   | { type: "decision.created"; taskId: string; decisionTaskId: string; sourceRunId: string; fingerprint: string }
   | { type: "decision.resolved"; taskId: string; decisionTaskId: string; followUpTaskIds: string[] }
   | { type: "followups.completed"; taskId: string; followUpTaskIds: string[] }
