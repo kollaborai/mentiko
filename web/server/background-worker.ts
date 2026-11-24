@@ -26,6 +26,7 @@ import {
 } from "../lib/runner-v2/chain-watcher-service";
 import { runTypedWatchdogScan } from "../lib/runner-v2/watchdog";
 import { reconcileRoutedLaunchJobs } from "../lib/runner-v2/launch-job-runner";
+import { reconstructResumeLaunchEnvironment } from "../lib/runner-v2/resume-launch-credentials";
 import { reconcileGitNodeWorkspaceCleanups } from "../lib/runner-v2/workspace-cleanup";
 import { createBackgroundWorkerShutdown } from "./background-worker-shutdown";
 import { createBoundedJob, describeJobError, getOverrunningJobs, runGuardedJob } from "./guarded-job";
@@ -189,6 +190,10 @@ const runLaunchJobReconciler = createBoundedJob("launch-jobs", (label: string) =
   try {
     const runtimeErrors: string[] = [];
     const result = reconcileRoutedLaunchJobs({
+      // Accepted resume jobs get their scoped session token and profile/secrets
+      // reconstructed at claim time (#142 r2); a failure blocks the job visibly
+      // instead of launching unauthenticated work.
+      dependencies: { reconstructResumeEnvironment: reconstructResumeLaunchEnvironment },
       onError: (error) => {
         runtimeErrors.push(error.message);
         console.warn(`[worker] routed launch job ${label} failed:`, error);

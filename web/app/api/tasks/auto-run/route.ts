@@ -26,7 +26,7 @@ import {
   removeRunFromSnapshot,
   type RunsSnapshot,
 } from "@/lib/runs/auto-run";
-import { taskAddDep, taskClaimMetadataKeyIfUnset, taskGet, taskUpdate } from "@/lib/tasks/task-store";
+import { taskAddDep, taskClaimMetadataKeyIfUnset, taskGet, taskMutateMetadata, taskUpdate, taskUpdateIfUnchanged } from "@/lib/tasks/task-store";
 import { isTaskWorkMode, resolveTaskWorkMode } from "@/lib/tasks/work-mode";
 import { chainHasDeliveryAgent } from "@/lib/tasks/completion-audit-delivery-gate";
 import { normalizeTaskChainBindingMetadata } from "@/lib/tasks/task-chain-binding";
@@ -52,9 +52,17 @@ import {
   createTaskRunScope,
   locateTaskRun,
   parseTaskRunScope,
+  resolveTaskRunLocation,
   taskRunLaunchFailureMetadata,
   TASK_RUN_SCOPE_METADATA_KEY,
 } from "@/lib/tasks/task-run-locator";
+import {
+  currentResumeSeries,
+  RESUME_SOURCE_AUTO_RUN,
+  RESUME_SOURCE_HEADER,
+  taskPointsAtRun,
+  type ResumeAttemptOutcome,
+} from "@/lib/runs/resume-attempt";
 import { unwrapAgentJsonOutput } from "@/lib/tasks/agent-json-output";
 import { isPayloadCompatibleWithKind } from "@/lib/generation/payload-contract";
 import { sanitizeGeneratedChain } from "@/lib/chains/generated-chain-sanitizer";
@@ -640,6 +648,160 @@ function resumableRunIdFromRecord(
   return runId;
 }
 
+/**
+ * The runs root the recorded resume outcome must be read from: a scoped run
+ * lives under its persisted scope's root, everything else under the request
+ * namespace/org root — the same roots readResumableRunId reads.
+ */
+function resumeOutcomeRunsDir(
+  taskId: string,
+  runId: string,
+  namespaceId: string,
+  orgId: string,
+  metadata: Record<string, unknown>
+): string {
+  if (TASK_RUN_SCOPE_METADATA_KEY in metadata) {
+    try {
+      const scope = parseTaskRunScope(metadata[TASK_RUN_SCOPE_METADATA_KEY]);
+      if (scope.taskId === taskId && scope.runId === runId) {
+        return resolveTaskRunLocation(scope).runsDir;
+      }
+    } catch {
+      /* malformed scope: fall through to the request root */
+    }
+  }
+  return resolveLinkRunsDir(namespaceId, orgId);
+}
+
+type RecordedResumeOutcome =
+  | { readable: false; error: string }
+  | { readable: true; outcome?: ResumeAttemptOutcome; reason?: string; attemptId?: string; series?: number };
+
+/**
+ * Read the AUTHORITATIVE resume outcome the route recorded on run.json. The
+ * scanner never infers an outcome from an HTTP status, a timeout, or the run's
+ * status snapshot — it reads exactly what the route wrote (issue #142).
+ */
+function readRecordedResumeOutcome(runsDir: string, runId: string): RecordedResumeOutcome {
+  let raw: string;
+  try {
+    raw = readFileSync(join(runsDir, runId, "run.json"), "utf-8");
+  } catch (error) {
+    return { readable: false, error: error instanceof Error ? error.message : String(error) };
+  }
+  let record: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { readable: false, error: "run record is not a JSON object" };
+    }
+    record = parsed;
+  } catch {
+    return { readable: false, error: "run record is invalid JSON" };
+  }
+  const attempt = record.resumeAttempt;
+  if (!attempt || typeof attempt !== "object" || Array.isArray(attempt)) {
+    return { readable: true };
+  }
+  const candidate = attempt as { id?: unknown; outcome?: unknown; reason?: unknown; series?: unknown };
+  if (
+    (candidate.outcome === "preparing" || candidate.outcome === "failed" || candidate.outcome === "accepted")
+    && typeof candidate.id === "string"
+  ) {
+    return {
+      readable: true,
+      outcome: candidate.outcome,
+      ...(typeof candidate.reason === "string" ? { reason: candidate.reason } : {}),
+      attemptId: candidate.id,
+      ...(typeof candidate.series === "number" ? { series: candidate.series } : {}),
+    };
+  }
+  // A malformed attempt record cannot prove any outcome.
+  return { readable: false, error: "run record carries a malformed resumeAttempt" };
+}
+
+/**
+ * Operational unknown pause (issue #142): the resume outcome could not be
+ * determined (unreadable run record, unreachable route, no recorded attempt on
+ * a failed response). This is NOT an attempt outcome and NOT a debit — it
+ * pauses dispatch using the existing auto_run_paused fields so the gap is
+ * visible instead of spinning silently. Guarded: a task that closed, was reset
+ * (series moved past the observed one), or moved on to a different run
+ * (authoritative task_run_scope wins over a stale last_run_id) is never
+ * paused for this one.
+ */
+function pauseTaskForUnknownResumeOutcome(input: {
+  orgId: string;
+  namespaceId: string;
+  taskId: string;
+  runId: string;
+  detail: string;
+  series?: number;
+}): boolean {
+  const result = taskMutateMetadata(input.orgId, input.taskId, (metadata, task) => {
+    // A late unknown must never pause a task that closed or moved on.
+    if (isTerminalTaskStatus(task.status)) return null;
+    if (input.series !== undefined && currentResumeSeries(metadata) !== input.series) return null;
+    if (!taskPointsAtRun(metadata, input.taskId, input.runId)) {
+      return null;
+    }
+    return {
+      ...metadata,
+      resume_pending_since: null,
+      auto_run_paused: true,
+      auto_run_paused_reason:
+        `resume outcome unknown for run ${input.runId}: ${input.detail}. `
+        + "Auto-run paused so the loop cannot spin silently; use Retry task after repairing the run record or route.",
+    };
+  }, input.namespaceId);
+  return result.ok;
+}
+
+/**
+ * Bounded unknown pause for repeated transport loss while the durable outcome
+ * stays preparing (issue #142 round 2, P2): the same attempt is retried each
+ * scan, so a permanently unreachable route would otherwise loop silently
+ * forever. The first stuck scan starts a clock (resume_pending_since) instead
+ * of pausing; once the clock exceeds the bound, dispatch pauses visibly —
+ * still no attempt outcome, still no retry debit. Guarded by run identity and
+ * the recorded series so a late unknown cannot pause a reset task, and never
+ * pauses a closed task.
+ */
+function pauseTaskIfResumePendingBeyondBound(input: {
+  orgId: string;
+  namespaceId: string;
+  taskId: string;
+  runId: string;
+  series?: number;
+  now?: Date;
+}): boolean {
+  const boundMs = 10 * 60_000;
+  const result = taskMutateMetadata(input.orgId, input.taskId, (metadata, task) => {
+    if (isTerminalTaskStatus(task.status)) return null;
+    if (!taskPointsAtRun(metadata, input.taskId, input.runId)) return null;
+    if (input.series !== undefined && currentResumeSeries(metadata) !== input.series) return null;
+    const now = input.now || new Date();
+    const sinceMs = typeof metadata.resume_pending_since === "string"
+      ? Date.parse(metadata.resume_pending_since)
+      : NaN;
+    if (!Number.isFinite(sinceMs)) {
+      // start the bounded clock; this scan does not pause
+      return { ...metadata, resume_pending_since: now.toISOString() };
+    }
+    if (now.getTime() - sinceMs < boundMs) return null;
+    return {
+      ...metadata,
+      resume_pending_since: null,
+      auto_run_paused: true,
+      auto_run_paused_reason:
+        `resume attempt for run ${input.runId} stayed preparing across repeated scans for over `
+        + `${Math.round(boundMs / 60_000)} minutes (transport loss against an unreachable or stuck resume route). `
+        + "Auto-run paused without consuming a retry; use Retry task after the route is reachable again.",
+    };
+  }, input.namespaceId);
+  return result.ok;
+}
+
 async function resumeExistingRun(
   taskId: string,
   runId: string,
@@ -648,51 +810,199 @@ async function resumeExistingRun(
   request: NextRequest,
   metadata: Record<string, unknown>
 ): Promise<TriggerResult> {
-  const resumeRes = await fetch(internalApiUrl(`/api/runs/${encodeURIComponent(runId)}/resume`, request.url), {
-    method: "POST",
-    headers: forwardedHeaders(request, namespaceId, orgId),
-  });
+  let resumeRes: Response | undefined;
+  let transportError: string | undefined;
+  try {
+    resumeRes = await fetch(internalApiUrl(`/api/runs/${encodeURIComponent(runId)}/resume`, request.url), {
+      method: "POST",
+      headers: {
+        ...forwardedHeaders(request, namespaceId, orgId),
+        [RESUME_SOURCE_HEADER]: RESUME_SOURCE_AUTO_RUN,
+      },
+    });
+  } catch (error) {
+    // Only the error CLASS is kept (#142 round 5 review): this text is
+    // persisted in the task's pause reason, and a transport exception message
+    // can quote a URL, header or token.
+    transportError = error instanceof Error && /^[A-Za-z]{1,40}$/.test(error.name) ? error.name : "error";
+  }
 
-  const resumeData = await resumeRes.json().catch(() => ({}));
-  if (!resumeRes.ok) {
+  /**
+   * Guarded accepted projection (issue #142 round 3): ONE compare-and-set
+   * write marks the task in_progress with execution-start metadata, fenced by
+   * the CURRENT task row — a reset (series moved), a run replacement or
+   * reassignment (scope/last_run_id no longer names this run), or a close
+   * means the late acceptance is stale and changes NOTHING — AND by the
+   * DURABLE accepted attempt id: the run record's current resumeAttempt is
+   * re-read inside the CAS loop, and an out-of-order response for an OLDER
+   * attempt on the same run and series changes nothing. Lost CAS races retry
+   * against a fresh row; a fenced projection is a silent no-op.
+   */
+  const applyAcceptedResumeMetadata = async (attempt: {
+    attemptId?: string;
+    series?: number;
+  }): Promise<void> => {
+    try {
+      for (let casAttempt = 0; casAttempt < 3; casAttempt += 1) {
+        const currentTask = taskGet(orgId, taskId, namespaceId);
+        if (!currentTask || currentTask.revision === undefined) return;
+        const existingMeta = currentTask.metadata && typeof currentTask.metadata === "object"
+          ? currentTask.metadata as Record<string, unknown>
+          : {};
+        if (isTerminalTaskStatus(currentTask.status)) return;
+        if (attempt.series !== undefined && currentResumeSeries(existingMeta) !== attempt.series) return;
+        if (!taskPointsAtRun(existingMeta, taskId, runId)) return;
+        // Durable-attempt fence: project only when the run's CURRENT
+        // resumeAttempt is the accepted attempt this response belongs to.
+        const durable = readRecordedResumeOutcome(runsDir, runId);
+        if (!durable.readable || durable.outcome !== "accepted") return;
+        if (attempt.attemptId === undefined || durable.attemptId !== attempt.attemptId) return;
+        const landed = taskUpdateIfUnchanged(orgId, taskId, currentTask.revision, {
+          status: "in_progress",
+          metadata: executionStartedLifecycleMetadata({
+            taskId,
+            metadata: existingMeta,
+            runId,
+            chainId: typeof existingMeta.chain_id === "string" ? existingMeta.chain_id : undefined,
+          }),
+        }, namespaceId);
+        if (landed) return;
+      }
+    } catch {
+      /* non-fatal */
+    }
+  };
+
+  const runsDir = resumeOutcomeRunsDir(taskId, runId, namespaceId, orgId, metadata);
+
+  if (resumeRes?.ok) {
+    const accepted = await resumeRes.json().catch(() => ({})) as {
+      data?: { resumeAttemptId?: string; resumeSeries?: number };
+    };
+    await applyAcceptedResumeMetadata({
+      attemptId: accepted.data?.resumeAttemptId,
+      series: accepted.data?.resumeSeries,
+    });
+    return { triggered: true, taskId, runId, action: "chain_resume" };
+  }
+
+  // A 409 conflict is never a failed attempt: another resume won the claim,
+  // the run is already running, or everything completed. Charge nothing.
+  if (resumeRes && resumeRes.status === 409) {
+    const resumeData = await resumeRes.json().catch(() => ({}));
     const message =
-      (resumeData as { error?: { message?: string } }).error?.message ||
-      (resumeData as { error?: string }).error ||
-      `Failed to resume run ${runId}`;
+      (resumeData as { error?: { message?: string } }).error?.message
+      || (resumeData as { error?: string }).error
+      || "resume conflicted with an in-progress resume";
+    return { triggered: false, taskId, runId, action: "resume_conflict", reason: message };
+  }
+
+  // Any other non-2xx, or a transport loss: the ROUTE owns the outcome. Read
+  // the authoritative record it wrote; never guess from the response.
+  const recorded = readRecordedResumeOutcome(runsDir, runId);
+
+  if (recorded.readable && recorded.outcome === "accepted") {
+    // The resume took effect even though the response was lost or rejected.
+    // A late accepted outcome is never relabeled failed by this scanner, and
+    // its projection is fenced against whatever moved on since acceptance.
+    await applyAcceptedResumeMetadata({
+      attemptId: recorded.attemptId,
+      series: recorded.series,
+    });
+    return {
+      triggered: true,
+      taskId,
+      runId,
+      action: "chain_resume",
+      reason: "resume was accepted durably; the response did not make it back",
+    };
+  }
+
+  if (recorded.readable && recorded.outcome === "failed") {
+    // Confirmed failure, durably recorded by the route with its reason. The
+    // task projection is the route's job (it already ran, or replays on the
+    // next route entry); the scanner never charges a retry itself.
     return {
       triggered: false,
       taskId,
       runId,
       action: "resume_failed",
-      error: message,
+      reason: recorded.reason || "resume failed (reason recorded on the run)",
     };
   }
 
-  try {
-    const currentTask = taskGet(orgId, taskId, namespaceId);
-    const existingMeta = currentTask?.metadata && typeof currentTask.metadata === "object"
-      ? currentTask.metadata as Record<string, unknown>
-      : metadata;
-    taskUpdate(orgId, taskId, {
-      status: "in_progress",
-      metadata: {
-        ...executionStartedLifecycleMetadata({
-          taskId,
-          metadata: existingMeta,
-          runId,
-          chainId: typeof existingMeta.chain_id === "string" ? existingMeta.chain_id : undefined,
-        }),
-      },
-    }, namespaceId);
-  } catch {
-    /* non-fatal */
+  if (recorded.readable && recorded.outcome === "preparing" && !transportError && resumeRes) {
+    // The route answered non-ok but left its own attempt preparing — it could
+    // not finish what it started. Pause dispatch for visibility; no debit. The
+    // next scan (or Retry task) retries the same attempt through the route.
+    pauseTaskForUnknownResumeOutcome({
+      orgId,
+      namespaceId,
+      taskId,
+      runId,
+      detail: `resume route returned ${resumeRes.status} with the attempt still preparing`,
+      series: recorded.series,
+    });
+    return {
+      triggered: false,
+      taskId,
+      runId,
+      action: "resume_stuck_preparing",
+      reason: "resume attempt stuck preparing; auto-run paused without consuming a retry",
+    };
   }
 
-  return {
-    triggered: true,
+  if (recorded.readable && recorded.outcome === "preparing") {
+    // Transport loss while the attempt is (or was) in flight: unknown, not a
+    // failure. The next scan retries the SAME route/recovery path, which
+    // finishes the same attempt under its claim; never a debit. Repeated loss
+    // is bounded (P2): after the clock exceeds the bound the task pauses
+    // visibly instead of looping silently forever.
+    pauseTaskIfResumePendingBeyondBound({
+      orgId,
+      namespaceId,
+      taskId,
+      runId,
+      series: recorded.series,
+    });
+    return {
+      triggered: false,
+      taskId,
+      runId,
+      action: "resume_pending",
+      reason: "resume attempt still preparing after a lost response; next scan retries the same attempt",
+    };
+  }
+
+  // Unknown outcome: unreadable run record, or a failed/unreachable route with
+  // no recorded attempt. Visible operational pause; no attempt outcome, no debit.
+  const detail = transportError
+    ? `resume request transport failed (${transportError})`
+    : resumeRes
+      ? `resume route returned ${resumeRes.status} without recording an attempt`
+      : "resume request failed before a response";
+  const paused = pauseTaskForUnknownResumeOutcome({
+    orgId,
+    namespaceId,
     taskId,
     runId,
-    action: "chain_resume",
+    detail,
+    // Fence on the observed series (#142 round 4, P2-1): the record's series
+    // when it is readable, otherwise the task's resume_series read BEFORE the
+    // resume request — an unreadable record must not leave the unknown pause
+    // without a series fence a same-run reset could dodge.
+    series: recorded.readable && typeof recorded.series === "number"
+      ? recorded.series
+      : currentResumeSeries(metadata),
+  });
+  return {
+    triggered: false,
+    taskId,
+    runId,
+    action: paused ? "resume_outcome_unknown" : "resume_outcome_unknown_unpaused",
+    reason: paused
+      ? `auto-run paused: ${detail}`
+      : `${detail} (task no longer points at this run; not paused and not charged)`,
   };
 }
 

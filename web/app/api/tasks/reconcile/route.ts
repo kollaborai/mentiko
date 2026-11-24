@@ -48,6 +48,7 @@ import { isConcurrencyCapBlockedReason } from "@/lib/runner-v2/concurrency-admis
 import { isDecisionGateReleased, releaseDecisionGateMetadata } from "@/lib/tasks/decision-gate-release";
 import { unblockTaskViaResolvedDecision } from "@/lib/tasks/decision-unblock";
 import { updateRunJsonRecord } from "@/lib/runner-v2/run-state";
+import { acceptedResumeDispatchState } from "@/lib/runner-v2/launch-job";
 
 export const dynamic = "force-dynamic";
 
@@ -423,6 +424,10 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     let newStatus: string | null = null;
     let reason = "";
     let holdForLateCompletion = false;
+    // A stop caused by a typed terminal resume dispatch (#142 round 7) is not
+    // an execution outcome: the run reaper pauses the task with the reason,
+    // and this reconciler must not retry or summarize it.
+    let resumeDispatchTerminal = false;
 
     if (!existsSync(runDir) || !existsSync(runJsonPath)) {
       newStatus = "deleted";
@@ -455,6 +460,8 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
           newStatus = run.status;
           reason = terminalRunReason(run);
           holdForLateCompletion = shouldHoldForLateCompletionRecovery(run);
+          resumeDispatchTerminal = run.status !== "completed"
+            && acceptedResumeDispatchState(run) === "terminal";
         } else {
           if (allDeclaredAgentsComplete(run, runDir)) {
             run = updateRunJsonRecord(runJsonPath, (current) => {
@@ -479,8 +486,15 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
               a.status === "running" && a.session && liveSessions.has(a.session)
           );
           const handoffAlive = hasLivePendingHandoff(run);
+          // An accepted resume whose bound launch job is still queued/leased,
+          // or already blocked with a typed terminal code, belongs to the
+          // dispatch path and the run reaper (#142 round 7): this reconciler
+          // never stops such a run for having no live session. Without this
+          // it stopped a freshly accepted resume before any worker could
+          // claim it, and pre-empted the dispatch bound and its visible pause.
+          const resumeDispatchOwned = Boolean(acceptedResumeDispatchState(run));
 
-          if (!newStatus && !anyAlive && !handoffAlive) {
+          if (!newStatus && !anyAlive && !handoffAlive && !resumeDispatchOwned) {
             const anyRunning = agents.some((a: { status: string }) => a.status === "running");
             const anyPending = agents.some((a: { status: string }) => a.status === "pending");
             if (anyRunning || anyPending) {
@@ -503,6 +517,7 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
                     : [];
                   if (currentAgents.some((agent) => agent.status === "running" && agent.session && liveSessions.has(agent.session))) return current;
                   if (hasLivePendingHandoff(currentRun) || allDeclaredAgentsComplete(currentRun, runDir)) return current;
+                  if (acceptedResumeDispatchState(currentRun as never)) return current;
                   const currentHasUnresolvedAgents = currentAgents.some((agent) => agent.status === "running" || agent.status === "pending");
                   if (!currentHasUnresolvedAgents) return current;
                   const currentStartedAt = parseTimeMs(currentRun.started) || parseTimeMs(meta.last_run_started);
@@ -549,7 +564,7 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
         taskUpdate(orgId, safeId, { metadata: updatedMeta }, namespaceId);
 
         const autoRun = autoRunEnabledFor(issue, meta);
-        if (autoRun && TERMINAL_RUN_STATUSES.has(newStatus) && !holdForLateCompletion) {
+        if (autoRun && TERMINAL_RUN_STATUSES.has(newStatus) && !holdForLateCompletion && !resumeDispatchTerminal) {
           try {
             const lifecycle = await applyExecutionLifecycle({
               request,
@@ -617,6 +632,13 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
         writeLog(namespaceId, orgId, "info", "task-reconciler",
           `task ${issue.id} ignored completed non-execution run ${runId}`,
           "non-execution run is not a task execution run");
+        continue;
+      }
+      // #142 round 7: a run that ended because its accepted resume dispatch
+      // ended (bound launch job blocked with a typed code) launched nothing.
+      // The run reaper pauses the task with the reason; there is no
+      // execution outcome here to retry or summarize.
+      if (run.status !== "completed" && acceptedResumeDispatchState(run) === "terminal") {
         continue;
       }
 

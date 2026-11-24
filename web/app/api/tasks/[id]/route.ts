@@ -1,14 +1,16 @@
 import { NextRequest } from "next/server";
 import { requirePermission } from "@/lib/auth/api-auth";
 import { enforceGuestWrites } from "@/lib/middleware";
-import { taskGet, taskList, taskUpdate } from "@/lib/tasks/task-store";
+import { taskGet, taskList, taskMutateMetadata, taskUpdate } from "@/lib/tasks/task-store";
 import { validateTaskId } from "@/lib/tasks/task-store";
 import { filterVisibleTaskRecords } from "@/lib/tasks/task-visibility";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { validateChainId, buildChainMetadata } from "@/lib/chains/chain-validation";
-import { NotFound, BadRequest } from "@/lib/api-errors";
+import { NotFound, BadRequest, Conflict } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { resolveTaskAutoRunDefault } from "@/lib/tasks/task-auto-run-default";
+import { currentResumeSeries } from "@/lib/runs/resume-attempt";
+import { ResumeResetConflictError, withTaskResumeClaimAsync } from "@/lib/runs/resume-reset";
 
 export const dynamic = "force-dynamic";
 
@@ -93,6 +95,7 @@ export const PATCH = requirePermission("manage_tasks")(
 
       // Build update fields
       const updateFields: Record<string, unknown> = {};
+      let resetMetadataLanded = false;
       if (body.title) updateFields.title = body.title;
       if (body.description !== undefined) updateFields.description = body.description;
       if (body.status) updateFields.status = body.status;
@@ -119,7 +122,55 @@ export const PATCH = requirePermission("manage_tasks")(
             Object.keys(incomingMeta).length === 0 &&
             !chainMetadata);
 
-        if (isExplicitClear) {
+        // A resume-series reset (issue #142 round 2): a client-sent
+        // resume_series key marks reset intent (its VALUE is a stale snapshot
+        // and is always ignored), and any chain assignment/clear is a reset
+        // too. The series is incremented ON THE SERVER inside the run's
+        // .resume-claim so it can never interleave with a resume acceptance;
+        // a busy claim is a visible retryable conflict, never optimistic.
+        const requestsResumeReset =
+          chainMetadata !== null ||
+          isExplicitClear ||
+          (body.metadata !== undefined && typeof incomingMeta === "object" && "resume_series" in incomingMeta);
+
+        if (requestsResumeReset) {
+          if (incomingMeta && typeof incomingMeta === "object") {
+            delete (incomingMeta as Record<string, unknown>).resume_series;
+          }
+          // The guarded task write (series increment + clears) happens INSIDE
+          // the run's .resume-claim (issue #142 round 3): the claim is held
+          // across the read-modify-write CAS, so a resume acceptance can never
+          // land between this reset's read and its write, and two overlapping
+          // resets serialize into distinct series. The async claim wait never
+          // blocks the event loop. A busy claim or a lost CAS race past its
+          // retry budget is a visible retryable conflict — never an
+          // unconditional taskUpdate after the claim is released.
+          try {
+            const landed = await withTaskResumeClaimAsync(
+              { orgId, namespaceId, taskId: safeId },
+              () => taskMutateMetadata(orgId, safeId, (currentMeta) => {
+                const next: Record<string, unknown> = isExplicitClear
+                  ? {}
+                  : {
+                      ...currentMeta,
+                      ...(incomingMeta as Record<string, unknown>),
+                      ...(chainMetadata || {}),
+                    };
+                next.resume_series = currentResumeSeries(currentMeta) + 1;
+                return next;
+              }, namespaceId, { maxAttempts: 10 }),
+            );
+            if (!landed.ok) {
+              throw new Conflict(
+                `Task ${safeId} metadata was modified while the reset was writing; retry the reset`,
+              );
+            }
+            resetMetadataLanded = true;
+          } catch (error) {
+            if (error instanceof ResumeResetConflictError) throw new Conflict(error.message);
+            throw error;
+          }
+        } else if (isExplicitClear) {
           updateFields.metadata = {};
         } else {
           const current = taskGet(orgId, safeId, namespaceId);
@@ -136,6 +187,12 @@ export const PATCH = requirePermission("manage_tasks")(
       }
 
       if (Object.keys(updateFields).length === 0) {
+        // A landed reset IS an update, even when it carried no other fields.
+        if (resetMetadataLanded) {
+          const reset = taskGet(orgId, safeId, namespaceId);
+          if (!reset) throw new NotFound("Task", id);
+          return apiSuccess({ issue: reset });
+        }
         throw new BadRequest("No update fields provided");
       }
 

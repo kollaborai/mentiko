@@ -1072,6 +1072,123 @@ describe("GET /api/tasks/reconcile", () => {
     );
   });
 
+  // ---- accepted resume dispatch is owned by the dispatch path and the run reaper (#142 round 7) ----
+
+  function resumedRunFixture(input: {
+    status: string;
+    job: Record<string, unknown>;
+    statusReason?: Record<string, unknown>;
+  }): string {
+    return JSON.stringify({
+      id: "run-exec",
+      taskId: "TASK-044",
+      status: input.status,
+      // the ORIGINAL start is days old: the startup grace never protects a resume
+      started: new Date(Date.now() - 3 * 24 * 60 * 60_000).toISOString(),
+      resumedAt: new Date(Date.now() - 5 * 60_000).toISOString(),
+      chainId: "smoke-test-suite-generator",
+      metadata: {},
+      ...(input.statusReason ? { statusReason: input.statusReason } : {}),
+      agents: [{ id: "reviewer", status: "pending", session: "" }],
+      resumeAttempt: { id: "attempt-1", series: 0, taskId: "TASK-044", outcome: "accepted", launchJobId: "job-bound" },
+      runnerV2: {
+        launchJobs: {
+          "job-bound": {
+            version: 1,
+            id: "job-bound",
+            occurrenceId: "resume:run-exec:attempt-1",
+            runId: "run-exec",
+            runDir: "/tmp/mentiko-test/runs/run-exec",
+            chainPath: "/tmp/mentiko-test/runs/run-exec/chain.json",
+            targets: [{ agentId: "reviewer" }],
+            environment: {},
+            attemptCount: 0,
+            createdAt: new Date(Date.now() - 5 * 60_000).toISOString(),
+            ...input.job,
+          },
+        },
+      },
+    });
+  }
+
+  function resumedTaskFixture() {
+    return [{
+      id: "TASK-044",
+      title: "Run recommended chain",
+      status: "in_progress",
+      metadata: { auto_run: true, last_run_id: "run-exec", last_run_status: "running", execution_retries: 0 },
+    }];
+  }
+
+  it("never stops a freshly accepted resume whose bound launch job is still queued, though no session is live", async () => {
+    mockReadFileSync.mockReturnValue(resumedRunFixture({ status: "running", job: { status: "queued" } }));
+    mockTaskList.mockReturnValue(resumedTaskFixture());
+
+    const res = await GET(makeRequest() as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data.results).toEqual([]);
+    expect(mockTaskUpdate).not.toHaveBeenCalled();
+    expect(mockWriteFileSync).not.toHaveBeenCalledWith(
+      "/tmp/mentiko-test/runs/run-exec/run.json",
+      expect.stringContaining('"status": "stopped"'),
+    );
+  });
+
+  it("leaves a run whose bound job is blocked with a typed terminal code to the run reaper", async () => {
+    mockReadFileSync.mockReturnValue(resumedRunFixture({
+      status: "running",
+      job: { status: "blocked", terminalCode: "resume_credentials_unavailable", lastError: "x" },
+    }));
+    mockTaskList.mockReturnValue(resumedTaskFixture());
+
+    const res = await GET(makeRequest() as never);
+    const body = await res.json();
+
+    expect(body.data.results).toEqual([]);
+    expect(mockTaskUpdate).not.toHaveBeenCalled();
+  });
+
+  it("a run stopped for a typed terminal resume dispatch is recorded but never retried or summarized", async () => {
+    mockReadFileSync.mockReturnValue(resumedRunFixture({
+      status: "stopped",
+      statusReason: { actor: "reaper", reason: "accepted resume launch job exceeded its dispatch bound" },
+      job: { status: "blocked", terminalCode: "resume_dispatch_bound", lastError: "accepted resume launch job exceeded its dispatch bound" },
+    }));
+    mockTaskList.mockReturnValue(resumedTaskFixture());
+
+    const res = await GET(makeRequest() as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data.results).toEqual([
+      expect.objectContaining({ taskId: "TASK-044", runId: "run-exec", newStatus: "stopped" }),
+    ]);
+    // exactly the status projection: no retry, no summary, the task keeps its run
+    expect(mockTaskUpdate).toHaveBeenCalledTimes(1);
+    expect(mockTaskUpdate).toHaveBeenCalledWith(
+      "default",
+      "TASK-044",
+      { metadata: expect.objectContaining({ last_run_id: "run-exec", last_run_status: "stopped", execution_retries: 0 }) },
+      "default",
+    );
+    expect(mockStartTaskOutcomeAudit).not.toHaveBeenCalled();
+  });
+
+  it("a bound job blocked WITHOUT a typed code gets the ordinary orphan stop (control)", async () => {
+    mockCurrentRunTerminalFingerprint.mockReturnValue("stopped:no-terminal-time");
+    mockReadFileSync.mockReturnValue(resumedRunFixture({ status: "running", job: { status: "blocked", lastError: "boom" } }));
+    mockTaskList.mockReturnValue(resumedTaskFixture());
+
+    await GET(makeRequest() as never);
+
+    expect(mockWriteFileSync).toHaveBeenCalledWith(
+      "/tmp/mentiko-test/runs/run-exec/run.json",
+      expect.stringContaining('"status": "stopped"'),
+    );
+  });
+
   it("does not stop a run while a durable handoff process is launching its next agent", async () => {
     mockReadFileSync.mockReturnValue(JSON.stringify({
       id: "run-exec",

@@ -83,11 +83,15 @@ const mockTaskGet = jest.fn();
 const mockTaskUpdate = jest.fn();
 const mockTaskClaimMetadataKeyIfUnset = jest.fn();
 const mockTaskAddDep = jest.fn();
+const mockTaskMutateMetadata = jest.fn();
+const mockTaskUpdateIfUnchanged = jest.fn();
 jest.mock("@/lib/tasks/task-store", () => ({
   taskGet: (...args: unknown[]) => mockTaskGet(...args),
   taskUpdate: (...args: unknown[]) => mockTaskUpdate(...args),
   taskClaimMetadataKeyIfUnset: (...args: unknown[]) => mockTaskClaimMetadataKeyIfUnset(...args),
   taskAddDep: (...args: unknown[]) => mockTaskAddDep(...args),
+  taskMutateMetadata: (...args: unknown[]) => mockTaskMutateMetadata(...args),
+  taskUpdateIfUnchanged: (...args: unknown[]) => mockTaskUpdateIfUnchanged(...args),
 }));
 
 const mockLocateTaskRun = jest.fn();
@@ -228,6 +232,10 @@ describe("POST /api/tasks/auto-run", () => {
     mockStartDecisionResearch.mockResolvedValue({ runId: "run-decision-research" });
     mockGetAutoRunCandidates.mockReturnValue([]);
     mockTaskClaimMetadataKeyIfUnset.mockReturnValue(true);
+    mockTaskMutateMetadata.mockImplementation(
+      (_orgId: string, _id: string, mutate: (m: Record<string, unknown>, task: { status: string }) => Record<string, unknown> | null) =>
+        ({ ok: true, task: { metadata: mutate({}, { status: "open" }) ?? {} } }),
+    );
     mockExistsSync.mockReturnValue(false);
     mockReaddirSync.mockReturnValue([]);
     mockReadFileSync.mockReturnValue("{}");
@@ -2409,5 +2417,481 @@ describe("POST /api/tasks/auto-run", () => {
 
     expect(body.data).toMatchObject({ reaped: 1, reapedTaskAdmissions: 0 });
     expect(mockTaskUpdate).not.toHaveBeenCalled();
+  });
+
+  // ---- route-owned resume outcomes (issue #142) ----
+  // The scanner never charges a retry itself: it calls the resume route and
+  // reads the outcome the route recorded on run.json.
+
+  function resumableTaskFixture(metadata: Record<string, unknown>) {
+    return {
+      id: "TASK-RESUME",
+      title: "Resume outcome",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      metadata: {
+        auto_run: true,
+        chain_id: "release-review",
+        last_run_id: "run-outcome",
+        last_run_status: "failed",
+        ...metadata,
+      },
+    };
+  }
+
+  function resumableRunRecord(overrides: Record<string, unknown> = {}) {
+    return JSON.stringify({
+      taskId: "TASK-RESUME",
+      chainId: "release-review",
+      status: "failed",
+      agents: [
+        { id: "planner", status: "complete" },
+        { id: "reviewer", status: "failed" },
+      ],
+      ...overrides,
+    });
+  }
+
+  it("reads the recorded failed outcome instead of charging a retry when the resume route answers non-ok", async () => {
+    mockTaskGet.mockReturnValue(resumableTaskFixture({ auto_run_retries: 1 }));
+    mockExistsSync.mockReturnValue(true);
+    const recordedFailure = resumableRunRecord({
+      resumeAttempt: { id: "attempt-1", series: 0, taskId: "TASK-RESUME", outcome: "failed", reason: "no chain definition found", automatic: true },
+    });
+    mockReadFileSync.mockReturnValue(recordedFailure);
+    (global.fetch as jest.Mock).mockResolvedValue(jsonResponse({
+      error: { message: "Resume rejected" },
+    }, 500));
+
+    const res = await POST(makeRequest({ taskId: "TASK-RESUME" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      triggered: false,
+      taskId: "TASK-RESUME",
+      runId: "run-outcome",
+      action: "resume_failed",
+      reason: "no chain definition found",
+    });
+    // the scanner never debits: no metadata write touched auto_run_retries
+    const retryWrites = mockTaskUpdate.mock.calls.filter(([, , patch]) =>
+      typeof patch?.metadata?.auto_run_retries === "number");
+    expect(retryWrites).toEqual([]);
+  });
+
+  it("a 409 conflict is progress, never a failed attempt and never a debit", async () => {
+    mockTaskGet.mockReturnValue(resumableTaskFixture({ auto_run_retries: 1 }));
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(resumableRunRecord());
+    (global.fetch as jest.Mock).mockResolvedValue(jsonResponse({
+      error: { message: "A resume is already in progress for this run" },
+    }, 409));
+
+    const res = await POST(makeRequest({ taskId: "TASK-RESUME" }) as never);
+    const body = await res.json();
+
+    expect(body.data).toMatchObject({
+      triggered: false,
+      action: "resume_conflict",
+      reason: expect.stringContaining("already in progress"),
+    });
+    expect(mockTaskUpdate).not.toHaveBeenCalled();
+    expect(mockTaskMutateMetadata).not.toHaveBeenCalled();
+  });
+
+  it("a lost response with a durably accepted outcome takes effect without a debit", async () => {
+    mockTaskGet.mockReturnValue(resumableTaskFixture({}));
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(resumableRunRecord());
+    (global.fetch as jest.Mock).mockImplementation(async () => {
+      // the route accepted and marked the run running before the response died
+      mockReadFileSync.mockReturnValue(resumableRunRecord({
+        status: "running",
+        resumeAttempt: { id: "attempt-1", series: 0, taskId: "TASK-RESUME", outcome: "accepted", automatic: true },
+      }));
+      return jsonResponse({ error: { message: "response lost" } }, 502);
+    });
+
+    const res = await POST(makeRequest({ taskId: "TASK-RESUME" }) as never);
+    const body = await res.json();
+
+    expect(body.data).toMatchObject({
+      triggered: true,
+      taskId: "TASK-RESUME",
+      runId: "run-outcome",
+      action: "chain_resume",
+    });
+    // lifecycle metadata only; no retry charge anywhere
+    const retryWrites = mockTaskUpdate.mock.calls.filter(([, , patch]) =>
+      typeof patch?.metadata?.auto_run_retries === "number");
+    expect(retryWrites).toEqual([]);
+    expect(mockTaskMutateMetadata).not.toHaveBeenCalled();
+  });
+
+  it("transport loss while the attempt is preparing retries the same route next scan, no debit, no pause", async () => {
+    mockTaskGet.mockReturnValue(resumableTaskFixture({}));
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(resumableRunRecord({
+      resumeAttempt: { id: "attempt-1", series: 0, taskId: "TASK-RESUME", outcome: "preparing", automatic: true },
+    }));
+    (global.fetch as jest.Mock).mockRejectedValue(new Error("ECONNREFUSED"));
+
+    const res = await POST(makeRequest({ taskId: "TASK-RESUME" }) as never);
+    const body = await res.json();
+
+    expect(body.data).toMatchObject({
+      triggered: false,
+      action: "resume_pending",
+      reason: expect.stringContaining("next scan retries the same attempt"),
+    });
+    expect(mockTaskUpdate).not.toHaveBeenCalled();
+    // The bounded unknown-pause clock starts (#142 r2 P2): one guarded write
+    // records resume_pending_since — never a pause, never a debit.
+    expect(mockTaskMutateMetadata).toHaveBeenCalledTimes(1);
+    const mutatePending = mockTaskMutateMetadata.mock.calls[0][2] as (
+      metadata: Record<string, unknown>, task: { status: string }
+    ) => Record<string, unknown> | null;
+    const next = mutatePending({ last_run_id: "run-outcome" }, { status: "open" }) as Record<string, unknown>;
+    expect(typeof next.resume_pending_since).toBe("string");
+    expect(next.auto_run_paused).toBeUndefined();
+  });
+
+  it("a non-ok response leaving the attempt preparing pauses dispatch visibly without a debit", async () => {
+    mockTaskGet.mockReturnValue(resumableTaskFixture({}));
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(resumableRunRecord({
+      resumeAttempt: { id: "attempt-1", series: 0, taskId: "TASK-RESUME", outcome: "preparing", automatic: true },
+    }));
+    (global.fetch as jest.Mock).mockResolvedValue(jsonResponse({
+      error: { message: "resume failure accounting is pending; retry" },
+    }, 500));
+
+    const res = await POST(makeRequest({ taskId: "TASK-RESUME" }) as never);
+    const body = await res.json();
+
+    expect(body.data).toMatchObject({
+      triggered: false,
+      action: "resume_stuck_preparing",
+    });
+    expect(mockTaskMutateMetadata).toHaveBeenCalledTimes(1);
+    const mutate = mockTaskMutateMetadata.mock.calls[0][2] as (
+      metadata: Record<string, unknown>, task: { status: string }
+    ) => Record<string, unknown>;
+    const paused = mutate({ last_run_id: "run-outcome" }, { status: "open" });
+    expect(paused).toMatchObject({
+      auto_run_paused: true,
+      auto_run_paused_reason: expect.stringContaining("still preparing"),
+    });
+  });
+
+  it("an unreadable run record pauses with an operational reason instead of charging or spinning", async () => {
+    mockTaskGet.mockReturnValue(resumableTaskFixture({}));
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(resumableRunRecord());
+    (global.fetch as jest.Mock).mockImplementation(async () => {
+      mockReadFileSync.mockReturnValue("{ not json");
+      return jsonResponse({ error: { message: "boom" } }, 500);
+    });
+
+    const res = await POST(makeRequest({ taskId: "TASK-RESUME" }) as never);
+    const body = await res.json();
+
+    expect(body.data).toMatchObject({
+      triggered: false,
+      action: "resume_outcome_unknown",
+      reason: expect.stringContaining("auto-run paused"),
+    });
+    expect(mockTaskMutateMetadata).toHaveBeenCalledTimes(1);
+  });
+
+  it("the unknown-outcome pause fences on the task series observed before the request (#142 r4 P2-1)", async () => {
+    mockTaskGet.mockReturnValue(resumableTaskFixture({ resume_series: 5 }));
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(resumableRunRecord());
+    (global.fetch as jest.Mock).mockImplementation(async () => {
+      mockReadFileSync.mockReturnValue("{ not json");
+      return jsonResponse({ error: { message: "boom" } }, 500);
+    });
+
+    const res = await POST(makeRequest({ taskId: "TASK-RESUME" }) as never);
+    const body = await res.json();
+
+    expect(body.data).toMatchObject({ triggered: false, action: "resume_outcome_unknown" });
+    expect(mockTaskMutateMetadata).toHaveBeenCalledTimes(1);
+    const mutate = mockTaskMutateMetadata.mock.calls[0][2] as (
+      metadata: Record<string, unknown>, task: { status: string }
+    ) => Record<string, unknown> | null;
+    // the observed series (5) is still current -> the pause lands
+    expect(mutate({ resume_series: 5, last_run_id: "run-outcome" }, { status: "open" }))
+      .toMatchObject({ auto_run_paused: true });
+    // a same-run reset that moved resume_series while the outcome was unknown
+    // -> the pause never lands on the reset task
+    expect(mutate({ resume_series: 6, last_run_id: "run-outcome" }, { status: "open" })).toBeNull();
+  });
+
+  it("stops resuming at the retry ceiling even with a retained accepted analysis pointer (TASK-010 shape)", async () => {
+    mockTaskGet.mockReturnValue(resumableTaskFixture({
+      analysis_job_id: "job-1794746071590-ekcfgc3",
+      analysis_status: "accepted",
+      auto_run_retries: 3,
+    }));
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(resumableRunRecord());
+
+    const res = await POST(makeRequest({ taskId: "TASK-RESUME" }) as never);
+    const body = await res.json();
+
+    expect(body.data).toMatchObject({
+      triggered: false,
+      action: "max_retries",
+      reason: "max auto-run retries reached",
+    });
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  // ---- fenced accepted projection (issue #142 round 2) ----
+  // The scanner's accepted projection is ONE guarded write tied to the
+  // accepted attempt's series, the task's run scope, and its status: a late
+  // success or lost response arriving after a reset, a run replacement, or a
+  // task close changes NOTHING.
+
+  function acceptedRunRecord(series: number) {
+    return resumableRunRecord({
+      status: "running",
+      resumeAttempt: { id: "attempt-late", series, taskId: "TASK-RESUME", outcome: "accepted", automatic: true },
+    });
+  }
+
+  function lostResponseWithAcceptedOutcome(series: number, duringFlight?: () => void) {
+    return async () => {
+      // The route accepted durably; while the response was in flight, another
+      // writer moved the task on (reset / replacement / close).
+      duringFlight?.();
+      mockReadFileSync.mockReturnValue(acceptedRunRecord(series));
+      return jsonResponse({ error: { message: "response lost" } }, 502);
+    };
+  }
+
+  it("a lost accepted response after a reset (series moved) never writes the projection", async () => {
+    const taskRow = resumableTaskFixture({ resume_series: 2 });
+    mockTaskGet.mockReturnValue(taskRow);
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(resumableRunRecord());
+    (global.fetch as jest.Mock).mockImplementation(lostResponseWithAcceptedOutcome(1));
+
+    const res = await POST(makeRequest({ taskId: "TASK-RESUME" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({ triggered: true, action: "chain_resume" });
+    expect(mockTaskUpdate).not.toHaveBeenCalled();
+    expect(mockTaskUpdateIfUnchanged).not.toHaveBeenCalled();
+  });
+
+  it("a lost accepted response after a run replacement (task re-pointed at a new run) never writes the projection", async () => {
+    const taskRow = resumableTaskFixture({});
+    mockTaskGet.mockReturnValue(taskRow);
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(resumableRunRecord());
+    (global.fetch as jest.Mock).mockImplementation(lostResponseWithAcceptedOutcome(0, () => {
+      // chain-run-service re-pointed the task at the NEW run while this
+      // response was in flight
+      taskRow.metadata = { ...taskRow.metadata, last_run_id: "run-replacement", last_run_status: "running" };
+    }));
+
+    const res = await POST(makeRequest({ taskId: "TASK-RESUME" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({ triggered: true, action: "chain_resume" });
+    expect(mockTaskUpdate).not.toHaveBeenCalled();
+    expect(mockTaskUpdateIfUnchanged).not.toHaveBeenCalled();
+  });
+
+  it("a lost accepted response on a task that closed mid-flight never reopens it", async () => {
+    const taskRow = resumableTaskFixture({});
+    mockTaskGet.mockReturnValue(taskRow);
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(resumableRunRecord());
+    (global.fetch as jest.Mock).mockImplementation(lostResponseWithAcceptedOutcome(0, () => {
+      taskRow.status = "closed";
+    }));
+
+    const res = await POST(makeRequest({ taskId: "TASK-RESUME" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({ triggered: true, action: "chain_resume" });
+    expect(mockTaskUpdate).not.toHaveBeenCalled();
+    expect(mockTaskUpdateIfUnchanged).not.toHaveBeenCalled();
+  });
+
+  // ---- bounded unknown pause for repeated transport loss (issue #142 r2 P2) ----
+
+  function preparingTransportLossFixture(metadata: Record<string, unknown>) {
+    mockTaskGet.mockReturnValue(resumableTaskFixture(metadata));
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(resumableRunRecord({
+      resumeAttempt: { id: "attempt-1", series: 0, taskId: "TASK-RESUME", outcome: "preparing", automatic: true },
+    }));
+    (global.fetch as jest.Mock).mockRejectedValue(new Error("ECONNREFUSED"));
+  }
+
+  it("an unknown-outcome pause never persists the transport exception text, only its class (#142 round 5)", async () => {
+    mockTaskGet.mockReturnValue(resumableTaskFixture({}));
+    mockExistsSync.mockReturnValue(true);
+    // no resumeAttempt on the run record: the outcome is unknown
+    mockReadFileSync.mockReturnValue(resumableRunRecord({}));
+    (global.fetch as jest.Mock).mockRejectedValue(
+      new TypeError("fetch failed for http://x/?token=SECRET_CANARY_VALUE"),
+    );
+
+    const res = await POST(makeRequest({ taskId: "TASK-RESUME" }) as never);
+    const body = await res.json();
+
+    expect(JSON.stringify(body)).not.toContain("SECRET_CANARY_VALUE");
+    expect(mockTaskMutateMetadata).toHaveBeenCalledTimes(1);
+    const mutate = mockTaskMutateMetadata.mock.calls[0][2] as (
+      metadata: Record<string, unknown>, task: { status: string }
+    ) => Record<string, unknown> | null;
+    const next = mutate({ last_run_id: "run-outcome" }, { status: "open" }) as Record<string, unknown>;
+    expect(next.auto_run_paused).toBe(true);
+    expect(next.auto_run_paused_reason).toContain("resume request transport failed (TypeError)");
+    expect(JSON.stringify(next)).not.toContain("SECRET_CANARY_VALUE");
+  });
+
+  it("the first stuck-preparing transport loss starts a bounded clock instead of pausing", async () => {
+    preparingTransportLossFixture({});
+    await POST(makeRequest({ taskId: "TASK-RESUME" }) as never);
+
+    expect(mockTaskMutateMetadata).toHaveBeenCalledTimes(1);
+    const mutate = mockTaskMutateMetadata.mock.calls[0][2] as (
+      metadata: Record<string, unknown>, task: { status: string }
+    ) => Record<string, unknown> | null;
+    const next = mutate({ last_run_id: "run-outcome" }, { status: "open" }) as Record<string, unknown>;
+    expect(typeof next.resume_pending_since).toBe("string");
+    expect(next.auto_run_paused).toBeUndefined();
+  });
+
+  it("transport loss stuck preparing past the bound pauses visibly, without a debit", async () => {
+    preparingTransportLossFixture({
+      resume_pending_since: new Date(Date.now() - 11 * 60_000).toISOString(),
+    });
+    const res = await POST(makeRequest({ taskId: "TASK-RESUME" }) as never);
+    const body = await res.json();
+
+    expect(body.data).toMatchObject({ action: "resume_pending" });
+    expect(mockTaskMutateMetadata).toHaveBeenCalledTimes(1);
+    const mutate = mockTaskMutateMetadata.mock.calls[0][2] as (
+      metadata: Record<string, unknown>, task: { status: string }
+    ) => Record<string, unknown> | null;
+    const next = mutate({
+      last_run_id: "run-outcome",
+      resume_pending_since: new Date(Date.now() - 11 * 60_000).toISOString(),
+    }, { status: "open" }) as Record<string, unknown>;
+    expect(next.auto_run_paused).toBe(true);
+    expect(next.auto_run_paused_reason).toContain("stayed preparing");
+    expect(next.auto_run_paused_reason).toContain("without consuming a retry");
+    expect(next.resume_pending_since).toBeNull();
+  });
+
+  it("a late unknown never pauses a task whose series moved on (reset fence)", async () => {
+    preparingTransportLossFixture({
+      resume_series: 2,
+      resume_pending_since: new Date(Date.now() - 11 * 60_000).toISOString(),
+    });
+    await POST(makeRequest({ taskId: "TASK-RESUME" }) as never);
+
+    expect(mockTaskMutateMetadata).toHaveBeenCalledTimes(1);
+    const mutate = mockTaskMutateMetadata.mock.calls[0][2] as (
+      metadata: Record<string, unknown>, task: { status: string }
+    ) => Record<string, unknown> | null;
+    expect(mutate({ last_run_id: "run-outcome", resume_series: 2 }, { status: "open" })).toBeNull();
+  });
+
+  it("a late unknown never pauses a task whose AUTHORITATIVE scope points elsewhere (stale last_run_id no longer admits it)", async () => {
+    // the UNKNOWN-outcome pause path (unreadable record), not the bounded one
+    mockTaskGet.mockReturnValue(resumableTaskFixture({}));
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(resumableRunRecord());
+    (global.fetch as jest.Mock).mockImplementation(async () => {
+      mockReadFileSync.mockReturnValue("{ not json");
+      return jsonResponse({ error: { message: "boom" } }, 500);
+    });
+    await POST(makeRequest({ taskId: "TASK-RESUME" }) as never);
+
+    expect(mockTaskMutateMetadata).toHaveBeenCalledTimes(1);
+    const mutate = mockTaskMutateMetadata.mock.calls[0][2] as (
+      metadata: Record<string, unknown>, task: { status: string }
+    ) => Record<string, unknown> | null;
+    // last_run_id still names this run, but the persisted task_run_scope — the
+    // authoritative claim — points at the replacement run
+    expect(mutate({
+      last_run_id: "run-outcome",
+      task_run_scope: { taskId: "TASK-RESUME", runId: "run-replacement" },
+    }, { status: "open" })).toBeNull();
+  });
+
+  it("an out-of-order accepted response for an OLDER attempt on the same run and series changes nothing", async () => {
+    // The response belongs to attempt-1; by the time the projection runs, the
+    // durable run record holds a LATER accepted attempt (same run, same
+    // series) — a delayed response for the superseded attempt must not
+    // project over it.
+    const taskRow = { ...resumableTaskFixture({}), revision: 7 };
+    mockTaskGet.mockReturnValue(taskRow);
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(resumableRunRecord());
+    (global.fetch as jest.Mock).mockImplementation(async () => {
+      // while the response was in flight, a LATER attempt on the same run and
+      // series became the durable accepted one
+      mockReadFileSync.mockReturnValue(resumableRunRecord({
+        status: "running",
+        resumeAttempt: { id: "attempt-2-newer", series: 0, taskId: "TASK-RESUME", outcome: "accepted", automatic: true },
+      }));
+      return jsonResponse({
+        data: { success: true, runId: "run-outcome", resumeAttemptId: "attempt-1-older", resumeSeries: 0, resumeOutcome: "accepted" },
+      }, 200);
+    });
+
+    const res = await POST(makeRequest({ taskId: "TASK-RESUME" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({ triggered: true, action: "chain_resume" });
+    expect(mockTaskUpdateIfUnchanged).not.toHaveBeenCalled();
+    expect(mockTaskUpdate).not.toHaveBeenCalled();
+  });
+
+  it("an unfenced accepted projection lands as ONE guarded status-and-metadata write", async () => {
+    const taskRow = { ...resumableTaskFixture({}), revision: 7 };
+    mockTaskGet.mockReturnValue(taskRow);
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(resumableRunRecord());
+    mockTaskUpdateIfUnchanged.mockImplementation((_org, _id, expectedRevision, fields) => {
+      if (taskRow.revision !== expectedRevision) return false;
+      Object.assign(taskRow, fields);
+      taskRow.revision += 1;
+      return true;
+    });
+    (global.fetch as jest.Mock).mockImplementation(async () => {
+      // the route accepted durably before answering
+      mockReadFileSync.mockReturnValue(acceptedRunRecord(0));
+      return jsonResponse({
+        data: { success: true, runId: "run-outcome", resumeAttemptId: "attempt-late", resumeSeries: 0, resumeOutcome: "accepted" },
+      }, 200);
+    });
+
+    const res = await POST(makeRequest({ taskId: "TASK-RESUME" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({ triggered: true, action: "chain_resume" });
+    expect(mockTaskUpdateIfUnchanged).toHaveBeenCalledTimes(1);
+    expect(taskRow.status).toBe("in_progress");
+    const written = (taskRow.metadata as Record<string, unknown>);
+    expect(written.last_run_id).toBe("run-outcome");
+    expect(written.last_run_status).toBe("running");
   });
 });

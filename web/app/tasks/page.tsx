@@ -548,27 +548,36 @@ function TasksPageContent() {
     async (chainId: string, chainName: string) => {
       if (!selected) return;
       const id = encodeURIComponent(selected.id);
+      // A fresh assignment is a reset (#142): increment resume_series so older
+      // resume outcomes cannot charge this task, and write nulls — undefined
+      // would be dropped by the JSON round-trip and keep the stale errors.
       const metadata = {
         chain_id: chainId,
         chain_name: chainName,
         auto_run: true,
         auto_run_retries: 0,
-        last_run_error: undefined,
+        last_run_error: null,
+        resume_last_error: null,
+        resume_series: (Number(selected.metadata?.resume_series) || 0) + 1,
       };
-      await fetchWithNamespace(`/api/tasks/${id}${wsParam}`, {
+      const res = await fetchWithNamespace(`/api/tasks/${id}${wsParam}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ metadata: JSON.stringify(metadata) }),
       });
+      if (!res.ok) {
+        throw new Error(`Failed to assign chain (${res.status})`);
+      }
       updateTaskBinding(selected.id, () => ({
         chain_id: chainId,
         chain_name: chainName,
         auto_run: true,
         auto_run_retries: 0,
       }));
+      fetchTasks();
       fetchOpStates();
     },
-    [selected, wsParam, fetchWithNamespace, updateTaskBinding, fetchOpStates]
+    [selected, wsParam, fetchWithNamespace, updateTaskBinding, fetchTasks, fetchOpStates]
   );
 
   const handleRemoveChain = useCallback(async () => {
@@ -649,17 +658,28 @@ function TasksPageContent() {
       });
 
       if (!res.ok) {
-        // fall back to direct metadata patch for non-epic tasks
+        // fall back to direct metadata patch for non-epic tasks. Same reset
+        // shape as the endpoint: nulls and a series increment on enable (#142).
         const metadata = {
           ...selected.chainBinding,
           auto_run: autoRun,
-          ...(autoRun ? { auto_run_retries: 0, last_run_error: undefined } : {}),
+          ...(autoRun ? {
+            auto_run_retries: 0,
+            last_run_error: null,
+            resume_last_error: null,
+            resume_series: (Number(selected.metadata?.resume_series) || 0) + 1,
+            auto_run_paused: false,
+            auto_run_paused_reason: null,
+          } : {}),
         };
-        await fetchWithNamespace(`/api/tasks/${id}${wsParam}`, {
+        const patchRes = await fetchWithNamespace(`/api/tasks/${id}${wsParam}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ metadata: JSON.stringify(metadata) }),
         });
+        if (!patchRes.ok) {
+          throw new Error(`Failed to toggle auto-run (${patchRes.status})`);
+        }
       }
 
       updateTaskBinding(selected.id, (binding) =>
@@ -680,26 +700,38 @@ function TasksPageContent() {
           body: JSON.stringify({}),
         }).catch(() => {});
       }
+      fetchTasks();
       fetchOpStates();
     },
-    [selected, wsParam, fetchWithNamespace, updateTaskBinding, fetchOpStates]
+    [selected, wsParam, fetchWithNamespace, updateTaskBinding, fetchTasks, fetchOpStates]
   );
 
   const handleResetAutoRunAttempts = useCallback(async () => {
     if (!selected) return;
     const id = encodeURIComponent(selected.id);
+    // "Retry task" is the explicit reset (#142): a new resume_series
+    // invalidates older resume outcomes, the retry budget restarts, stale
+    // errors and any operational pause clear (nulls, never undefined — the
+    // server merge keeps undefined'd keys alive).
     const metadata = {
       ...selected.chainBinding,
       auto_run: true,
       auto_run_retries: 0,
-      last_run_error: undefined,
+      last_run_error: null,
+      resume_last_error: null,
+      resume_series: (Number(selected.metadata?.resume_series) || 0) + 1,
+      auto_run_paused: false,
+      auto_run_paused_reason: null,
     };
 
-    await fetchWithNamespace(`/api/tasks/${id}${wsParam}`, {
+    const res = await fetchWithNamespace(`/api/tasks/${id}${wsParam}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ metadata: JSON.stringify(metadata) }),
     });
+    if (!res.ok) {
+      throw new Error(`Failed to reset auto-run attempts (${res.status})`);
+    }
 
     updateTaskBinding(selected.id, (binding) =>
       binding
@@ -717,8 +749,9 @@ function TasksPageContent() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({}),
     }).catch(() => {});
+    fetchTasks();
     fetchOpStates();
-  }, [selected, wsParam, fetchWithNamespace, updateTaskBinding, fetchOpStates]);
+  }, [selected, wsParam, fetchWithNamespace, updateTaskBinding, fetchTasks, fetchOpStates]);
 
   const handleToggleAutoRunPause = useCallback(
     async (paused: boolean) => {

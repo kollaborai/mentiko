@@ -37,4 +37,12 @@ describe("docs contract", () => {
     expect(page).toContain("namespaces/{id}/schedules/{scheduleId}/.snooze");
     expect(page).toContain("namespaces/{id}/orgs/{orgId}/schedules/{scheduleId}/.snooze");
   });
+
+  it("explains when an accepted task resume pauses without using a retry", () => {
+    const page = readWebFile("app/docs/tasks/page.tsx");
+
+    expect(page).toContain("accepted resume that does not start within 10 minutes");
+    expect(page).toContain("pauses without using a retry and shows the reason");
+    expect(page).toContain("Retry task after addressing the cause");
+  });
 });

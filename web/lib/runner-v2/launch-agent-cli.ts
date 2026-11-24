@@ -30,6 +30,11 @@ async function main(): Promise<void> {
   });
   const runJsonPath = join(runDir, "run.json");
   if (process.env.MENTIKO_LAUNCH_COORDINATOR !== "1") {
+    // Secret-provenance keys (issue #142 round 3): the route listed the env
+    // keys whose values came from the secrets store in this never-persisted
+    // marker, so the re-persist from process.env excludes exactly the keys
+    // the route excluded and computes the identical job.
+    const excludeEnvKeys = secretEnvKeysFromMarker();
     const job = persistRoutedLaunchJob({
       runJsonPath,
       jobId,
@@ -39,6 +44,7 @@ async function main(): Promise<void> {
       chainPath,
       targetAgentIds: allAgentIds,
       environment: process.env,
+      ...(excludeEnvKeys.length > 0 ? { excludeEnvKeys } : {}),
     });
     dispatchCoordinator({ chainPath, jobId: job.id, agentIds: allAgentIds });
     console.log(JSON.stringify({ status: "queued", runId, jobId: job.id, agentIds: allAgentIds }));
@@ -75,6 +81,20 @@ function dispatchCoordinator(input: {
     return;
   }
   coordinator.unref();
+}
+
+function secretEnvKeysFromMarker(): string[] {
+  const raw = process.env.MENTIKO_LAUNCH_SECRET_ENV_KEYS;
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed) || !parsed.every((value) => typeof value === "string" && value)) {
+      throw new Error("not a string array");
+    }
+    return parsed as string[];
+  } catch {
+    throw new Error("MENTIKO_LAUNCH_SECRET_ENV_KEYS must be a JSON string array of secret-sourced env keys");
+  }
 }
 
 function configuredAgentIds(requestedAgentIds: string[]): string[] {
