@@ -52,6 +52,7 @@ export const POST = requirePermission("manage_tasks")(
             resume_last_error: undefined,
             resume_attempt_id: undefined,
             resume_attempt_run_id: undefined,
+            auto_run_resume_fallback_run_id: undefined,
           } : {}),
         },
       }, namespaceId);
@@ -76,6 +77,7 @@ export const POST = requirePermission("manage_tasks")(
               resume_last_error: undefined,
               resume_attempt_id: undefined,
               resume_attempt_run_id: undefined,
+              auto_run_resume_fallback_run_id: undefined,
             } : {}),
           },
         }, namespaceId);

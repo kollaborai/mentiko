@@ -518,6 +518,7 @@ function TasksPageContent() {
             auto_run_retries: 0,
             last_run_error: undefined,
             resume_last_error: undefined,
+            auto_run_resume_fallback_run_id: undefined,
           }
         : t.metadata,
     });
@@ -585,6 +586,7 @@ function TasksPageContent() {
         resume_last_error: null,
         resume_attempt_id: null,
         resume_attempt_run_id: null,
+        auto_run_resume_fallback_run_id: null,
       };
       const res = await fetchWithNamespace(`/api/tasks/${id}${wsParam}`, {
         method: "PATCH",
@@ -704,6 +706,7 @@ function TasksPageContent() {
             resume_last_error: null,
             resume_attempt_id: null,
             resume_attempt_run_id: null,
+            auto_run_resume_fallback_run_id: null,
           } : {}),
         };
         const fallback = await fetchWithNamespace(`/api/tasks/${id}${wsParam}`, {
@@ -764,6 +767,7 @@ function TasksPageContent() {
       resume_last_error: null,
       resume_attempt_id: null,
       resume_attempt_run_id: null,
+      auto_run_resume_fallback_run_id: null,
     };
 
     const res = await fetchWithNamespace(`/api/tasks/${id}${wsParam}`, {
