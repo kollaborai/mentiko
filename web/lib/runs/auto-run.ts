@@ -767,7 +767,11 @@ export function canAdmitAutoRun(
     jobAwaitingReconciliation(metadata.analysis_job_id, metadata.analysis_status)
     || jobAwaitingReconciliation(metadata.generation_job_id, metadata.generation_status)
   );
-  if (autoRun.retriesExhausted && !hasJobToReconcile) {
+  // An assigned chain has its own recovery path in triggerAutoRun/startChainRun:
+  // it can resume a failed agent run, or start a fresh run when the old run is
+  // no longer resumable. Keep that path reachable after failed resumes exhaust
+  // the general auto-run budget; resume retry accounting itself remains capped.
+  if (autoRun.retriesExhausted && !hasJobToReconcile && !chainId) {
     return { admit: false, reason: "max auto-run retries reached", action: "max_retries" };
   }
 
