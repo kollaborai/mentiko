@@ -856,9 +856,15 @@ describe("POST /api/tasks/auto-run", () => {
         { id: "reviewer", status: "failed" },
       ],
     }));
-    (global.fetch as jest.Mock).mockResolvedValue(jsonResponse({
-      error: { message: "Resume rejected by the runner" },
-    }, 500));
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce(jsonResponse({ error: { message: "Resume rejected by the runner" } }, 500))
+      .mockResolvedValueOnce(jsonResponse({ error: { message: "Resume rejected by the runner" } }, 500))
+      .mockResolvedValueOnce(jsonResponse({ error: { message: "Resume rejected by the runner" } }, 500))
+      .mockResolvedValueOnce(jsonResponse({ error: { message: "Resume rejected by the runner" } }, 500))
+      .mockResolvedValueOnce(jsonResponse({
+        success: true,
+        data: { runId: "run-loop", resumeFrom: "reviewer" },
+      }));
 
     const scans: Array<{ action?: string; retries: number }> = [];
     for (let scan = 1; scan <= 5; scan++) {
@@ -873,10 +879,10 @@ describe("POST /api/tasks/auto-run", () => {
       { action: "resume_failed", retries: 3 },
     ]);
     expect(scans[3]).toEqual({ action: "resume_failed", retries: 4 });
-    // Assigned chains must reach startChainRun after the retry ceiling: it
-    // owns recovery for a terminal failed run (including a failed late-agent
-    // resume). Retry accounting remains capped while that recovery is tried.
-    expect(scans[4]).toEqual({ action: "resume_failed", retries: 4 });
+    // Assigned chains must reach startChainRun after the retry ceiling so a
+    // late-agent resume can recover the delivery. Retry accounting remains
+    // capped at the configured limit.
+    expect(scans[4]).toEqual({ action: "chain_resume", retries: 4 });
     expect((global.fetch as jest.Mock)).toHaveBeenCalledTimes(5);
   });
 
