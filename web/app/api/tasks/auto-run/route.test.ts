@@ -873,8 +873,11 @@ describe("POST /api/tasks/auto-run", () => {
       { action: "resume_failed", retries: 3 },
     ]);
     expect(scans[3]).toEqual({ action: "resume_failed", retries: 4 });
-    expect(scans[4]).toEqual({ action: "max_retries", retries: 4 });
-    expect((global.fetch as jest.Mock)).toHaveBeenCalledTimes(4);
+    // Assigned chains must reach startChainRun after the retry ceiling: it
+    // owns recovery for a terminal failed run (including a failed late-agent
+    // resume). Retry accounting remains capped while that recovery is tried.
+    expect(scans[4]).toEqual({ action: "resume_failed", retries: 4 });
+    expect((global.fetch as jest.Mock)).toHaveBeenCalledTimes(5);
   });
 
   it("does not consume a retry when a 409 conflict means another scan resumed the run", async () => {
