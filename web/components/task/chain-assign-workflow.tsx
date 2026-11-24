@@ -400,7 +400,6 @@ export function ChainAssignWorkflow({
     console.error("Chain assignment failed:", message);
     setErrorMessage(`Chain saved successfully, but task assignment failed: ${message}`);
     setShowErrorDetails(true);
-    setStep("generated");
   }
 
   const generateChain = useCallback(async (prompt: string) => {
