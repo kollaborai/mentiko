@@ -58,7 +58,7 @@ function makeTask(overrides: Partial<Task> = {}): Task {
     chainBinding: {
       chain_id: "release-review",
       auto_run: true,
-      auto_run_retries: 3,
+      auto_run_retries: 4,
     },
     ...overrides,
   };
@@ -92,7 +92,7 @@ describe("TaskDetailHeader auto-run failure banner", () => {
     expect(banner).toHaveTextContent("Run run-loop not found");
     // the current resume error supersedes the older recorded errors
     expect(banner).not.toHaveTextContent("older last-run error");
-    expect(banner).toHaveTextContent("Auto-recovery stopped after 3/3 failed attempts");
+    expect(banner).toHaveTextContent("Auto-recovery stopped after 4/4 failed attempts");
   });
 
   it("keeps the existing last-run error display when no resume error was recorded", () => {

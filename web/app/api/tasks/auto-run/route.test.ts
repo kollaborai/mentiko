@@ -1906,7 +1906,7 @@ describe("POST /api/tasks/auto-run", () => {
       action: "generation_save_failed",
       error: expect.stringContaining("agents[0].emits"),
       retryCount: 2,
-      retryLimit: 3,
+      retryLimit: 4,
       recoveryScheduled: true,
     });
     expect(mockTaskUpdate).toHaveBeenCalledWith(
@@ -2226,7 +2226,7 @@ describe("POST /api/tasks/auto-run", () => {
         analysis_status: "accepted",
       }),
       "default",
-      { metadataNumberLessThan: { key: "auto_run_retries", value: 3 } },
+      { metadataNumberLessThan: { key: "auto_run_retries", value: 4 } },
     );
     expect(mockTaskUpdate).toHaveBeenCalledWith(
       "default",
@@ -2303,7 +2303,7 @@ describe("POST /api/tasks/auto-run", () => {
       "generation_job_id",
       expect.objectContaining({ generation_last_error: undefined }),
       "default",
-      { metadataNumberLessThan: { key: "auto_run_retries", value: 3 } },
+      { metadataNumberLessThan: { key: "auto_run_retries", value: 4 } },
     );
   });
 
@@ -2727,7 +2727,7 @@ describe("POST /api/tasks/auto-run", () => {
       metadata: {
         auto_run: true,
         analysis_status: "unreadable",
-        auto_run_retries: 3,
+        auto_run_retries: 4,
       },
     });
 
@@ -2757,7 +2757,7 @@ describe("POST /api/tasks/auto-run", () => {
         analysis_status: "accepted",
         generation_job_id: "job-generation-empty",
         generation_status: "complete",
-        auto_run_retries: 3,
+        auto_run_retries: 4,
       },
     });
     mockGetJob.mockReturnValue({
@@ -2784,7 +2784,7 @@ describe("POST /api/tasks/auto-run", () => {
           generation_job_id: undefined,
           generation_status: "failed",
           generation_last_error: expect.stringContaining("without a valid JSON chain payload"),
-          auto_run_retries: 3,
+          auto_run_retries: 4,
         }),
       },
       "default",

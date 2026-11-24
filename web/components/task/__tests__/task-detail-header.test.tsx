@@ -234,7 +234,7 @@ describe("TaskDetailHeader", () => {
             ...taskWithActions.chainBinding!,
             chain_id: "",
             auto_run: true,
-            auto_run_retries: 3,
+            auto_run_retries: 4,
             generation_status: "failed",
             generated_chain_run_id: "run-generation",
           },
@@ -296,7 +296,7 @@ describe("TaskDetailHeader", () => {
 
     expect(screen.getByRole("alert")).toHaveTextContent("Chain generation failed; retrying");
     expect(screen.getByRole("alert")).toHaveTextContent("generated chain delivery contract invalid");
-    expect(screen.getByRole("alert")).toHaveTextContent("Auto-recovery is active after 1/3 failed attempts");
+    expect(screen.getByRole("alert")).toHaveTextContent("Auto-recovery is active after 1/4 failed attempts");
     expect(screen.getByRole("link", { name: /open failed run/i })).toHaveAttribute(
       "href",
       "/runs?runId=run-failed-generation",
