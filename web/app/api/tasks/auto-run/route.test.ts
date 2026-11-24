@@ -821,11 +821,12 @@ describe("POST /api/tasks/auto-run", () => {
     );
   });
 
-  it("allows a fourth resume before stopping at the retry ceiling with a retained accepted analysis pointer (TASK-010 shape)", async () => {
+  it("starts a fresh assigned-chain run after failed resumes exhaust the budget (TASK-010 shape)", async () => {
     // Real TASK-010 shape: assigned chain, analysis_job_id retained with
     // analysis_status "accepted" (the use_existing acceptance keeps the
-    // pointer), and a failing resumable run. Three failed attempts do not
-    // exhaust the retry budget; the fourth attempt is the final admitted one.
+    // pointer), and a terminal run whose fourth-agent session is gone. Once
+    // four resume attempts fail, recovery must start the chain again instead
+    // of sending the same terminal session another resume request forever.
     let meta: Record<string, unknown> = {
       auto_run: true,
       chain_id: "release-review",
@@ -862,9 +863,12 @@ describe("POST /api/tasks/auto-run", () => {
       .mockResolvedValueOnce(jsonResponse({ error: { message: "Resume rejected by the runner" } }, 500))
       .mockResolvedValueOnce(jsonResponse({ error: { message: "Resume rejected by the runner" } }, 500))
       .mockResolvedValueOnce(jsonResponse({
-        success: true,
-        data: { runId: "run-loop", resumeFrom: "reviewer" },
-      }));
+        data: { chain: { id: "release-review", name: "Release Review", agents: [] } },
+      }))
+      .mockImplementationOnce(async (_url: unknown, init: unknown) => {
+        const body = JSON.parse(String((init as { body?: unknown }).body));
+        return jsonResponse({ success: true, data: { runId: body.runId } });
+      });
 
     const scans: Array<{ action?: string; retries: number }> = [];
     for (let scan = 1; scan <= 5; scan++) {
@@ -879,11 +883,10 @@ describe("POST /api/tasks/auto-run", () => {
       { action: "resume_failed", retries: 3 },
     ]);
     expect(scans[3]).toEqual({ action: "resume_failed", retries: 4 });
-    // Assigned chains must reach startChainRun after the retry ceiling so a
-    // late-agent resume can recover the delivery. Retry accounting remains
-    // capped at the configured limit.
-    expect(scans[4]).toEqual({ action: "chain_resume", retries: 4 });
-    expect((global.fetch as jest.Mock)).toHaveBeenCalledTimes(5);
+    expect(scans[4]).toEqual({ action: "chain_run", retries: 0 });
+    expect((global.fetch as jest.Mock)).toHaveBeenCalledTimes(6);
+    expect((global.fetch as jest.Mock).mock.calls[4][0]).toContain("/api/chains/release-review");
+    expect((global.fetch as jest.Mock).mock.calls[5][0]).toContain("/api/chains/run");
   });
 
   it("does not consume a retry when a 409 conflict means another scan resumed the run", async () => {
