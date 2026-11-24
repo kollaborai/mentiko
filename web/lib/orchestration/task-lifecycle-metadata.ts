@@ -74,7 +74,6 @@ export function executionStartedLifecycleMetadata(input: {
     resume_last_error: undefined,
     resume_attempt_id: undefined,
     resume_attempt_run_id: undefined,
-    auto_run_resume_fallback_run_id: undefined,
     last_run_completed: null,
     ...(input.chainId ? { chain_id: input.chainId } : {}),
   };
