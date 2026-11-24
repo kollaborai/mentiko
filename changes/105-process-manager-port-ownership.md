@@ -1,0 +1,1 @@
+The dev process manager now checks process identity before signaling a recorded PID and refuses to start a service when another process holds its readiness port. Critical services also stop the manager if a restart cannot claim its port.
