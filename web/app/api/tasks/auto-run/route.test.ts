@@ -883,7 +883,8 @@ describe("POST /api/tasks/auto-run", () => {
       { action: "resume_failed", retries: 3 },
     ]);
     expect(scans[3]).toEqual({ action: "resume_failed", retries: 4 });
-    expect(scans[4]).toEqual({ action: "chain_run", retries: 0 });
+    expect(scans[4]).toEqual({ action: "chain_run", retries: 4 });
+    expect(meta.auto_run_resume_fallback_run_id).toEqual(meta.last_run_id);
     expect((global.fetch as jest.Mock)).toHaveBeenCalledTimes(6);
     expect((global.fetch as jest.Mock).mock.calls[4][0]).toContain("/api/chains/release-review");
     expect((global.fetch as jest.Mock).mock.calls[5][0]).toContain("/api/chains/run");
