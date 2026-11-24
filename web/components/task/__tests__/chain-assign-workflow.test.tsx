@@ -555,6 +555,54 @@ describe("ChainAssignWorkflow", () => {
     ).toBe(false);
   });
 
+  it("reports rejected assignments from the recommendation and alternative chain controls", async () => {
+    jobsById.set("job-existing-chain", {
+      ...existingChainJob,
+      result: {
+        recommendation: {
+          ...existingChainJob.result.recommendation,
+          alternatives: [
+            {
+              chain_id: "quick-fix",
+              chain_name: "Quick Fix",
+              relevance: "Also suitable.",
+            },
+          ],
+        },
+      },
+    });
+    mockFetchWithNamespace.mockResolvedValue({
+      ok: true,
+      json: async () => jobsById.get("job-existing-chain"),
+    });
+    const onAssignChain = jest.fn().mockRejectedValue(new Error("task update conflict"));
+
+    render(
+      <ChainAssignWorkflow
+        task={makeTask({
+          chain_id: "",
+          auto_run: false,
+          analysis_job_id: "job-existing-chain",
+          analysis_status: "complete",
+        })}
+        onAssignChain={onAssignChain}
+        onCancel={jest.fn()}
+        onMetadataUpdate={jest.fn()}
+      />
+    );
+
+    fireEvent.click(await screen.findByText("Use This Chain"));
+    await waitFor(() => {
+      expect(screen.getAllByText(/Chain saved successfully, but task assignment failed/).length).toBeGreaterThan(0);
+    });
+
+    fireEvent.click(screen.getByText(/Quick Fix - Also suitable/));
+    await waitFor(() => {
+      expect(onAssignChain).toHaveBeenCalledTimes(2);
+      expect(screen.getAllByText(/Chain saved successfully, but task assignment failed/).length).toBeGreaterThan(0);
+    });
+  });
+
   it("keeps the generation stop visible when Clear & Start Over PATCH fails", async () => {
     mockFetchWithNamespace.mockResolvedValue({
       ok: false,
