@@ -43,6 +43,35 @@ describe("executionStartedLifecycleMetadata", () => {
     });
   });
 
+  it("clears a stale auto-run resume error when an execution starts", () => {
+    const metadata = executionStartedLifecycleMetadata({
+      taskId: "TASK-1",
+      metadata: {
+        last_run_id: "run-resumed",
+        last_run_status: "stopped",
+        resume_last_error: "Run run-resumed not found",
+      },
+      runId: "run-resumed",
+    });
+
+    expect(metadata.resume_last_error).toBeUndefined();
+  });
+
+  it("preserves the exhausted-resume recovery marker when its fallback run starts", () => {
+    const metadata = executionStartedLifecycleMetadata({
+      taskId: "TASK-1",
+      metadata: {
+        auto_run_retries: 4,
+        last_run_id: "run-fallback",
+        auto_run_resume_fallback_run_id: "run-fallback",
+      },
+      runId: "run-fallback",
+      chainId: "release-review",
+    });
+
+    expect(metadata.auto_run_resume_fallback_run_id).toBe("run-fallback");
+  });
+
   it("does not let stale running metadata suppress a new execution start", () => {
     const metadata = executionStartedLifecycleMetadata({
       taskId: "TASK-1",

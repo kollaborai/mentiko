@@ -745,14 +745,33 @@ export function canAdmitAutoRun(
   }
 
   // stop launching NEW work after MAX_AUTO_RUN_RETRIES failures. A persisted
-  // analysis/generation job reference is different: it still has to be
-  // reconciled to a terminal task state so a bad `complete` record cannot hide
-  // its failure forever. triggerAutoRun returns after that reconciliation; once
-  // the pointer is cleared, this gate rejects any further launch at the ceiling.
-  const hasJobToReconcile =
-    typeof metadata.analysis_job_id === "string"
-    || typeof metadata.generation_job_id === "string";
-  if (autoRun.retriesExhausted && !hasJobToReconcile) {
+  // analysis/generation job reference is different ONLY while that job is
+  // genuinely unreconciled AND the route will actually reach its
+  // job-reconciliation branches. Two limits on the old "any string pointer
+  // exempts" rule (the TASK-010 loop, #142):
+  //   - a pointer whose status is "accepted" was already consumed into task
+  //     state (the use_existing acceptance assigns the chain while RETAINING
+  //     analysis_job_id), so it has nothing left to reconcile and must not
+  //     exempt the task forever;
+  //   - with a chain already assigned, triggerAutoRun takes the assigned-chain
+  //     branch before job reconciliation, so even a not-yet-consumed pointer
+  //     is never reconciled there and the exemption would be permanent.
+  // Any other status with the pointer retained (starting/running set by the
+  // dispatch paths, complete/failed written back by the job runner) still
+  // points at work the reconciliation branches will consume, preserving the
+  // original purpose: a bad `complete` record cannot hide its failure forever.
+  const jobAwaitingReconciliation = (jobId: unknown, jobStatus: unknown): boolean =>
+    typeof jobId === "string"
+    && jobStatus !== "accepted";
+  const hasJobToReconcile = !chainId && (
+    jobAwaitingReconciliation(metadata.analysis_job_id, metadata.analysis_status)
+    || jobAwaitingReconciliation(metadata.generation_job_id, metadata.generation_status)
+  );
+  // An assigned chain has its own recovery path in triggerAutoRun/startChainRun:
+  // it can resume a failed agent run, or start a fresh run when the old run is
+  // no longer resumable. Keep that path reachable after failed resumes exhaust
+  // the general auto-run budget; resume retry accounting itself remains capped.
+  if (autoRun.retriesExhausted && !hasJobToReconcile && !chainId) {
     return { admit: false, reason: "max auto-run retries reached", action: "max_retries" };
   }
 

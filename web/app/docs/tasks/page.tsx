@@ -137,7 +137,7 @@ chainBinding: {
           <div><span className="text-foreground/70">Dependency-aware</span> - only runs when all blockers are closed</div>
           <div><span className="text-foreground/70">Concurrency limit</span> - respects <a href="/settings/system" className="text-foreground/70 underline">max concurrent runs</a> setting</div>
           <div><span className="text-foreground/70">Completion audit</span> - when a run completes, a run-summary agent judges the outcome and issues a close, decision, or retry verdict; non-auto_run tasks are not audited and stay open for manual close</div>
-          <div><span className="text-foreground/70">Retry limit</span> - retries up to 3 times on failure, then stops</div>
+          <div><span className="text-foreground/70">Retry limit</span> - retries up to 4 times on failure, then stops</div>
           <div><span className="text-foreground/70">Chain analysis</span> - if no chain is assigned, auto-run analyzes the task and recommends one</div>
         </div>
         <p className="text-xs text-foreground/60 leading-relaxed mb-2">Completion audit verdicts:</p>

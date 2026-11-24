@@ -400,7 +400,6 @@ export function ChainAssignWorkflow({
     console.error("Chain assignment failed:", message);
     setErrorMessage(`Chain saved successfully, but task assignment failed: ${message}`);
     setShowErrorDetails(true);
-    setStep("generated");
   }
 
   const generateChain = useCallback(async (prompt: string) => {
@@ -1060,7 +1059,7 @@ export function ChainAssignWorkflow({
     return (
       <div className="space-y-2" data-testid="generation-stopped">
         <div className="text-[10px] text-red-400">
-          {GENERATION_STOP_LABELS[stopReason] || "Automatic retries stopped intentionally after a repeated deterministic rejection."}
+          {errorMessage || GENERATION_STOP_LABELS[stopReason] || "Automatic retries stopped intentionally after a repeated deterministic rejection."}
         </div>
         {rejection && (
           <div className="text-[10px] text-foreground/40 whitespace-pre-wrap">
@@ -1085,13 +1084,31 @@ export function ChainAssignWorkflow({
                 generation_rejection_job_id: null,
                 generation_rejection_fingerprints: null,
                 generation_last_error: null,
+                // a fresh attempt must not wear the previous run's or the
+                // previous resume loop's error as its current reason (#142);
+                // the stamped resume-attempt identity retires too, so an
+                // in-flight failure response cannot charge the fresh series
+                last_run_error: null,
+                resume_last_error: null,
+                resume_attempt_id: null,
+                resume_attempt_run_id: null,
                 auto_run_retries: 0,
               };
-              await fetchWithNamespace(`/api/tasks/${encodeURIComponent(task.id)}${wsParam}`, {
+              const res = await fetchWithNamespace(`/api/tasks/${encodeURIComponent(task.id)}${wsParam}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ metadata: JSON.stringify(metadata) }),
               });
+              if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                const message =
+                  typeof data.error === "string"
+                    ? data.error
+                    : data.error?.message || `Failed to clear generation stop (${res.status})`;
+                setErrorMessage(message);
+                setShowErrorDetails(true);
+                return;
+              }
               setGenerationJob(null);
               setErrorMessage(null);
               setStep("idle");
@@ -1407,7 +1424,11 @@ export function ChainAssignWorkflow({
                 key={alt.chain_id}
                 className="block w-full text-left text-[10px] text-foreground/30 hover:text-foreground/50 pl-2"
                 onClick={async () => {
-                  await onAssignChain(alt.chain_id, alt.chain_name);
+                  try {
+                    await onAssignChain(alt.chain_id, alt.chain_name);
+                  } catch (error) {
+                    handleChainAssignmentFailure(error);
+                  }
                 }}
               >
                 {alt.chain_name} - {alt.relevance}
@@ -1456,10 +1477,14 @@ export function ChainAssignWorkflow({
             <button
               className="px-2.5 py-1.5 rounded-md bg-cyan-500/15 text-cyan-400 text-[10px] font-medium hover:bg-cyan-500/25 transition-colors"
               onClick={async () => {
-                await onAssignChain(
-                  recommendation.chain_id || "",
-                  recommendation.chain_name || ""
-                );
+                try {
+                  await onAssignChain(
+                    recommendation.chain_id || "",
+                    recommendation.chain_name || ""
+                  );
+                } catch (error) {
+                  handleChainAssignmentFailure(error);
+                }
               }}
             >
               Use This Chain
@@ -1724,7 +1749,14 @@ export function ChainAssignWorkflow({
             key={chain.id}
             className="w-full text-left px-2.5 py-2 rounded-md hover:bg-accent/30 transition-colors"
             onClick={async () => {
-              await onAssignChain(chain.id, chain.name);
+              // a rejected PATCH now throws from the page handler (#142
+              // review round 5 P2): surface it with the same failure path
+              // the generated-chain assignment uses, not an unhandled rejection.
+              try {
+                await onAssignChain(chain.id, chain.name);
+              } catch (error) {
+                handleChainAssignmentFailure(error);
+              }
             }}
           >
             <div className="text-xs font-medium">{chain.name}</div>

@@ -66,6 +66,14 @@ export function executionStartedLifecycleMetadata(input: {
     last_run_id: input.runId,
     last_run_status: "running",
     last_run_error: undefined,
+    // A resume/run that actually started supersedes the recorded auto-run
+    // resume failure (#142): the task detail header stops showing the stale
+    // resume reason once there is fresh execution progress. It also retires
+    // the stamped resume-attempt identity, so a late failure response for the
+    // pre-start attempt cannot charge the new series (review round 4 P1).
+    resume_last_error: undefined,
+    resume_attempt_id: undefined,
+    resume_attempt_run_id: undefined,
     last_run_completed: null,
     ...(input.chainId ? { chain_id: input.chainId } : {}),
   };

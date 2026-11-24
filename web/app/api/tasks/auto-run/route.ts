@@ -26,6 +26,7 @@ import {
   removeRunFromSnapshot,
   type RunsSnapshot,
 } from "@/lib/runs/auto-run";
+import { consumeFailedResumeRetry, stampResumeAttempt } from "@/lib/runs/resume-retry-accounting";
 import { taskAddDep, taskClaimMetadataKeyIfUnset, taskGet, taskUpdate } from "@/lib/tasks/task-store";
 import { isTaskWorkMode, resolveTaskWorkMode } from "@/lib/tasks/work-mode";
 import { chainHasDeliveryAgent } from "@/lib/tasks/completion-audit-delivery-gate";
@@ -52,6 +53,7 @@ import {
   createTaskRunScope,
   locateTaskRun,
   parseTaskRunScope,
+  resolveTaskRunLocation,
   taskRunLaunchFailureMetadata,
   TASK_RUN_SCOPE_METADATA_KEY,
 } from "@/lib/tasks/task-run-locator";
@@ -640,6 +642,31 @@ function resumableRunIdFromRecord(
   return runId;
 }
 
+/**
+ * The runs root the resume-failure accounting must read the run record from:
+ * a scoped run lives under its persisted scope's root, everything else under
+ * the request namespace/org root — the same roots readResumableRunId reads.
+ */
+function resumeAccountingRunsDir(
+  taskId: string,
+  runId: string,
+  namespaceId: string,
+  orgId: string,
+  metadata: Record<string, unknown>
+): string {
+  if (TASK_RUN_SCOPE_METADATA_KEY in metadata) {
+    try {
+      const scope = parseTaskRunScope(metadata[TASK_RUN_SCOPE_METADATA_KEY]);
+      if (scope.taskId === taskId && scope.runId === runId) {
+        return resolveTaskRunLocation(scope).runsDir;
+      }
+    } catch {
+      /* malformed scope: fall through to the request root */
+    }
+  }
+  return resolveLinkRunsDir(namespaceId, orgId);
+}
+
 async function resumeExistingRun(
   taskId: string,
   runId: string,
@@ -648,23 +675,149 @@ async function resumeExistingRun(
   request: NextRequest,
   metadata: Record<string, unknown>
 ): Promise<TriggerResult> {
-  const resumeRes = await fetch(internalApiUrl(`/api/runs/${encodeURIComponent(runId)}/resume`, request.url), {
-    method: "POST",
-    headers: forwardedHeaders(request, namespaceId, orgId),
-  });
+  // Give this resume attempt an identity BEFORE the request leaves: the
+  // failure accounting charges budget only against the attempt id that is
+  // still current when the response lands, so a late response from an
+  // earlier attempt (or one that outlived a "Retry task" reset) cannot
+  // spend the task's budget (#142 review round 4 P1). If the stamp cannot
+  // land, do not send the resume in this scan.
+  const stamp = stampResumeAttempt({ orgId, taskId, namespaceId, runId });
+  if (!stamp.ok) {
+    if (stamp.stale) {
+      return {
+        triggered: false,
+        taskId,
+        runId,
+        action: "resume_superseded",
+        reason: `Task no longer owns run ${runId}; resume not sent`,
+      };
+    }
+    return {
+      triggered: false,
+      taskId,
+      runId,
+      action: "resume_accounting_failed",
+      reason: `Could not stamp the resume attempt for run ${runId}: ${stamp.error}; resume not sent`,
+    };
+  }
 
-  const resumeData = await resumeRes.json().catch(() => ({}));
-  if (!resumeRes.ok) {
-    const message =
-      (resumeData as { error?: { message?: string } }).error?.message ||
-      (resumeData as { error?: string }).error ||
-      `Failed to resume run ${runId}`;
+  let resumeFailure: { message: string; status?: number } | null = null;
+  try {
+    const resumeRes = await fetch(internalApiUrl(`/api/runs/${encodeURIComponent(runId)}/resume`, request.url), {
+      method: "POST",
+      headers: forwardedHeaders(request, namespaceId, orgId),
+    });
+
+    if (!resumeRes.ok) {
+      const resumeData = await resumeRes.json().catch(() => ({}));
+      resumeFailure = {
+        message:
+          (resumeData as { error?: { message?: string } }).error?.message ||
+          (resumeData as { error?: string }).error ||
+          `Failed to resume run ${runId}`,
+        status: resumeRes.status,
+      };
+    }
+  } catch (error) {
+    // A transport failure (rejected fetch) is still a failed resume attempt:
+    // without counting it, repeated connection errors leave auto_run_retries
+    // unchanged and the every-minute loop runs unbounded (#142).
+    resumeFailure = {
+      message: `Failed to reach the resume route for run ${runId}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    };
+  }
+
+  if (resumeFailure) {
+    // A 409 means the resume route refused because the run is already running
+    // or already complete -- typically another scan won the race. Re-read the
+    // run record: when it is no longer resumable, the conflict IS progress and
+    // must not consume a retry (overlapping scans could otherwise exhaust the
+    // budget for a task that is executing fine). Only a conflict that left the
+    // run exactly as resumable as before is a genuine failed attempt.
+    if (resumeFailure.status === 409) {
+      const currentChainId = typeof metadata.chain_id === "string" ? metadata.chain_id : "";
+      if (!readResumableRunId(taskId, currentChainId, namespaceId, metadata)) {
+        return {
+          triggered: false,
+          taskId,
+          runId,
+          action: "resume_in_progress",
+          reason: resumeFailure.message,
+        };
+      }
+    }
+
+    // A failed resume is a transient auto-run failure like the others here:
+    // consume one auto_run_retries so the shared MAX_AUTO_RUN_RETRIES ceiling
+    // ends the every-minute resume loop instead of parking the task in
+    // `resuming` with no next step (#142). The accounting is fenced through
+    // the guarded write AND the stamped attempt id: a late response whose
+    // task has moved on (different last_run_id, closed, already executing
+    // again, a newer attempt stamped, or the series reset) spends nothing.
+    const accounted = consumeFailedResumeRetry({
+      orgId,
+      taskId,
+      namespaceId,
+      runId,
+      runsDir: resumeAccountingRunsDir(taskId, runId, namespaceId, orgId, metadata),
+      attemptId: stamp.attemptId,
+      message: resumeFailure.message,
+    });
+    if (accounted.outcome === "resume_took_effect") {
+      // The response failed but the run did not: the resume route already
+      // marked the run running (or it was queued at the concurrency cap)
+      // before the response was lost or the fetch rejected. The attempt is
+      // executing — spend nothing and let the normal run reconciliation own
+      // the task from here (#142 review round 5 P1).
+      return {
+        triggered: false,
+        taskId,
+        runId,
+        action: "resume_took_effect",
+        reason: `Run ${runId} is ${accounted.status}; the resume took effect, retry budget not consumed`,
+      };
+    }
+    if (accounted.outcome === "run_record_unreadable") {
+      // Truthful reporting: without the run record the outcome is UNKNOWN,
+      // not a chargeable failure and not superseded. Spend nothing and say
+      // what could not be read so the gap is visible, not silent.
+      return {
+        triggered: false,
+        taskId,
+        runId,
+        action: "resume_run_unreadable",
+        reason: `Could not read run ${runId} to account the failed resume attempt: ${accounted.error}; retry budget not consumed`,
+      };
+    }
+    if (accounted.outcome === "superseded") {
+      return {
+        triggered: false,
+        taskId,
+        runId,
+        action: "resume_superseded",
+        reason: `Task no longer owns run ${runId}; retry budget not consumed`,
+      };
+    }
+    if (accounted.outcome === "accounting_failed") {
+      // Truthful reporting (#142 review P2): a store failure or exhausted
+      // compare-and-set is NOT a superseded response; say what actually
+      // happened so a persistently failing store is visible, not silent.
+      return {
+        triggered: false,
+        taskId,
+        runId,
+        action: "resume_accounting_failed",
+        reason: `Failed to record the failed resume attempt for run ${runId}: ${accounted.error}`,
+      };
+    }
     return {
       triggered: false,
       taskId,
       runId,
       action: "resume_failed",
-      error: message,
+      error: resumeFailure.message,
     };
   }
 
@@ -2083,7 +2236,25 @@ async function startChainRun(
 ): Promise<TriggerResult> {
   const metadata = taskMetadata || {};
 
-  const resumableRunId = readResumableRunId(taskId, chainId, namespaceId, metadata);
+  // Once resume failures exhaust the budget, the run is terminal and another
+  // resume would only repeat a lost-session failure forever. Keep the assigned
+  // chain binding and launch one fresh delivery run so the task can recover.
+  const retriesExhausted = Number(metadata.auto_run_retries || 0) >= MAX_AUTO_RUN_RETRIES;
+  const fallbackRunId = typeof metadata.auto_run_resume_fallback_run_id === "string"
+    ? metadata.auto_run_resume_fallback_run_id
+    : null;
+  if (retriesExhausted && fallbackRunId && fallbackRunId === metadata.last_run_id) {
+    return {
+      triggered: false,
+      taskId,
+      runId: fallbackRunId,
+      action: "resume_recovery_exhausted",
+      reason: "The one fresh-chain recovery run has already been attempted",
+    };
+  }
+  const resumableRunId = retriesExhausted
+    ? null
+    : readResumableRunId(taskId, chainId, namespaceId, metadata);
   if (resumableRunId) {
     return resumeExistingRun(taskId, resumableRunId, namespaceId, orgId, request, metadata);
   }
@@ -2167,7 +2338,10 @@ async function startChainRun(
       chainId,
     }),
     [TASK_RUN_SCOPE_METADATA_KEY]: taskRunScope,
-    auto_run_retries: 0,
+    auto_run_retries: retriesExhausted
+      ? Number(metadata.auto_run_retries || 0)
+      : 0,
+    auto_run_resume_fallback_run_id: retriesExhausted ? runId : undefined,
   };
   try {
     taskUpdate(orgId, taskId, {

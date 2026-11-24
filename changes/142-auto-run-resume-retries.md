@@ -1,0 +1,1 @@
+Auto-run now bounds repeated failed resume attempts, verifies whether a resume took effect before charging a retry, and starts a fresh assigned-chain run when the resume budget is exhausted. Task reset and chain assignment failures are also reported.

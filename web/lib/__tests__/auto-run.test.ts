@@ -758,6 +758,26 @@ describe("getAutoRunCandidates", () => {
     expect(admission.action).not.toBe("already_completed");
   });
 
+  it("admits an assigned chain for recovery after three failed resume attempts", () => {
+    const task = {
+      id: "TASK-FOURTH-AGENT",
+      title: "Recover the delivery chain",
+      status: "open",
+      issue_type: "task",
+      metadata: {
+        auto_run: true,
+        chain_id: "release-review",
+        analysis_job_id: "accepted-job",
+        analysis_status: "accepted",
+        last_run_id: "run-fourth-agent",
+        last_run_status: "failed",
+        auto_run_retries: 3,
+      },
+    } as never;
+
+    expect(canAdmitAutoRun(task, "default")).toMatchObject({ admit: true });
+  });
+
   it("does not relaunch an in-progress task after a terminal execution until lifecycle writes retry_requested", () => {
     const task = {
       id: "TASK-terminal-failure",

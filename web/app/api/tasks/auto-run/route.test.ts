@@ -30,6 +30,21 @@ jest.mock("@/lib/links/link-run-runtime", () => ({
   resolveLinkRunsDir: (...args: unknown[]) => mockResolveLinkRunsDir(...args),
 }));
 
+// The failed-resume accounting reads the CURRENT run record through
+// readRunRecordAt (round 5 P1) to prove a failed/lost response actually
+// means the resume did not take effect. The REAL reader is covered by the
+// accounting suite against a real run.json; here it is a controlled mock so
+// each route test can stage the run's post-response status.
+const mockReadRunRecordAt = jest.fn();
+jest.mock("@/lib/runs/run-record", () => {
+  const actual = jest.requireActual("@/lib/runs/run-record");
+  return {
+    ...actual,
+    readRunRecordAt: (...args: unknown[]) =>
+      mockReadRunRecordAt(...(args as Parameters<typeof actual.readRunRecordAt>)),
+  };
+});
+
 jest.mock("@/lib/namespace-config", () => ({
   getNamespaceIdFromRequest: jest.fn().mockResolvedValue("default"),
   getOrgIdFromRequest: jest.fn().mockResolvedValue("default"),
@@ -83,11 +98,40 @@ const mockTaskGet = jest.fn();
 const mockTaskUpdate = jest.fn();
 const mockTaskClaimMetadataKeyIfUnset = jest.fn();
 const mockTaskAddDep = jest.fn();
+// Faithful in-memory taskMutateMetadata: runs the caller's REAL mutate (the
+// guarded-write semantics live in the store's own suite) against the mocked
+// record and lands the write through mockTaskUpdate AND on the record itself
+// (so a later taskGet re-read — e.g. the stamped resume attempt id the
+// accounting checks — observes it, like the real store would), keeping route
+// assertions on taskUpdate observing the metadata the route produced.
+const mockTaskMutateMetadata = jest.fn(
+  (
+    orgId: string,
+    id: string,
+    mutate: (
+      metadata: Record<string, unknown>,
+      task: Record<string, unknown> & { revision?: number }
+    ) => Record<string, unknown> | null,
+    namespaceId?: string
+  ) => {
+    const task = mockTaskGet(orgId, id, namespaceId);
+    if (!task) return { ok: false };
+    const meta = task.metadata && typeof task.metadata === "object"
+      ? (task.metadata as Record<string, unknown>)
+      : {};
+    const next = mutate(meta, task);
+    if (next === null) return { ok: true, task };
+    mockTaskUpdate(orgId, id, { metadata: next }, namespaceId);
+    task.metadata = next; // persist on the record the mock serves
+    return { ok: true, task: { ...task, metadata: next } };
+  }
+);
 jest.mock("@/lib/tasks/task-store", () => ({
   taskGet: (...args: unknown[]) => mockTaskGet(...args),
   taskUpdate: (...args: unknown[]) => mockTaskUpdate(...args),
   taskClaimMetadataKeyIfUnset: (...args: unknown[]) => mockTaskClaimMetadataKeyIfUnset(...args),
   taskAddDep: (...args: unknown[]) => mockTaskAddDep(...args),
+  taskMutateMetadata: (...args: unknown[]) => mockTaskMutateMetadata(...args as Parameters<typeof mockTaskMutateMetadata>),
 }));
 
 const mockLocateTaskRun = jest.fn();
@@ -208,6 +252,18 @@ function jsonResponse(body: unknown, status = 200) {
   });
 }
 
+function runRecordFixture(status: string, runId: string) {
+  return {
+    id: runId,
+    chain: "Release Review",
+    goal: "resume accounting fixture",
+    started: "2026-07-15T12:00:00.000Z",
+    status,
+    sessions: [],
+    agents: [],
+  };
+}
+
 function taskRunResponse(init?: RequestInit) {
   const body = JSON.parse(String(init?.body || "{}"));
   return jsonResponse({ success: true, data: { runId: body.runId } });
@@ -233,6 +289,10 @@ describe("POST /api/tasks/auto-run", () => {
     mockReadFileSync.mockReturnValue("{}");
     mockStatSync.mockReturnValue({ mtimeMs: Date.now() });
     mockResolveLinkRunsDir.mockReturnValue("/tmp/mentiko-test/default/orgs/default/runs");
+    // Default post-response run state: still terminal (the scan's selection
+    // shape), so a failed resume response charges exactly one retry.
+    mockReadRunRecordAt.mockImplementation((_runsDir: string, runId: string) =>
+      runRecordFixture("failed", runId));
     mockListWorkspaces.mockReturnValue([]);
     mockResolveAutoRunPolicy.mockReturnValue(true);
     mockFindGeneratedChainRejection.mockReturnValue(undefined);
@@ -706,6 +766,620 @@ describe("POST /api/tasks/auto-run", () => {
     });
     expect(global.fetch).not.toHaveBeenCalled();
     expect(mockTaskUpdate).not.toHaveBeenCalled();
+  });
+
+  it("counts a failed resume against auto_run_retries so the retry ceiling ends the loop", async () => {
+    mockTaskGet.mockReturnValue({
+      id: "TASK-RESUME-FAIL",
+      title: "Resume failing run",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      metadata: {
+        auto_run: true,
+        chain_id: "release-review",
+        last_run_id: "run-resume-fail",
+        last_run_status: "stopped",
+        auto_run_retries: 1,
+      },
+    });
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      taskId: "TASK-RESUME-FAIL",
+      chainId: "release-review",
+      status: "stopped",
+      agents: [
+        { id: "planner", status: "complete" },
+        { id: "reviewer", status: "stopped" },
+      ],
+    }));
+    (global.fetch as jest.Mock).mockResolvedValue(jsonResponse({
+      error: { message: "Run run-resume-fail not found" },
+    }, 404));
+
+    const res = await POST(makeRequest({ taskId: "TASK-RESUME-FAIL" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      triggered: false,
+      taskId: "TASK-RESUME-FAIL",
+      runId: "run-resume-fail",
+      action: "resume_failed",
+      error: "Run run-resume-fail not found",
+    });
+    expect(mockTaskUpdate).toHaveBeenCalledWith(
+      "default",
+      "TASK-RESUME-FAIL",
+      {
+        metadata: expect.objectContaining({
+          auto_run_retries: 2,
+          resume_last_error: "Run run-resume-fail not found",
+        }),
+      },
+      "default",
+    );
+  });
+
+  it("starts a fresh assigned-chain run after failed resumes exhaust the budget (TASK-010 shape)", async () => {
+    // Real TASK-010 shape: assigned chain, analysis_job_id retained with
+    // analysis_status "accepted" (the use_existing acceptance keeps the
+    // pointer), and a terminal run whose fourth-agent session is gone. Once
+    // four resume attempts fail, recovery must start the chain again instead
+    // of sending the same terminal session another resume request forever.
+    let meta: Record<string, unknown> = {
+      auto_run: true,
+      chain_id: "release-review",
+      analysis_job_id: "job-1794746071590-ekcfgc3",
+      analysis_status: "accepted",
+      last_run_id: "run-loop",
+      last_run_status: "failed",
+      auto_run_retries: 0,
+    };
+    mockTaskGet.mockImplementation(() => ({
+      id: "TASK-010",
+      title: "Resume loop",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      metadata: meta,
+    }));
+    mockTaskUpdate.mockImplementation((_org: string, _id: string, patch: { metadata?: Record<string, unknown> }) => {
+      meta = { ...meta, ...(patch.metadata || {}) };
+    });
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      taskId: "TASK-010",
+      chainId: "release-review",
+      status: "failed",
+      agents: [
+        { id: "planner", status: "complete" },
+        { id: "reviewer", status: "failed" },
+      ],
+    }));
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce(jsonResponse({ error: { message: "Resume rejected by the runner" } }, 500))
+      .mockResolvedValueOnce(jsonResponse({ error: { message: "Resume rejected by the runner" } }, 500))
+      .mockResolvedValueOnce(jsonResponse({ error: { message: "Resume rejected by the runner" } }, 500))
+      .mockResolvedValueOnce(jsonResponse({ error: { message: "Resume rejected by the runner" } }, 500))
+      .mockResolvedValueOnce(jsonResponse({
+        data: { chain: { id: "release-review", name: "Release Review", agents: [] } },
+      }))
+      .mockImplementationOnce(async (_url: unknown, init: unknown) => {
+        const body = JSON.parse(String((init as { body?: unknown }).body));
+        return jsonResponse({ success: true, data: { runId: body.runId } });
+      });
+
+    const scans: Array<{ action?: string; retries: number }> = [];
+    for (let scan = 1; scan <= 5; scan++) {
+      const res = await POST(makeRequest({ taskId: "TASK-010" }) as never);
+      const body = await res.json();
+      scans.push({ action: body.data.action, retries: meta.auto_run_retries as number });
+    }
+
+    expect(scans.slice(0, 3)).toEqual([
+      { action: "resume_failed", retries: 1 },
+      { action: "resume_failed", retries: 2 },
+      { action: "resume_failed", retries: 3 },
+    ]);
+    expect(scans[3]).toEqual({ action: "resume_failed", retries: 4 });
+    expect(scans[4]).toEqual({ action: "chain_run", retries: 4 });
+    expect(meta.auto_run_resume_fallback_run_id).toEqual(meta.last_run_id);
+    expect((global.fetch as jest.Mock)).toHaveBeenCalledTimes(6);
+    expect((global.fetch as jest.Mock).mock.calls[4][0]).toContain("/api/chains/release-review");
+    expect((global.fetch as jest.Mock).mock.calls[5][0]).toContain("/api/chains/run");
+  });
+
+  it("does not restart an assigned chain again after its one exhausted-resume recovery run", async () => {
+    mockTaskGet.mockReturnValue({
+      id: "TASK-RESUME-RECOVERY-EXHAUSTED",
+      title: "Bounded resume recovery",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      metadata: {
+        auto_run: true,
+        chain_id: "release-review",
+        last_run_id: "run-recovery",
+        last_run_status: "failed",
+        auto_run_retries: 4,
+        auto_run_resume_fallback_run_id: "run-recovery",
+      },
+    });
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      taskId: "TASK-RESUME-RECOVERY-EXHAUSTED",
+      chainId: "release-review",
+      status: "failed",
+      agents: [{ id: "fourth-agent", status: "failed" }],
+    }));
+
+    const res = await POST(makeRequest({ taskId: "TASK-RESUME-RECOVERY-EXHAUSTED" }) as never);
+    const body = await res.json();
+
+    expect(body.data).toMatchObject({
+      triggered: false,
+      taskId: "TASK-RESUME-RECOVERY-EXHAUSTED",
+      runId: "run-recovery",
+      action: "resume_recovery_exhausted",
+    });
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("does not consume a retry when a 409 conflict means another scan resumed the run", async () => {
+    const raceFixture = {
+      id: "TASK-RACE",
+      title: "Concurrent resume",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      metadata: {
+        auto_run: true,
+        chain_id: "release-review",
+        last_run_id: "run-race",
+        last_run_status: "stopped",
+        auto_run_retries: 1,
+      },
+    };
+    mockTaskGet.mockReturnValue(raceFixture);
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      taskId: "TASK-RACE",
+      chainId: "release-review",
+      status: "stopped",
+      agents: [
+        { id: "planner", status: "complete" },
+        { id: "reviewer", status: "stopped" },
+      ],
+    }));
+    (global.fetch as jest.Mock).mockImplementation(async () => {
+      // The competing scan resumed the run while our fetch was in flight:
+      // the run record flips to running before the 409 comes back.
+      mockReadFileSync.mockReturnValue(JSON.stringify({
+        taskId: "TASK-RACE",
+        chainId: "release-review",
+        status: "running",
+        agents: [
+          { id: "planner", status: "complete" },
+          { id: "reviewer", status: "running" },
+        ],
+      }));
+      return jsonResponse({ error: { message: "Run is already running" } }, 409);
+    });
+
+    const res = await POST(makeRequest({ taskId: "TASK-RACE" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      triggered: false,
+      taskId: "TASK-RACE",
+      runId: "run-race",
+      action: "resume_in_progress",
+      reason: "Run is already running",
+    });
+    // the attempt STAMP rewrites metadata (carrying the unchanged retries
+    // value), but the budget itself is untouched: retries and resume error
+    // keep their pre-scan values.
+    const afterMeta = raceFixture.metadata as Record<string, unknown>;
+    expect(afterMeta.auto_run_retries).toBe(1);
+    expect(afterMeta.resume_last_error).toBeUndefined();
+  });
+
+  it("consumes a retry when a 409 conflict leaves the run still resumable (stale conflict)", async () => {
+    mockTaskGet.mockReturnValue({
+      id: "TASK-STALE-409",
+      title: "Stale conflict",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      metadata: {
+        auto_run: true,
+        chain_id: "release-review",
+        last_run_id: "run-stale-409",
+        last_run_status: "stopped",
+        auto_run_retries: 1,
+      },
+    });
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      taskId: "TASK-STALE-409",
+      chainId: "release-review",
+      status: "stopped",
+      agents: [
+        { id: "planner", status: "complete" },
+        { id: "reviewer", status: "stopped" },
+      ],
+    }));
+    (global.fetch as jest.Mock).mockResolvedValue(jsonResponse({
+      error: { message: "Run is already running" },
+    }, 409));
+
+    const res = await POST(makeRequest({ taskId: "TASK-STALE-409" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      triggered: false,
+      taskId: "TASK-STALE-409",
+      action: "resume_failed",
+      error: "Run is already running",
+    });
+    expect(mockTaskUpdate).toHaveBeenCalledWith(
+      "default",
+      "TASK-STALE-409",
+      {
+        metadata: expect.objectContaining({
+          auto_run_retries: 2,
+          resume_last_error: "Run is already running",
+        }),
+      },
+      "default",
+    );
+  });
+
+  it("does not consume the budget when a late failed-resume response arrives after the task moved to a newer run", async () => {
+    let meta: Record<string, unknown> = {
+      auto_run: true,
+      chain_id: "release-review",
+      last_run_id: "run-late",
+      last_run_status: "stopped",
+      auto_run_retries: 1,
+    };
+    mockTaskGet.mockImplementation(() => ({
+      id: "TASK-LATE",
+      title: "Late response",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      revision: 4,
+      metadata: meta,
+    }));
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      taskId: "TASK-LATE",
+      chainId: "release-review",
+      status: "stopped",
+      agents: [
+        { id: "planner", status: "complete" },
+        { id: "reviewer", status: "stopped" },
+      ],
+    }));
+    (global.fetch as jest.Mock).mockImplementation(async () => {
+      // While the resume request is in flight, a competing scan starts a
+      // NEWER run; its execution-start write moves the task's last_run_id
+      // before our failure response is processed.
+      meta = { ...meta, last_run_id: "run-newer", last_run_status: "running" };
+      return jsonResponse({ error: { message: "Resume rejected by the runner" } }, 500);
+    });
+
+    const res = await POST(makeRequest({ taskId: "TASK-LATE" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      triggered: false,
+      taskId: "TASK-LATE",
+      runId: "run-late",
+      action: "resume_superseded",
+    });
+    // the attempt STAMP rewrites metadata, but the budget value is untouched.
+    expect(meta.auto_run_retries).toBe(1); // budget untouched
+    expect(meta.resume_last_error).toBeUndefined();
+  });
+
+  it("does not consume the budget when a newer scan re-stamped the attempt while an older response was in flight", async () => {
+    let meta: Record<string, unknown> = {
+      auto_run: true,
+      chain_id: "release-review",
+      last_run_id: "run-overlap",
+      last_run_status: "stopped",
+      auto_run_retries: 0,
+    };
+    mockTaskGet.mockImplementation(() => ({
+      id: "TASK-OVERLAP",
+      title: "Overlapping attempts",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      revision: 2,
+      metadata: meta,
+    }));
+    mockTaskUpdate.mockImplementation((_org: string, _id: string, patch: { metadata?: Record<string, unknown> }) => {
+      meta = { ...meta, ...(patch.metadata || {}) };
+    });
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      taskId: "TASK-OVERLAP",
+      chainId: "release-review",
+      status: "stopped",
+      agents: [
+        { id: "planner", status: "complete" },
+        { id: "reviewer", status: "stopped" },
+      ],
+    }));
+    (global.fetch as jest.Mock).mockImplementation(async () => {
+      // a NEWER scan stamps its own attempt id while our response is in
+      // flight; the run id and open status still match ours.
+      meta = { ...meta, resume_attempt_id: "resume-newer-scan" };
+      return jsonResponse({ error: { message: "Resume rejected by the runner" } }, 500);
+    });
+
+    const res = await POST(makeRequest({ taskId: "TASK-OVERLAP" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      triggered: false,
+      taskId: "TASK-OVERLAP",
+      runId: "run-overlap",
+      action: "resume_superseded",
+    });
+    expect(meta.auto_run_retries).toBe(0); // fresh series not charged
+  });
+
+  it("does not send the resume when the attempt stamp cannot land (store failure reported truthfully)", async () => {
+    mockTaskGet.mockReturnValue({
+      id: "TASK-STAMP-FAIL",
+      title: "Stamp store failure",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      metadata: {
+        auto_run: true,
+        chain_id: "release-review",
+        last_run_id: "run-stamp-fail",
+        last_run_status: "stopped",
+        auto_run_retries: 1,
+      },
+    });
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      taskId: "TASK-STAMP-FAIL",
+      chainId: "release-review",
+      status: "stopped",
+      agents: [
+        { id: "planner", status: "complete" },
+        { id: "reviewer", status: "stopped" },
+      ],
+    }));
+    mockTaskMutateMetadata.mockReturnValueOnce({ ok: false });
+
+    const res = await POST(makeRequest({ taskId: "TASK-STAMP-FAIL" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      triggered: false,
+      taskId: "TASK-STAMP-FAIL",
+      runId: "run-stamp-fail",
+      action: "resume_accounting_failed",
+    });
+    expect(body.data.reason).toContain("Could not stamp the resume attempt");
+    expect(global.fetch).not.toHaveBeenCalled(); // no resume sent this scan
+  });
+
+  it("does not send the resume when the task no longer owns the run at stamp time", async () => {
+    mockTaskGet.mockReturnValue({
+      id: "TASK-STAMP-STALE",
+      title: "Stamp stale",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      metadata: {
+        auto_run: true,
+        chain_id: "release-review",
+        last_run_id: "run-stamp-stale",
+        last_run_status: "stopped",
+        auto_run_retries: 1,
+      },
+    });
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      taskId: "TASK-STAMP-STALE",
+      chainId: "release-review",
+      status: "stopped",
+      agents: [
+        { id: "planner", status: "complete" },
+        { id: "reviewer", status: "stopped" },
+      ],
+    }));
+    // the guarded stamp sees a CLOSED task (the row changed between the
+    // gate's read and the stamp): stale, no resume sent.
+    mockTaskMutateMetadata.mockImplementationOnce(
+      (orgId: string, id: string, mutate: (m: Record<string, unknown>, t: Record<string, unknown>) => Record<string, unknown> | null, nsId?: string) => {
+        const task = mockTaskGet(orgId, id, nsId);
+        const closed = { ...task, status: "done" };
+        mutate((closed.metadata || {}) as Record<string, unknown>, closed);
+        return { ok: true, task: closed };
+      }
+    );
+
+    const res = await POST(makeRequest({ taskId: "TASK-STAMP-STALE" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      triggered: false,
+      taskId: "TASK-STAMP-STALE",
+      runId: "run-stamp-stale",
+      action: "resume_superseded",
+    });
+    expect(body.data.reason).toContain("resume not sent");
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("counts a rejected resume fetch (transport error) against auto_run_retries", async () => {
+    mockTaskGet.mockReturnValue({
+      id: "TASK-TRANSPORT",
+      title: "Unreachable resume route",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      metadata: {
+        auto_run: true,
+        chain_id: "release-review",
+        last_run_id: "run-transport",
+        last_run_status: "stopped",
+        auto_run_retries: 1,
+      },
+    });
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      taskId: "TASK-TRANSPORT",
+      chainId: "release-review",
+      status: "stopped",
+      agents: [
+        { id: "planner", status: "complete" },
+        { id: "reviewer", status: "stopped" },
+      ],
+    }));
+    (global.fetch as jest.Mock).mockRejectedValue(new Error("connect ECONNREFUSED"));
+
+    const res = await POST(makeRequest({ taskId: "TASK-TRANSPORT" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      triggered: false,
+      taskId: "TASK-TRANSPORT",
+      action: "resume_failed",
+      error: expect.stringContaining("ECONNREFUSED"),
+    });
+    expect(mockTaskUpdate).toHaveBeenCalledWith(
+      "default",
+      "TASK-TRANSPORT",
+      {
+        metadata: expect.objectContaining({
+          auto_run_retries: 2,
+          resume_last_error: expect.stringContaining("Failed to reach the resume route for run run-transport"),
+        }),
+      },
+      "default",
+    );
+  });
+
+  it("spends no retry when a transport rejection arrives after the resume actually took effect (run running)", async () => {
+    // Round 5 P1: the resume route marks run.json running BEFORE its response
+    // is written, so a rejected fetch does not prove the resume failed. The
+    // accounting must read the run record and treat running as "took effect".
+    mockTaskGet.mockReturnValue({
+      id: "TASK-TOOK-EFFECT",
+      title: "Lost response, live run",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      metadata: {
+        auto_run: true,
+        chain_id: "release-review",
+        last_run_id: "run-took-effect",
+        last_run_status: "stopped",
+        auto_run_retries: 1,
+      },
+    });
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      taskId: "TASK-TOOK-EFFECT",
+      chainId: "release-review",
+      status: "stopped",
+      agents: [
+        { id: "planner", status: "complete" },
+        { id: "reviewer", status: "stopped" },
+      ],
+    }));
+    (global.fetch as jest.Mock).mockRejectedValue(new Error("connect ETIMEDOUT"));
+    // The resume landed and dispatched before the response was lost.
+    mockReadRunRecordAt.mockImplementation((_runsDir: string, runId: string) =>
+      runRecordFixture("running", runId));
+
+    const res = await POST(makeRequest({ taskId: "TASK-TOOK-EFFECT" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      triggered: false,
+      taskId: "TASK-TOOK-EFFECT",
+      runId: "run-took-effect",
+      action: "resume_took_effect",
+      reason: expect.stringContaining("the resume took effect"),
+    });
+    // Budget untouched: the only metadata write is the attempt stamp, which
+    // carries the unchanged retries value.
+    const writes = (mockTaskUpdate as jest.Mock).mock.calls.filter(
+      (call) => call[1] === "TASK-TOOK-EFFECT"
+    );
+    for (const [, , patch] of writes) {
+      expect((patch.metadata || {}).auto_run_retries).toBe(1);
+    }
+  });
+
+  it("spends no retry and reports the read error when the run record cannot be read to account a failure", async () => {
+    mockTaskGet.mockReturnValue({
+      id: "TASK-UNREADABLE",
+      title: "Unreadable run record",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      metadata: {
+        auto_run: true,
+        chain_id: "release-review",
+        last_run_id: "run-unreadable",
+        last_run_status: "stopped",
+        auto_run_retries: 1,
+      },
+    });
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      taskId: "TASK-UNREADABLE",
+      chainId: "release-review",
+      status: "stopped",
+      agents: [
+        { id: "planner", status: "complete" },
+        { id: "reviewer", status: "stopped" },
+      ],
+    }));
+    (global.fetch as jest.Mock).mockRejectedValue(new Error("connect ECONNREFUSED"));
+    mockReadRunRecordAt.mockImplementation(() => {
+      throw new Error("run.json not found: /tmp/mentiko-test/runs/run-unreadable/run.json");
+    });
+
+    const res = await POST(makeRequest({ taskId: "TASK-UNREADABLE" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      triggered: false,
+      taskId: "TASK-UNREADABLE",
+      runId: "run-unreadable",
+      action: "resume_run_unreadable",
+      reason: expect.stringContaining("Could not read run run-unreadable"),
+    });
+    const writes = (mockTaskUpdate as jest.Mock).mock.calls.filter(
+      (call) => call[1] === "TASK-UNREADABLE"
+    );
+    for (const [, , patch] of writes) {
+      expect((patch.metadata || {}).auto_run_retries).toBe(1);
+    }
   });
 
   it("resumes a terminal run from its persisted nondefault scope without reading the request root", async () => {
@@ -1281,7 +1955,7 @@ describe("POST /api/tasks/auto-run", () => {
       action: "generation_save_failed",
       error: expect.stringContaining("agents[0].emits"),
       retryCount: 2,
-      retryLimit: 3,
+      retryLimit: 4,
       recoveryScheduled: true,
     });
     expect(mockTaskUpdate).toHaveBeenCalledWith(
@@ -1601,7 +2275,7 @@ describe("POST /api/tasks/auto-run", () => {
         analysis_status: "accepted",
       }),
       "default",
-      { metadataNumberLessThan: { key: "auto_run_retries", value: 3 } },
+      { metadataNumberLessThan: { key: "auto_run_retries", value: 4 } },
     );
     expect(mockTaskUpdate).toHaveBeenCalledWith(
       "default",
@@ -1678,7 +2352,7 @@ describe("POST /api/tasks/auto-run", () => {
       "generation_job_id",
       expect.objectContaining({ generation_last_error: undefined }),
       "default",
-      { metadataNumberLessThan: { key: "auto_run_retries", value: 3 } },
+      { metadataNumberLessThan: { key: "auto_run_retries", value: 4 } },
     );
   });
 
@@ -2102,7 +2776,7 @@ describe("POST /api/tasks/auto-run", () => {
       metadata: {
         auto_run: true,
         analysis_status: "unreadable",
-        auto_run_retries: 3,
+        auto_run_retries: 4,
       },
     });
 
@@ -2132,7 +2806,7 @@ describe("POST /api/tasks/auto-run", () => {
         analysis_status: "accepted",
         generation_job_id: "job-generation-empty",
         generation_status: "complete",
-        auto_run_retries: 3,
+        auto_run_retries: 4,
       },
     });
     mockGetJob.mockReturnValue({
@@ -2159,7 +2833,7 @@ describe("POST /api/tasks/auto-run", () => {
           generation_job_id: undefined,
           generation_status: "failed",
           generation_last_error: expect.stringContaining("without a valid JSON chain payload"),
-          auto_run_retries: 3,
+          auto_run_retries: 4,
         }),
       },
       "default",
