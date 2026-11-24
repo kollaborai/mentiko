@@ -57,6 +57,21 @@ describe("executionStartedLifecycleMetadata", () => {
     expect(metadata.resume_last_error).toBeUndefined();
   });
 
+  it("preserves the exhausted-resume recovery marker when its fallback run starts", () => {
+    const metadata = executionStartedLifecycleMetadata({
+      taskId: "TASK-1",
+      metadata: {
+        auto_run_retries: 4,
+        last_run_id: "run-fallback",
+        auto_run_resume_fallback_run_id: "run-fallback",
+      },
+      runId: "run-fallback",
+      chainId: "release-review",
+    });
+
+    expect(metadata.auto_run_resume_fallback_run_id).toBe("run-fallback");
+  });
+
   it("does not let stale running metadata suppress a new execution start", () => {
     const metadata = executionStartedLifecycleMetadata({
       taskId: "TASK-1",
