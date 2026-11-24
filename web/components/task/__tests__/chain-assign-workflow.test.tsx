@@ -561,14 +561,14 @@ describe("ChainAssignWorkflow", () => {
       result: {
         recommendation: {
           ...existingChainJob.result.recommendation,
-          alternatives: [
-            {
-              chain_id: "quick-fix",
-              chain_name: "Quick Fix",
-              relevance: "Also suitable.",
-            },
-          ],
         },
+        alternatives: [
+          {
+            chain_id: "quick-fix",
+            chain_name: "Quick Fix",
+            relevance: "Also suitable.",
+          },
+        ],
       },
     });
     mockFetchWithNamespace.mockResolvedValue({
