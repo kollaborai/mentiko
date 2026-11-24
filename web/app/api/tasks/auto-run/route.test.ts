@@ -889,6 +889,42 @@ describe("POST /api/tasks/auto-run", () => {
     expect((global.fetch as jest.Mock).mock.calls[5][0]).toContain("/api/chains/run");
   });
 
+  it("does not restart an assigned chain again after its one exhausted-resume recovery run", async () => {
+    mockTaskGet.mockReturnValue({
+      id: "TASK-RESUME-RECOVERY-EXHAUSTED",
+      title: "Bounded resume recovery",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      metadata: {
+        auto_run: true,
+        chain_id: "release-review",
+        last_run_id: "run-recovery",
+        last_run_status: "failed",
+        auto_run_retries: 4,
+        auto_run_resume_fallback_run_id: "run-recovery",
+      },
+    });
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      taskId: "TASK-RESUME-RECOVERY-EXHAUSTED",
+      chainId: "release-review",
+      status: "failed",
+      agents: [{ id: "fourth-agent", status: "failed" }],
+    }));
+
+    const res = await POST(makeRequest({ taskId: "TASK-RESUME-RECOVERY-EXHAUSTED" }) as never);
+    const body = await res.json();
+
+    expect(body.data).toMatchObject({
+      triggered: false,
+      taskId: "TASK-RESUME-RECOVERY-EXHAUSTED",
+      runId: "run-recovery",
+      action: "resume_recovery_exhausted",
+    });
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
   it("does not consume a retry when a 409 conflict means another scan resumed the run", async () => {
     const raceFixture = {
       id: "TASK-RACE",
