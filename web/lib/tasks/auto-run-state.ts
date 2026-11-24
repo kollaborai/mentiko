@@ -8,7 +8,7 @@
 // and passed in here as `workspaceDefault`; the client reads the already-resolved
 // result off the task DTO (Task.autoRun).
 
-export const MAX_AUTO_RUN_RETRIES = 3;
+export const MAX_AUTO_RUN_RETRIES = 4;
 
 export type AutoRunSource = "task" | "workspace" | "off";
 
