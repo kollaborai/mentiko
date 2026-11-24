@@ -58,6 +58,14 @@ describe("tasks page source contract", () => {
     expect(cleared).toBeGreaterThanOrEqual(3); // assign-chain, toggle fallback, retry-task reset
   });
 
+  it("clears the exhausted-chain recovery marker when Retry task starts a fresh retry series", () => {
+    const start = source.indexOf("const handleResetAutoRunAttempts = useCallback");
+    const end = source.indexOf("const handleToggleAutoRunPause", start);
+    const resetHandler = source.slice(start, end);
+
+    expect(resetHandler).toContain("auto_run_resume_fallback_run_id: null");
+  });
+
   it("clears the displayed exhausted state optimistically at every retry reset (#142 review P2)", () => {
     // the detail header reads task.autoRun and task.metadata, not
     // chainBinding: after Retry task / assign / toggle-enable the page must
