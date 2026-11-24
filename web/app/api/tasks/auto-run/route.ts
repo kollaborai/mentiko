@@ -2236,7 +2236,13 @@ async function startChainRun(
 ): Promise<TriggerResult> {
   const metadata = taskMetadata || {};
 
-  const resumableRunId = readResumableRunId(taskId, chainId, namespaceId, metadata);
+  // Once resume failures exhaust the budget, the run is terminal and another
+  // resume would only repeat a lost-session failure forever. Keep the assigned
+  // chain binding and launch it as a fresh delivery run so the task can recover.
+  const retriesExhausted = Number(metadata.auto_run_retries || 0) >= MAX_AUTO_RUN_RETRIES;
+  const resumableRunId = retriesExhausted
+    ? null
+    : readResumableRunId(taskId, chainId, namespaceId, metadata);
   if (resumableRunId) {
     return resumeExistingRun(taskId, resumableRunId, namespaceId, orgId, request, metadata);
   }
