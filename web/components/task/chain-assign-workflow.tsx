@@ -1425,7 +1425,11 @@ export function ChainAssignWorkflow({
                 key={alt.chain_id}
                 className="block w-full text-left text-[10px] text-foreground/30 hover:text-foreground/50 pl-2"
                 onClick={async () => {
-                  await onAssignChain(alt.chain_id, alt.chain_name);
+                  try {
+                    await onAssignChain(alt.chain_id, alt.chain_name);
+                  } catch (error) {
+                    handleChainAssignmentFailure(error);
+                  }
                 }}
               >
                 {alt.chain_name} - {alt.relevance}
@@ -1474,10 +1478,14 @@ export function ChainAssignWorkflow({
             <button
               className="px-2.5 py-1.5 rounded-md bg-cyan-500/15 text-cyan-400 text-[10px] font-medium hover:bg-cyan-500/25 transition-colors"
               onClick={async () => {
-                await onAssignChain(
-                  recommendation.chain_id || "",
-                  recommendation.chain_name || ""
-                );
+                try {
+                  await onAssignChain(
+                    recommendation.chain_id || "",
+                    recommendation.chain_name || ""
+                  );
+                } catch (error) {
+                  handleChainAssignmentFailure(error);
+                }
               }}
             >
               Use This Chain
