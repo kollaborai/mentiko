@@ -821,11 +821,11 @@ describe("POST /api/tasks/auto-run", () => {
     );
   });
 
-  it("stops resuming at the retry ceiling even with a retained accepted analysis pointer (TASK-010 shape)", async () => {
+  it("allows a fourth resume before stopping at the retry ceiling with a retained accepted analysis pointer (TASK-010 shape)", async () => {
     // Real TASK-010 shape: assigned chain, analysis_job_id retained with
     // analysis_status "accepted" (the use_existing acceptance keeps the
-    // pointer), and a failing resumable run. The gate must stop admitting the
-    // task once auto_run_retries reaches the ceiling -- no fourth resume.
+    // pointer), and a failing resumable run. Three failed attempts do not
+    // exhaust the retry budget; the fourth attempt is the final admitted one.
     let meta: Record<string, unknown> = {
       auto_run: true,
       chain_id: "release-review",
@@ -861,7 +861,7 @@ describe("POST /api/tasks/auto-run", () => {
     }, 500));
 
     const scans: Array<{ action?: string; retries: number }> = [];
-    for (let scan = 1; scan <= 4; scan++) {
+    for (let scan = 1; scan <= 5; scan++) {
       const res = await POST(makeRequest({ taskId: "TASK-010" }) as never);
       const body = await res.json();
       scans.push({ action: body.data.action, retries: meta.auto_run_retries as number });
@@ -872,8 +872,9 @@ describe("POST /api/tasks/auto-run", () => {
       { action: "resume_failed", retries: 2 },
       { action: "resume_failed", retries: 3 },
     ]);
-    expect(scans[3]).toEqual({ action: "max_retries", retries: 3 });
-    expect((global.fetch as jest.Mock)).toHaveBeenCalledTimes(3);
+    expect(scans[3]).toEqual({ action: "resume_failed", retries: 4 });
+    expect(scans[4]).toEqual({ action: "max_retries", retries: 4 });
+    expect((global.fetch as jest.Mock)).toHaveBeenCalledTimes(4);
   });
 
   it("does not consume a retry when a 409 conflict means another scan resumed the run", async () => {
