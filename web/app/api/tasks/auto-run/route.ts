@@ -2238,8 +2238,20 @@ async function startChainRun(
 
   // Once resume failures exhaust the budget, the run is terminal and another
   // resume would only repeat a lost-session failure forever. Keep the assigned
-  // chain binding and launch it as a fresh delivery run so the task can recover.
+  // chain binding and launch one fresh delivery run so the task can recover.
   const retriesExhausted = Number(metadata.auto_run_retries || 0) >= MAX_AUTO_RUN_RETRIES;
+  const fallbackRunId = typeof metadata.auto_run_resume_fallback_run_id === "string"
+    ? metadata.auto_run_resume_fallback_run_id
+    : null;
+  if (retriesExhausted && fallbackRunId && fallbackRunId === metadata.last_run_id) {
+    return {
+      triggered: false,
+      taskId,
+      runId: fallbackRunId,
+      action: "resume_recovery_exhausted",
+      reason: "The one fresh-chain recovery run has already been attempted",
+    };
+  }
   const resumableRunId = retriesExhausted
     ? null
     : readResumableRunId(taskId, chainId, namespaceId, metadata);
@@ -2326,7 +2338,10 @@ async function startChainRun(
       chainId,
     }),
     [TASK_RUN_SCOPE_METADATA_KEY]: taskRunScope,
-    auto_run_retries: 0,
+    auto_run_retries: retriesExhausted
+      ? Number(metadata.auto_run_retries || 0)
+      : 0,
+    auto_run_resume_fallback_run_id: retriesExhausted ? runId : undefined,
   };
   try {
     taskUpdate(orgId, taskId, {
